@@ -53,7 +53,12 @@ describeDatabase("passkey-confirmed knowledge base reset", () => {
       await client.query("SET LOCAL session_replication_role=replica");
       await client.query(
         `TRUNCATE TABLE confirmation_challenges,publication_intents,knowledge_export_intents,
-           page_deletion_intents,published_page_artifacts,
+           page_deletion_intents,operational_document_replacements,
+           automation_registry,directory_hub_migrations,
+           legacy_public_directory_prefixes,
+           corpus_migration_completions,corpus_migration_automation_plans,
+           corpus_page_migration_plans,corpus_directory_migration_plans,
+           corpus_migration_inventory,corpus_migration_runs,published_page_artifacts,
            public_projection_state,public_knowledge_settings,public_route_aliases,
            public_resources,knowledge_settings,document_links,
            source_record_search_chunks,source_records,
@@ -69,6 +74,7 @@ describeDatabase("passkey-confirmed knowledge base reset", () => {
       const rootId = randomUUID();
       const guidePageId = randomUUID();
       const guideVersionId = randomUUID();
+      const guidePath = `managed-operational-${guidePageId}`;
       await client.query(
         `INSERT INTO knowledge_directories(id,current_path,title,summary,search_vector)
          VALUES ($1,'','Knowledge','Local root.',directory_search_vector('','Knowledge','Local root.',''))`,
@@ -76,14 +82,21 @@ describeDatabase("passkey-confirmed knowledge base reset", () => {
       );
       await client.query(
         `INSERT INTO knowledge_pages(id,current_path,current_version_id,search_vector)
-         VALUES ($1,'agents',$2,page_search_vector('agents','AGENTS.md','Local root guide.','Local'))`,
-        [guidePageId, guideVersionId],
+         VALUES ($1,$2,$3,page_search_vector($2,'AGENTS.md','Local root guide.','Local'))`,
+        [guidePageId, guidePath, guideVersionId],
       );
       await client.query(
         `INSERT INTO knowledge_page_versions(
            id,page_id,version_number,path,title,summary,commit_message,actor_kind,actor_subject
-         ) VALUES ($1,$2,1,'agents','AGENTS.md','Local root guide.','Rewrite the root guide','dashboard','context-use-owner')`,
-        [guideVersionId, guidePageId],
+         ) VALUES ($1,$2,1,$3,'AGENTS.md','Local root guide.','Rewrite the root guide','dashboard','context-use-owner')`,
+        [guideVersionId, guidePageId, guidePath],
+      );
+      // The fixture defers the bootstrap trigger, so model the durable
+      // post-bootstrap invariant explicitly before exercising reset.
+      await client.query(
+        `UPDATE knowledge_settings
+         SET global_guide_document_id=$1,updated_at=now() WHERE singleton`,
+        [guidePageId],
       );
 
       await client.query(

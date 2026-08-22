@@ -338,6 +338,7 @@ describeDatabase("PostgreSQL security roles", () => {
   test("service roles cannot create database objects or assume internal owner roles", async () => {
     const serviceRoles = [
       "context_use_auth",
+      "context_use_corpus",
       "context_use_dashboard",
       "context_use_mcp",
       "context_use_public",
@@ -411,6 +412,89 @@ describeDatabase("PostgreSQL security roles", () => {
     ]);
   });
 
+  test("corpus preparation is isolated from the long-lived dashboard credential", async () => {
+    const corpusRole = await admin.query<{
+      rolcanlogin: boolean;
+      rolsuper: boolean;
+      rolcreatedb: boolean;
+      rolcreaterole: boolean;
+      rolinherit: boolean;
+      rolbypassrls: boolean;
+    }>(
+      `SELECT rolcanlogin,rolsuper,rolcreatedb,rolcreaterole,rolinherit,rolbypassrls
+       FROM pg_roles WHERE rolname='context_use_corpus'`,
+    );
+    expect(corpusRole.rows[0]).toEqual({
+      // The migration creates a NOLOGIN role; the migrator provisions the
+      // one-shot corpus credential only when DB_CORPUS_PASSWORD is supplied.
+      rolcanlogin: true,
+      rolsuper: false,
+      rolcreatedb: false,
+      rolcreaterole: false,
+      rolinherit: true,
+      rolbypassrls: false,
+    });
+    expect((await admin.query<{ allowed: boolean }>(
+      "SELECT pg_has_role('context_use_corpus','context_use_dashboard','MEMBER') AS allowed",
+    )).rows[0]?.allowed).toBe(true);
+    expect((await admin.query<{ allowed: boolean }>(
+      "SELECT pg_has_role('context_use_dashboard','context_use_corpus','MEMBER') AS allowed",
+    )).rows[0]?.allowed).toBe(false);
+
+    const ledgers = [
+      "corpus_migration_runs",
+      "corpus_migration_inventory",
+      "corpus_directory_migration_plans",
+      "corpus_page_migration_plans",
+      "corpus_migration_automation_plans",
+      "corpus_migration_completions",
+      "operational_document_replacements",
+    ];
+    for (const relation of ledgers) {
+      for (const privilege of ["SELECT", "INSERT", "UPDATE", "DELETE"]) {
+        expect((await admin.query<{ allowed: boolean }>(
+          "SELECT has_table_privilege('context_use_dashboard',$1,$2) AS allowed",
+          [relation, privilege],
+        )).rows[0]?.allowed).toBe(false);
+      }
+      expect((await admin.query<{ allowed: boolean }>(
+        "SELECT has_table_privilege('context_use_corpus',$1,'SELECT') AS allowed",
+        [relation],
+      )).rows[0]?.allowed).toBe(true);
+    }
+
+    for (const fn of [
+      "register_directory_hub_migration(uuid,uuid)",
+      "render_corpus_public_directory_hub(uuid,uuid)",
+      "replace_knowledge_revision_projections(uuid,uuid[])",
+      "retarget_managed_operational_document(uuid)",
+    ]) {
+      expect((await admin.query<{ allowed: boolean }>(
+        "SELECT has_function_privilege('context_use_dashboard',$1,'EXECUTE') AS allowed",
+        [fn],
+      )).rows[0]?.allowed).toBe(false);
+      expect((await admin.query<{ allowed: boolean }>(
+        "SELECT has_function_privilege('context_use_corpus',$1,'EXECUTE') AS allowed",
+        [fn],
+      )).rows[0]?.allowed).toBe(true);
+    }
+
+    for (const [relation, column] of [
+      ["public_projection_state", "generation"],
+      ["published_page_artifacts", "body_object_key"],
+      ["published_page_artifacts", "body_content_hash"],
+    ]) {
+      expect((await admin.query<{ allowed: boolean }>(
+        "SELECT has_column_privilege('context_use_dashboard',$1,$2,'SELECT') AS allowed",
+        [relation, column],
+      )).rows[0]?.allowed).toBe(false);
+      expect((await admin.query<{ allowed: boolean }>(
+        "SELECT has_column_privilege('context_use_corpus',$1,$2,'SELECT') AS allowed",
+        [relation, column],
+      )).rows[0]?.allowed).toBe(true);
+    }
+  });
+
   test("views and privileged procedures have narrowly privileged non-login owners", async () => {
     const views = await admin.query<{ relname: string; owner: string }>(
       `SELECT relname,pg_get_userbyid(relowner) AS owner
@@ -454,6 +538,9 @@ describeDatabase("PostgreSQL security roles", () => {
            'complete_knowledge_export_download',
            'clear_knowledge',
            'delete_empty_knowledge_directory',
+           'lock_automation_registry_for_operational_retarget',
+           'lock_corpus_migration_hub_apply_tables',
+           'lock_corpus_migration_runs_for_operational_change',
            'prune_page_versions',
            'remove_owner_passkey',
            'project_public_markdown'
@@ -470,6 +557,9 @@ describeDatabase("PostgreSQL security roles", () => {
       { proname: "consume_confirmation_challenge", owner: "context_use_boundary_owner", security_definer: true },
       { proname: "delete_empty_knowledge_directory", owner: "context_use_boundary_owner", security_definer: true },
       { proname: "issue_confirmation_challenge", owner: "context_use_boundary_owner", security_definer: true },
+      { proname: "lock_automation_registry_for_operational_retarget", owner: "context_use_boundary_owner", security_definer: true },
+      { proname: "lock_corpus_migration_hub_apply_tables", owner: "context_use_boundary_owner", security_definer: true },
+      { proname: "lock_corpus_migration_runs_for_operational_change", owner: "context_use_boundary_owner", security_definer: true },
       { proname: "project_public_markdown", owner: "context_use_projection_owner", security_definer: true },
       { proname: "prune_page_versions", owner: "context_use_boundary_owner", security_definer: true },
       { proname: "remove_owner_passkey", owner: "context_use_boundary_owner", security_definer: true },
@@ -477,7 +567,7 @@ describeDatabase("PostgreSQL security roles", () => {
 
     for (const [relation, column] of [
       ["knowledge_directories", "title"],
-      ["knowledge_page_versions", "title"],
+      ["knowledge_page_versions", "commit_message"],
       ["assets", "s3_object_key"],
     ]) {
       expect((await admin.query<{ allowed: boolean }>(

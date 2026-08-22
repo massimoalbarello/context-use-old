@@ -1,6 +1,16 @@
 import { Client } from "pg";
 
 export const DEVELOPMENT_RESET_TABLES = [
+  "operational_document_replacements",
+  "automation_registry",
+  "directory_hub_migrations",
+  "legacy_public_directory_prefixes",
+  "corpus_migration_completions",
+  "corpus_migration_automation_plans",
+  "corpus_page_migration_plans",
+  "corpus_directory_migration_plans",
+  "corpus_migration_inventory",
+  "corpus_migration_runs",
   "confirmation_challenges",
   "publication_intents",
   "knowledge_export_intents",

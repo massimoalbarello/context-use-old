@@ -91,6 +91,7 @@ jobs:
           TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/context_use
           DB_AUTH_PASSWORD: test-auth
           DB_DASHBOARD_PASSWORD: test-dashboard
+          DB_CORPUS_PASSWORD: test-corpus
           DB_MCP_PASSWORD: test-mcp
           DB_PUBLIC_PASSWORD: test-public
           DB_CONFIRMATION_PASSWORD: test-confirmation
@@ -98,6 +99,7 @@ jobs:
           DB_BACKUP_PASSWORD: test-backup
           TEST_APP_DATABASE_URL: "1"
           DATABASE_URL: postgres://context_use_dashboard:test-dashboard@localhost:5432/context_use
+          CORPUS_DATABASE_URL: postgres://context_use_corpus:test-corpus@localhost:5432/context_use
           AUTH_DATABASE_URL: postgres://context_use_auth:test-auth@localhost:5432/context_use
           MCP_DATABASE_URL: postgres://context_use_mcp:test-mcp@localhost:5432/context_use
           PUBLIC_DATABASE_URL: postgres://context_use_public:test-public@localhost:5432/context_use
@@ -125,6 +127,7 @@ jobs:
           POSTGRES_PASSWORD: test
           DB_AUTH_PASSWORD: test
           DB_DASHBOARD_PASSWORD: test
+          DB_CORPUS_PASSWORD: test
           DB_MCP_PASSWORD: test
           DB_PUBLIC_PASSWORD: test
           DB_CONFIRMATION_PASSWORD: test

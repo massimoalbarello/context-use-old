@@ -291,6 +291,10 @@ export class PageRepository {
     const bodyMarkdown = normalizeInternalDocumentLinks(input.body_markdown);
     const stored = await this.storedBody(versionId, bodyMarkdown);
     return transaction(this.pool, async (client) => {
+      await client.query(
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
+      );
+      await client.query("SELECT lock_operational_document($1)", [pageId]);
       const current = await client.query<{ version_number: number }>(
         `${CURRENT_PAGE_SELECT} WHERE p.id = $1 FOR UPDATE OF p`,
         [pageId],
@@ -334,6 +338,10 @@ export class PageRepository {
     const bodyMarkdown = normalizeInternalDocumentLinks(source.body_markdown);
     const stored = await this.storedBody(versionId, bodyMarkdown);
     return transaction(this.pool, async (client) => {
+      await client.query(
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
+      );
+      await client.query("SELECT lock_operational_document($1)", [pageId]);
       const current = await client.query<{
         version_number: number;
         current_path: string;

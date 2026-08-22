@@ -1,4 +1,4 @@
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 export type KnowledgeSettings = {
   global_guide_document_id: string | null;
@@ -16,6 +16,21 @@ export type GlobalKnowledgeGuideMetadata = {
   body_content_hash: string;
   settings_updated_at: Date | string;
 };
+
+async function transaction<T>(pool: Pool, work: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await work(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
 
 export class KnowledgeSettingsRepository {
   constructor(private readonly pool: Pool) {}
@@ -53,15 +68,21 @@ export class KnowledgeSettingsRepository {
   }
 
   async updateGlobalGuide(documentId: string): Promise<KnowledgeSettings> {
-    const result = await this.pool.query<KnowledgeSettings>(
-      `UPDATE knowledge_settings
-       SET global_guide_document_id=$1,updated_at=now()
-       WHERE singleton
-       RETURNING global_guide_document_id,updated_at`,
-      [documentId],
-    );
-    const settings = result.rows[0];
-    if (!settings) throw new Error("Knowledge settings singleton is missing");
-    return settings;
+    return transaction(this.pool, async (client) => {
+      await client.query(
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
+      );
+      await client.query("SELECT lock_operational_document($1)", [documentId]);
+      const result = await client.query<KnowledgeSettings>(
+        `UPDATE knowledge_settings
+         SET global_guide_document_id=$1,updated_at=now()
+         WHERE singleton
+         RETURNING global_guide_document_id,updated_at`,
+        [documentId],
+      );
+      const settings = result.rows[0];
+      if (!settings) throw new Error("Knowledge settings singleton is missing");
+      return settings;
+    });
   }
 }
