@@ -814,6 +814,7 @@ FOR EACH ROW EXECUTE FUNCTION validate_automation_registry_documents();
 CREATE FUNCTION prevent_automation_document_role_reuse()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY DEFINER
 SET search_path=pg_catalog,public
 AS $$
 DECLARE
@@ -2297,6 +2298,8 @@ GRANT SELECT (document_id) ON source_records TO context_use_boundary_owner;
 GRANT USAGE,CREATE ON SCHEMA public TO context_use_boundary_owner;
 ALTER FUNCTION prevent_operational_document_publication() OWNER TO context_use_boundary_owner;
 ALTER FUNCTION prevent_operational_publication_intent() OWNER TO context_use_boundary_owner;
+ALTER FUNCTION prevent_automation_document_role_reuse()
+  OWNER TO context_use_boundary_owner;
 ALTER FUNCTION protect_registered_automation_documents() OWNER TO context_use_boundary_owner;
 ALTER FUNCTION retarget_managed_operational_document(uuid)
   OWNER TO context_use_boundary_owner;

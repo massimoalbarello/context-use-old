@@ -495,6 +495,57 @@ describeDatabase("PostgreSQL security roles", () => {
     }
   });
 
+  test("dashboard can register a private automation without reading corpus plans", async () => {
+    const pageId = randomUUID();
+    const versionId = randomUUID();
+    const registrationId = randomUUID();
+    const suffix = randomUUID().slice(0, 8);
+    await admin.query("BEGIN");
+    try {
+      await admin.query("SET CONSTRAINTS ALL DEFERRED");
+      await admin.query(
+        `INSERT INTO knowledge_pages(id,current_path,current_version_id,search_vector)
+         VALUES (
+           $1,$2,$3,
+           page_search_vector($2,'Automation instructions','Private automation instructions.','Test')
+         )`,
+        [pageId, `test/dashboard-automation-${suffix}`, versionId],
+      );
+      await admin.query(
+         `INSERT INTO hypermedia_document_revisions(
+           id,document_id,revision_number,body_object_key,body_size_bytes,body_content_hash
+         ) VALUES (
+           $1::uuid,$2::uuid,1,'documents/private/'||($1::uuid)::text||'.md',4,$3
+         )`,
+        [versionId, pageId, "532eaabd9574880dbf76b9b8cc00832c20a6ec113d6822995505d7a6e0f345e2"],
+      );
+      await admin.query(
+        `INSERT INTO knowledge_page_versions(
+           id,page_id,version_number,path,title,summary,commit_message,actor_kind,actor_subject
+         ) VALUES (
+           $1,$2,1,$3,'Automation instructions','Private automation instructions.',
+           'Create dashboard registration fixture','dashboard','owner'
+         )`,
+        [versionId, pageId, `test/dashboard-automation-${suffix}`],
+      );
+
+      await admin.query("SET LOCAL ROLE context_use_dashboard");
+      await admin.query(
+        `INSERT INTO automation_registry(id,key,name,instructions_document_id)
+         VALUES ($1,$2,'Dashboard automation',$3)`,
+        [registrationId, `dashboard-${suffix}`, pageId],
+      );
+      expect((await admin.query(
+        "SELECT 1 FROM automation_registry WHERE id=$1 AND instructions_document_id=$2",
+        [registrationId, pageId],
+      )).rowCount).toBe(1);
+      await expectDenied("SELECT * FROM corpus_migration_automation_plans");
+      await admin.query("RESET ROLE");
+    } finally {
+      await admin.query("ROLLBACK");
+    }
+  });
+
   test("views and privileged procedures have narrowly privileged non-login owners", async () => {
     const views = await admin.query<{ relname: string; owner: string }>(
       `SELECT relname,pg_get_userbyid(relowner) AS owner
@@ -541,6 +592,7 @@ describeDatabase("PostgreSQL security roles", () => {
            'lock_automation_registry_for_operational_retarget',
            'lock_corpus_migration_hub_apply_tables',
            'lock_corpus_migration_runs_for_operational_change',
+           'prevent_automation_document_role_reuse',
            'prune_page_versions',
            'remove_owner_passkey',
            'project_public_markdown'
@@ -560,6 +612,7 @@ describeDatabase("PostgreSQL security roles", () => {
       { proname: "lock_automation_registry_for_operational_retarget", owner: "context_use_boundary_owner", security_definer: true },
       { proname: "lock_corpus_migration_hub_apply_tables", owner: "context_use_boundary_owner", security_definer: true },
       { proname: "lock_corpus_migration_runs_for_operational_change", owner: "context_use_boundary_owner", security_definer: true },
+      { proname: "prevent_automation_document_role_reuse", owner: "context_use_boundary_owner", security_definer: true },
       { proname: "project_public_markdown", owner: "context_use_projection_owner", security_definer: true },
       { proname: "prune_page_versions", owner: "context_use_boundary_owner", security_definer: true },
       { proname: "remove_owner_passkey", owner: "context_use_boundary_owner", security_definer: true },
