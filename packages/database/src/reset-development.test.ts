@@ -7,6 +7,7 @@ describe("development data reset", () => {
     expect(DEVELOPMENT_RESET_TABLES).toContain("assets");
     expect(DEVELOPMENT_RESET_TABLES).toContain("source_records");
     expect(DEVELOPMENT_RESET_TABLES).toContain("source_record_search_chunks");
+    expect(DEVELOPMENT_RESET_TABLES).toContain("pathless_knowledge_search_chunks");
     expect(DEVELOPMENT_RESET_TABLES).toContain("hypermedia_documents");
     expect(DEVELOPMENT_RESET_TABLES).toContain("public_resources");
 

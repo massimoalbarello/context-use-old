@@ -1,15 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import {
   archiveAssetSchema,
+  archiveDocumentAssetSchema,
+  archiveKnowledgeDocumentSchema,
   assetFilenameForPath,
   assetUploadSchema,
+  createDocumentAssetSchema,
   createDirectorySchema,
+  createKnowledgeDocumentSchema,
   deleteDirectorySchema,
   AssetPath,
   createPageSchema,
   publicationIntentSchema,
   PAGE_MARKDOWN_BODY_DESCRIPTION,
   summarizeTemplateResult,
+  updateKnowledgeDocumentSchema,
   updatePageSchema,
 } from "./index.ts";
 
@@ -80,6 +85,84 @@ describe("strict mutation schemas", () => {
     expect(updatePageSchema.safeParse({
       path: "private/page", title: "Private", summary: "A private page.", body_markdown: "Body", commit_message: "Update page",
       expected_version_number: 1, published_version_id: versionId,
+    }).success).toBe(false);
+  });
+
+  test("pathless knowledge document writes reuse page constraints without accepting paths", () => {
+    expect(Object.keys(createKnowledgeDocumentSchema.shape).sort()).toEqual([
+      "body_markdown", "commit_message", "summary", "title",
+    ]);
+    expect(Object.keys(updateKnowledgeDocumentSchema.shape).sort()).toEqual([
+      "body_markdown", "commit_message", "expected_revision_number", "summary", "title",
+    ]);
+    expect(Object.keys(archiveKnowledgeDocumentSchema.shape).sort()).toEqual([
+      "commit_message", "expected_revision_number",
+    ]);
+    const create = {
+      title: "Private note",
+      summary: "A private knowledge document.",
+      body_markdown: "Linked to [evidence](context-use://document/11111111-1111-4111-8111-111111111111).",
+      commit_message: "Create private note",
+    };
+    expect(createKnowledgeDocumentSchema.parse(create)).toEqual(create);
+    expect(createKnowledgeDocumentSchema.shape.summary.description).toContain("document search");
+    expect(createKnowledgeDocumentSchema.shape.summary.description).not.toContain("directory");
+    expect(updateKnowledgeDocumentSchema.shape.summary.description).not.toContain("directory");
+    expect(createKnowledgeDocumentSchema.safeParse({ ...create, path: "private/note" }).success)
+      .toBe(false);
+    expect(createKnowledgeDocumentSchema.safeParse({ ...create, summary: "first\nsecond" }).success)
+      .toBe(false);
+
+    const update = { ...create, commit_message: "Update private note", expected_revision_number: 2 };
+    expect(updateKnowledgeDocumentSchema.parse(update)).toEqual(update);
+    expect(updateKnowledgeDocumentSchema.safeParse({ ...update, path: "private/note" }).success)
+      .toBe(false);
+    expect(updateKnowledgeDocumentSchema.safeParse({ ...update, expected_revision_number: 0 }).success)
+      .toBe(false);
+    expect(updateKnowledgeDocumentSchema.safeParse({
+      ...update,
+      expected_revision_number: undefined,
+      expected_version_number: 2,
+    }).success).toBe(false);
+
+    const archive = { commit_message: "Archive private note", expected_revision_number: 2 };
+    expect(archiveKnowledgeDocumentSchema.parse(archive)).toEqual(archive);
+    expect(archiveKnowledgeDocumentSchema.safeParse({ ...archive, path: "private/note" }).success)
+      .toBe(false);
+  });
+
+  test("pathless document asset writes reuse bounded metadata without accepting paths", () => {
+    expect(Object.keys(createDocumentAssetSchema.shape).sort()).toEqual([
+      "content_type", "duration_seconds", "filename", "height", "sha256", "size_bytes", "width",
+    ]);
+    expect(Object.keys(archiveDocumentAssetSchema.shape)).toEqual(["asset_id"]);
+    const create = {
+      filename: "site-photo.jpg",
+      content_type: "image/jpeg",
+      size_bytes: 123,
+      sha256: "a".repeat(64),
+      width: 800,
+      height: 600,
+      duration_seconds: 0,
+    };
+    expect(createDocumentAssetSchema.parse(create)).toEqual(create);
+    expect(createDocumentAssetSchema.safeParse({ ...create, path: "projects/acme/site-photo" }).success)
+      .toBe(false);
+    expect(createDocumentAssetSchema.safeParse({ ...create, size_bytes: 5_000_000_001 }).success)
+      .toBe(false);
+    expect(createDocumentAssetSchema.safeParse({ ...create, sha256: "A".repeat(64) }).success)
+      .toBe(false);
+    expect(createDocumentAssetSchema.safeParse({ ...create, filename: "../site-photo.jpg" }).success)
+      .toBe(false);
+    expect(createDocumentAssetSchema.safeParse({ ...create, filename: "folder/site-photo.jpg" }).success)
+      .toBe(false);
+    expect(createDocumentAssetSchema.safeParse({ ...create, content_type: "image/jpeg\r\nX-Leak: 1" }).success)
+      .toBe(false);
+
+    expect(archiveDocumentAssetSchema.safeParse({ asset_id: pageId }).success).toBe(true);
+    expect(archiveDocumentAssetSchema.safeParse({
+      asset_id: pageId,
+      path: "projects/acme/site-photo",
     }).success).toBe(false);
   });
 

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Client, Pool } from "pg";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { PageRepository, PublicRepository } from "../src/index.ts";
 import { disposableDatabaseUrl } from "../src/disposable-database.ts";
 import { MemoryMarkdownStore } from "./memory-markdown-store.ts";
@@ -529,6 +529,146 @@ describeDatabase("PostgreSQL security roles", () => {
         "SELECT has_column_privilege('context_use_corpus',$1,$2,'SELECT') AS allowed",
         [relation, column],
       )).rows[0]?.allowed).toBe(true);
+    }
+  });
+
+  test("pathless revision and catalog boundaries enforce their real service roles", async () => {
+    const authoredDocumentId = randomUUID();
+    const authoredRevisionId = randomUUID();
+    const adoptedDocumentId = randomUUID();
+    const adoptedRevisionId = randomUUID();
+    const suffix = randomUUID().slice(0, 8);
+    const body = "Role-bound pathless body";
+    const bodyHash = createHash("sha256").update(body).digest("hex");
+    const insertFixture = async (
+      documentId: string,
+      revisionId: string,
+      path: string,
+      title: string,
+    ): Promise<void> => {
+      await admin.query(
+        "INSERT INTO hypermedia_documents(id,authority,representation) VALUES ($1,'knowledge','markdown')",
+        [documentId],
+      );
+      await admin.query(
+        `INSERT INTO hypermedia_document_revisions(
+           id,document_id,revision_number,body_object_key,body_size_bytes,body_content_hash
+         ) VALUES (
+           $1::uuid,$2::uuid,1,
+           'documents/private/'||($1::uuid)::text||'.md',$3,$4
+         )`,
+        [revisionId, documentId, Buffer.byteLength(body), bodyHash],
+      );
+      await admin.query(
+        `INSERT INTO knowledge_pages(
+           id,current_path,current_version_id,search_vector
+         ) VALUES ($1,$2,$3,page_search_vector($2,$4,'Role fixture.',$5))`,
+        [documentId, path, revisionId, title, body],
+      );
+      await admin.query(
+        `INSERT INTO knowledge_page_versions(
+           id,page_id,version_number,path,title,summary,commit_message,actor_kind,actor_subject
+         ) VALUES ($1,$2,1,$3,$4,'Role fixture.','Create pathless role fixture','dashboard','owner')`,
+        [revisionId, documentId, path, title],
+      );
+    };
+
+    await admin.query("BEGIN");
+    try {
+      await admin.query("SET CONSTRAINTS ALL DEFERRED");
+      await insertFixture(
+        authoredDocumentId,
+        authoredRevisionId,
+        `tests/pathless-authored-${suffix}`,
+        "Authored role boundary",
+      );
+      await insertFixture(
+        adoptedDocumentId,
+        adoptedRevisionId,
+        `tests/pathless-adopted-${suffix}`,
+        "Adopted role boundary",
+      );
+
+      await admin.query("SET LOCAL ROLE context_use_dashboard");
+      expect((await admin.query(
+        "SELECT register_generic_knowledge_revision($1,$2,'{}'::uuid[])",
+        [authoredRevisionId, body],
+      )).rowCount).toBe(1);
+      expect((await admin.query(
+        "SELECT 1 FROM private_document_catalog WHERE document_id=$1",
+        [authoredDocumentId],
+      )).rowCount).toBe(1);
+      expect((await admin.query(
+        `SELECT 1 FROM search_private_document_catalog(
+           'Authored',NULL,NULL,NULL,false,10,NULL,NULL,'knowledge',NULL,NULL,NULL
+         ) WHERE search_document_id=$1`,
+        [authoredDocumentId],
+      )).rowCount).toBe(1);
+      await expectDenied("SELECT * FROM pathless_knowledge_search_chunks");
+      await expectDenied(
+        "SELECT adopt_generic_knowledge_revision($1,$2,$3,'{}'::uuid[],'corpus_migration')",
+        [adoptedDocumentId, adoptedRevisionId, body],
+      );
+      await admin.query("RESET ROLE");
+
+      await admin.query("SET LOCAL ROLE context_use_mcp");
+      expect((await admin.query(
+        "SELECT register_generic_knowledge_revision($1,$2,'{}'::uuid[])",
+        [authoredRevisionId, body],
+      )).rowCount).toBe(1);
+      expect((await admin.query(
+        "SELECT 1 FROM knowledge_revision_contracts WHERE revision_id=$1",
+        [authoredRevisionId],
+      )).rowCount).toBe(1);
+      await expectDenied("SELECT * FROM pathless_knowledge_search_chunks");
+      await admin.query("RESET ROLE");
+
+      await admin.query("SET LOCAL ROLE context_use_corpus");
+      expect((await admin.query(
+        "SELECT adopt_generic_knowledge_revision($1,$2,$3,'{}'::uuid[],'corpus_migration')",
+        [adoptedDocumentId, adoptedRevisionId, body],
+      )).rowCount).toBe(1);
+      await admin.query("RESET ROLE");
+
+      await admin.query("SET LOCAL ROLE context_use_dashboard");
+      await expectDenied("INSERT INTO knowledge_revision_contracts( revision_id,document_id,provenance,body_content_hash ) VALUES ($1,$2,'authored',$3)", [randomUUID(), authoredDocumentId, bodyHash]);
+      await expectDenied(
+        `SELECT * FROM search_private_document_catalog(
+           repeat('x',2049),NULL,NULL,NULL,false,10,NULL,NULL,NULL,NULL,NULL,NULL
+         )`,
+      );
+      await admin.query("RESET ROLE");
+
+      for (const role of [
+        "context_use_public",
+        "context_use_storage",
+        "context_use_confirmation",
+      ]) {
+        for (const relation of [
+          "knowledge_revision_contracts",
+          "pathless_knowledge_search",
+          "pathless_knowledge_search_chunks",
+          "private_document_catalog",
+        ]) {
+          expect((await admin.query<{ allowed: boolean }>(
+            "SELECT has_table_privilege($1,$2,'SELECT') AS allowed",
+            [role, relation],
+          )).rows[0]?.allowed).toBe(false);
+        }
+        for (const fn of [
+          "record_generic_knowledge_revision(uuid,uuid,text,uuid[],knowledge_revision_contract_provenance)",
+          "register_generic_knowledge_revision(uuid,text,uuid[])",
+          "adopt_generic_knowledge_revision(uuid,uuid,text,uuid[],knowledge_revision_contract_provenance)",
+          "search_private_document_catalog(text,real,bigint,uuid,boolean,integer,hypermedia_document_authority,hypermedia_document_representation,private_document_kind,private_document_lifecycle,text,private_document_operational_role)",
+        ]) {
+          expect((await admin.query<{ allowed: boolean }>(
+            "SELECT has_function_privilege($1,$2,'EXECUTE') AS allowed",
+            [role, fn],
+          )).rows[0]?.allowed).toBe(false);
+        }
+      }
+    } finally {
+      await admin.query("ROLLBACK");
     }
   });
 

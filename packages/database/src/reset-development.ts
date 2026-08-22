@@ -1,6 +1,9 @@
 import { Client } from "pg";
 
 export const DEVELOPMENT_RESET_TABLES = [
+  "pathless_knowledge_search_chunks",
+  "pathless_knowledge_search",
+  "knowledge_revision_contracts",
   "operational_document_replacements",
   "automation_registry",
   "directory_hub_migrations",

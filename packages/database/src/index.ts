@@ -22,6 +22,36 @@ export {
   type DocumentLinkIndex,
 } from "./document-links.ts";
 export {
+  GenericDocumentLinkContractError,
+  assertGenericDocumentLinksOnly,
+  genericDocumentTargets,
+} from "./document-link-contract.ts";
+export {
+  KnowledgeDocumentRepository,
+  type AdoptKnowledgeRevisionInput,
+  type KnowledgeDocument,
+  type KnowledgeDocumentMetadata,
+  type KnowledgeDocumentRevision,
+  type KnowledgeRevisionContractProvenance,
+} from "./knowledge-documents.ts";
+export {
+  DocumentAssetRepository,
+  type DocumentAssetCreateResult,
+  type DocumentAsset,
+} from "./document-assets.ts";
+export {
+  InvalidPrivateDocumentCursorError,
+  PrivateDocumentCatalogRepository,
+  type PrivateDocumentCatalogFilters,
+  type PrivateDocumentCatalogItem,
+  type PrivateDocumentCatalogPage,
+  type PrivateDocumentKind,
+  type PrivateDocumentLifecycle,
+  type PrivateDocumentNeighbor,
+  type PrivateDocumentNeighborhood,
+  type PrivateDocumentOperationalRole,
+} from "./document-catalog.ts";
+export {
   KnowledgeSettingsRepository,
   type GlobalKnowledgeGuideMetadata,
   type KnowledgeSettings,

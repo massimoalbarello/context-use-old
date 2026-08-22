@@ -161,13 +161,20 @@ async function insertAssetLinks(
   // A normal download link and an embedded media link both retain an asset.
   // The generic URI deliberately carries no representation type, so resolve
   // every document target against the asset projection here.
-  for (const targetId of extractDocumentLinks(markdown)) {
-    await client.query(
-      `INSERT INTO knowledge_asset_links(source_version_id, target_asset_id)
-       SELECT $1, id FROM assets WHERE id = $2 AND deleted_at IS NULL
-       ON CONFLICT DO NOTHING`,
-      [versionId, targetId],
+  for (const targetId of [...new Set(extractDocumentLinks(markdown))].sort()) {
+    const target = await client.query<{ id: string }>(
+      `SELECT id FROM assets
+       WHERE id=$1 AND deleted_at IS NULL
+       FOR SHARE`,
+      [targetId],
     );
+    if (target.rows[0]) {
+      await client.query(
+        `INSERT INTO knowledge_asset_links(source_version_id,target_asset_id)
+         VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+        [versionId, target.rows[0].id],
+      );
+    }
   }
 }
 
@@ -257,6 +264,9 @@ export class PageRepository {
     const bodyMarkdown = normalizeInternalDocumentLinks(input.body_markdown);
     const stored = await this.storedBody(versionId, bodyMarkdown);
     return transaction(this.pool, async (client) => {
+      await client.query(
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
+      );
       await client.query(
         `INSERT INTO hypermedia_documents(id,authority) VALUES ($1,'knowledge')`,
         [pageId],

@@ -415,13 +415,13 @@ export class SourceRecordRepository implements SourceRecordWriter {
                source_records.source_created_at,EXCLUDED.source_created_at
              ),
              source_updated_at=EXCLUDED.source_updated_at,
-             search_vector=CASE WHEN $10::text IS NULL
-               THEN source_records.search_vector ELSE ''::tsvector END,
+             search_vector=CASE WHEN $10::boolean
+               THEN ''::tsvector ELSE source_records.search_vector END,
              deleted_at=EXCLUDED.deleted_at`,
           [documentId, currentRevisionId, record.integration,
             record.connectionInstanceId, record.connectionId, record.model,
             record.sourceRecordId, record.sourceCreatedAt ?? null, record.sourceUpdatedAt,
-            record.markdown],
+            bodyChanged],
         );
         if (bodyChanged) {
           await client.query(
@@ -452,11 +452,13 @@ export class SourceRecordRepository implements SourceRecordWriter {
            current_revision_id=EXCLUDED.current_revision_id,
            source_created_at=coalesce(source_records.source_created_at,EXCLUDED.source_created_at),
            source_updated_at=EXCLUDED.source_updated_at,
-           search_vector=EXCLUDED.search_vector,deleted_at=NULL`,
+           search_vector=CASE WHEN $10::boolean
+             THEN ''::tsvector ELSE source_records.search_vector END,
+           deleted_at=NULL`,
         [documentId, currentRevisionId, record.integration,
           record.connectionInstanceId, record.connectionId, record.model,
           record.sourceRecordId, record.sourceCreatedAt ?? null,
-          record.sourceUpdatedAt],
+          record.sourceUpdatedAt, bodyChanged],
       );
       if (bodyChanged) {
         await client.query(

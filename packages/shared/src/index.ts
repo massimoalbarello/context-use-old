@@ -90,6 +90,33 @@ export const archivePageSchema = z
   })
   .strict();
 
+/** Path-independent authored knowledge mutation contracts. */
+export const createKnowledgeDocumentSchema = createPageSchema
+  .omit({ path: true })
+  .extend({
+    summary: KnowledgeSummary.describe(
+      "Required one-sentence summary used in document search and private link previews.",
+    ),
+  })
+  .strict();
+
+export const updateKnowledgeDocumentSchema = updatePageSchema
+  .omit({ path: true, expected_version_number: true })
+  .extend({
+    summary: KnowledgeSummary.describe(
+      "Required one-sentence summary used in document search and private link previews.",
+    ),
+    expected_revision_number: updatePageSchema.shape.expected_version_number,
+  })
+  .strict();
+
+export const archiveKnowledgeDocumentSchema = archivePageSchema
+  .omit({ expected_version_number: true })
+  .extend({
+    expected_revision_number: archivePageSchema.shape.expected_version_number,
+  })
+  .strict();
+
 export const publicationIntentSchema = z
   .object({
     action: z.enum(["publish", "unpublish"]),
@@ -110,9 +137,19 @@ export const publicationIntentSchema = z
     }
   });
 
+const AssetFilename = z.string().trim().min(1).max(1024);
+const DocumentAssetFilename = AssetFilename.refine(
+  (value) => value !== "." && value !== ".." && !/[\\/\u0000-\u001f\u007f]/.test(value),
+  "Use a filename, not a path or control characters",
+);
+const DocumentAssetContentType = z.string().trim().min(1).max(255).refine(
+  (value) => !/[\r\n\u0000]/.test(value),
+  "Content type cannot contain control characters",
+);
+
 export const assetUploadSchema = z.object({
   path: AssetPath,
-  filename: z.string().trim().min(1).max(1024).describe(
+  filename: AssetFilename.describe(
     "Name of the file being uploaded. Only its extension is kept: the stored name follows the"
     + " path leaf, so library/some-paper/paper with paper-draft.pdf is stored as paper.pdf.",
   ),
@@ -123,6 +160,14 @@ export const assetUploadSchema = z.object({
   height: z.number().int().positive().optional(),
   duration_seconds: z.number().nonnegative().optional(),
 }).strict();
+
+export const createDocumentAssetSchema = assetUploadSchema
+  .omit({ path: true })
+  .extend({
+    filename: DocumentAssetFilename.describe("Filename presented for this document asset."),
+    content_type: DocumentAssetContentType,
+  })
+  .strict();
 
 /**
  * One asset, one name. The stored filename follows the path leaf so the dashboard heading, the
@@ -140,6 +185,8 @@ export const archiveAssetSchema = z.object({
   asset_id: UUID,
 }).strict();
 
+export const archiveDocumentAssetSchema = archiveAssetSchema;
+
 export type CreatePageInput = z.infer<typeof createPageSchema>;
 export type UpdatePageInput = z.infer<typeof updatePageSchema>;
 export type CreateDirectoryInput = z.infer<typeof createDirectorySchema>;
@@ -149,6 +196,11 @@ export type ArchivePageInput = z.infer<typeof archivePageSchema>;
 export type PublicationIntentInput = z.infer<typeof publicationIntentSchema>;
 export type AssetUploadInput = z.infer<typeof assetUploadSchema>;
 export type ArchiveAssetInput = z.infer<typeof archiveAssetSchema>;
+export type CreateKnowledgeDocumentInput = z.infer<typeof createKnowledgeDocumentSchema>;
+export type UpdateKnowledgeDocumentInput = z.infer<typeof updateKnowledgeDocumentSchema>;
+export type ArchiveKnowledgeDocumentInput = z.infer<typeof archiveKnowledgeDocumentSchema>;
+export type CreateDocumentAssetInput = z.infer<typeof createDocumentAssetSchema>;
+export type ArchiveDocumentAssetInput = z.infer<typeof archiveDocumentAssetSchema>;
 export type Actor = {
   kind: "dashboard" | "mcp";
   subject: string;

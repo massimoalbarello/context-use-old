@@ -186,6 +186,23 @@ describe("page mutation lock ordering", () => {
     expectCanonicalOrder(transactionCalls);
   });
 
+  test("create takes the corpus transition lock before inserting any page state", async () => {
+    const { pages, transactionCalls } = repository();
+    await pages.create({
+      path: "about/new",
+      title: "New page",
+      summary: "A newly created page.",
+      body_markdown: "New body",
+      commit_message: "Create page",
+    }, { kind: "dashboard", subject: "owner" });
+    const transition = transactionCalls.findIndex((sql) => sql.includes(
+      "pg_advisory_xact_lock_shared",
+    ));
+    const firstInsert = transactionCalls.findIndex((sql) => sql.includes("INSERT INTO"));
+    expect(transition).toBeGreaterThan(-1);
+    expect(firstInsert).toBeGreaterThan(transition);
+  });
+
   test("archive uses the same lock order before checking the current page", async () => {
     const { pages, transactionCalls } = repository();
     await expect(pages.archive(pageId, {

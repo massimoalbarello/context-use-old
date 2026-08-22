@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import type {
   CreateDirectoryInput,
   DeleteDirectoryInput,
@@ -64,36 +64,61 @@ const PAGE_PUBLICATION_JOIN = `
       AND published_version.page_id=page.id
 `;
 
+async function transaction<T>(pool: Pool, work: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await work(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export class DirectoryRepository {
   constructor(private readonly pool: Pool) {}
 
   async create(input: CreateDirectoryInput) {
-    const result = await this.pool.query(
-      `INSERT INTO knowledge_directories(
-         id,current_path,title,summary,search_vector
-       ) VALUES ($1,$2,$3,$4,directory_search_vector($2,$3,$4,''))
-       RETURNING id,current_path,version_number,title,summary,created_at,updated_at`,
-      [randomUUID(), input.path, input.title, input.summary],
-    );
-    return result.rows[0]!;
+    return transaction(this.pool, async (client) => {
+      await client.query(
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
+      );
+      const result = await client.query(
+        `INSERT INTO knowledge_directories(
+           id,current_path,title,summary,search_vector
+         ) VALUES ($1,$2,$3,$4,directory_search_vector($2,$3,$4,''))
+         RETURNING id,current_path,version_number,title,summary,created_at,updated_at`,
+        [randomUUID(), input.path, input.title, input.summary],
+      );
+      return result.rows[0]!;
+    });
   }
 
   async update(directoryId: string, input: UpdateDirectoryInput) {
-    const result = await this.pool.query(
-      `UPDATE knowledge_directories
-       SET title=$3,summary=$4,version_number=version_number+1,
-           search_vector=directory_search_vector(current_path,$3,$4,''),updated_at=now()
-       WHERE id=$1 AND version_number=$2
-       RETURNING id,current_path,version_number,title,summary,created_at,updated_at`,
-      [directoryId, input.expected_version_number, input.title, input.summary],
-    );
-    if (result.rowCount) return result.rows[0]!;
-    const current = await this.pool.query<{ version_number: number }>(
-      "SELECT version_number FROM knowledge_directories WHERE id=$1",
-      [directoryId],
-    );
-    if (!current.rowCount) return null;
-    throw new DirectoryVersionConflictError(current.rows[0]!.version_number);
+    return transaction(this.pool, async (client) => {
+      await client.query(
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
+      );
+      const result = await client.query(
+        `UPDATE knowledge_directories
+         SET title=$3,summary=$4,version_number=version_number+1,
+             search_vector=directory_search_vector(current_path,$3,$4,''),updated_at=now()
+         WHERE id=$1 AND version_number=$2
+         RETURNING id,current_path,version_number,title,summary,created_at,updated_at`,
+        [directoryId, input.expected_version_number, input.title, input.summary],
+      );
+      if (result.rowCount) return result.rows[0]!;
+      const current = await client.query<{ version_number: number }>(
+        "SELECT version_number FROM knowledge_directories WHERE id=$1",
+        [directoryId],
+      );
+      if (!current.rowCount) return null;
+      throw new DirectoryVersionConflictError(current.rows[0]!.version_number);
+    });
   }
 
   async delete(directoryId: string, input: DeleteDirectoryInput) {
@@ -107,10 +132,15 @@ export class DirectoryRepository {
       assets?: number;
       directories?: number;
     };
-    const result = await this.pool.query<{ result: DeleteOutcome }>(
-      "SELECT delete_empty_knowledge_directory($1,$2) AS result",
-      [directoryId, input.expected_version_number],
-    );
+    const result = await transaction(this.pool, async (client) => {
+      await client.query(
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
+      );
+      return client.query<{ result: DeleteOutcome }>(
+        "SELECT delete_empty_knowledge_directory($1,$2) AS result",
+        [directoryId, input.expected_version_number],
+      );
+    });
     const outcome = result.rows[0]?.result;
     if (!outcome || outcome.status === "not_found") return null;
     if (outcome.status === "version_conflict") {
