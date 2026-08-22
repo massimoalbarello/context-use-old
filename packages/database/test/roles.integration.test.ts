@@ -467,7 +467,7 @@ describeDatabase("PostgreSQL security roles", () => {
       "register_directory_hub_migration(uuid,uuid)",
       "render_corpus_public_directory_hub(uuid,uuid)",
       "replace_knowledge_revision_projections(uuid,uuid[])",
-      "retarget_managed_operational_document(uuid)",
+      "retarget_managed_operational_document(uuid,text,uuid[])",
     ]) {
       expect((await admin.query<{ allowed: boolean }>(
         "SELECT has_function_privilege('context_use_dashboard',$1,'EXECUTE') AS allowed",

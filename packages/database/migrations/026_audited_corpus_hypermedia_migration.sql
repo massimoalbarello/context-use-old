@@ -333,8 +333,10 @@ CREATE INDEX automation_registry_active_idx ON automation_registry(key) WHERE di
 -- Owner-authored operational-looking pages are preserved as ordinary knowledge.
 -- When a configured guide or registered instruction differs from the managed
 -- contract, the application first writes a new opaque document object and then
--- uses this ledger to atomically retarget only the operational ID. No source
--- page is moved, rewritten, archived or unpublished.
+-- uses this ledger to atomically retarget the operational ID. A replaced global
+-- guide receives one byte-exact preservation revision at an opaque path so the
+-- managed replacement can retain the legacy `agents` path for rollback clients;
+-- every pinned source revision and public artifact remains untouched.
 CREATE TYPE operational_document_replacement_kind AS ENUM (
   'global_guide','automation_instructions'
 );
@@ -347,6 +349,40 @@ CREATE TABLE operational_document_replacements (
   target_key text,
   source_document_id uuid NOT NULL,
   source_revision_id uuid NOT NULL,
+  agents_occupant_document_id uuid,
+  agents_occupant_source_revision_id uuid,
+  agents_occupant_preservation_revision_id uuid UNIQUE,
+  agents_occupant_preservation_revision_number integer CHECK (
+    agents_occupant_preservation_revision_number IS NULL
+    OR agents_occupant_preservation_revision_number>0
+  ),
+  agents_occupant_preservation_path text UNIQUE CHECK (
+    agents_occupant_preservation_path IS NULL OR (
+      agents_occupant_preservation_path ~ '^preserved-agents-page-[0-9a-f-]{36}$'
+      AND length(agents_occupant_preservation_path)<=512
+    )
+  ),
+  agents_occupant_preservation_title text CHECK (
+    agents_occupant_preservation_title IS NULL
+    OR length(trim(agents_occupant_preservation_title)) BETWEEN 1 AND 240
+  ),
+  agents_occupant_preservation_summary text CHECK (
+    agents_occupant_preservation_summary IS NULL
+    OR length(trim(agents_occupant_preservation_summary)) BETWEEN 1 AND 320
+  ),
+  agents_occupant_preservation_body_object_key text UNIQUE CHECK (
+    agents_occupant_preservation_body_object_key IS NULL
+    OR agents_occupant_preservation_body_object_key
+      ~ '^documents/private/[0-9a-f-]{36}\.md$'
+  ),
+  agents_occupant_preservation_body_size_bytes integer CHECK (
+    agents_occupant_preservation_body_size_bytes IS NULL
+    OR agents_occupant_preservation_body_size_bytes BETWEEN 0 AND 4000000
+  ),
+  agents_occupant_preservation_body_content_hash text CHECK (
+    agents_occupant_preservation_body_content_hash IS NULL
+    OR agents_occupant_preservation_body_content_hash ~ '^[a-f0-9]{64}$'
+  ),
   replacement_document_id uuid NOT NULL UNIQUE,
   replacement_revision_id uuid NOT NULL UNIQUE,
   replacement_path text NOT NULL UNIQUE CHECK (
@@ -398,6 +434,29 @@ CREATE TABLE operational_document_replacements (
   superseded_at timestamptz,
   CHECK (
     (target_kind='global_guide' AND target_key IS NULL
+      AND (
+        (agents_occupant_document_id IS NULL
+          AND agents_occupant_source_revision_id IS NULL
+          AND agents_occupant_preservation_revision_id IS NULL
+          AND agents_occupant_preservation_revision_number IS NULL
+          AND agents_occupant_preservation_path IS NULL
+          AND agents_occupant_preservation_title IS NULL
+          AND agents_occupant_preservation_summary IS NULL
+          AND agents_occupant_preservation_body_object_key IS NULL
+          AND agents_occupant_preservation_body_size_bytes IS NULL
+          AND agents_occupant_preservation_body_content_hash IS NULL)
+        OR
+        (agents_occupant_document_id IS NOT NULL
+          AND agents_occupant_source_revision_id IS NOT NULL
+          AND agents_occupant_preservation_revision_id IS NOT NULL
+          AND agents_occupant_preservation_revision_number IS NOT NULL
+          AND agents_occupant_preservation_path IS NOT NULL
+          AND agents_occupant_preservation_title IS NOT NULL
+          AND agents_occupant_preservation_summary IS NOT NULL
+          AND agents_occupant_preservation_body_object_key IS NOT NULL
+          AND agents_occupant_preservation_body_size_bytes IS NOT NULL
+          AND agents_occupant_preservation_body_content_hash IS NOT NULL)
+      )
       AND registration_id IS NULL AND registration_was_present IS NULL
       AND registration_name IS NULL AND state_mode IS NULL
       AND state_source_document_id IS NULL AND state_source_revision_id IS NULL
@@ -407,6 +466,16 @@ CREATE TABLE operational_document_replacements (
       AND state_body_content_hash IS NULL)
     OR
     (target_kind='automation_instructions'
+      AND agents_occupant_document_id IS NULL
+      AND agents_occupant_source_revision_id IS NULL
+      AND agents_occupant_preservation_revision_id IS NULL
+      AND agents_occupant_preservation_revision_number IS NULL
+      AND agents_occupant_preservation_path IS NULL
+      AND agents_occupant_preservation_title IS NULL
+      AND agents_occupant_preservation_summary IS NULL
+      AND agents_occupant_preservation_body_object_key IS NULL
+      AND agents_occupant_preservation_body_size_bytes IS NULL
+      AND agents_occupant_preservation_body_content_hash IS NULL
       AND target_key ~ '^[a-z0-9]+(-[a-z0-9]+)*$'
       AND registration_id IS NOT NULL AND registration_was_present IS NOT NULL
       AND length(trim(registration_name)) BETWEEN 1 AND 160
@@ -843,6 +912,17 @@ BEGIN
       USING ERRCODE='23505';
   END IF;
   IF EXISTS (
+    SELECT 1 FROM operational_document_replacements replacement
+    WHERE replacement.phase='planned'
+      AND replacement.target_kind='global_guide'
+      AND replacement.agents_occupant_document_id=ANY(array_remove(
+        ARRAY[NEW.instructions_document_id,NEW.state_document_id],NULL
+      ))
+  ) THEN
+    RAISE EXCEPTION 'the agents occupant is reserved by a managed guide handoff'
+      USING ERRCODE='23505';
+  END IF;
+  IF EXISTS (
     SELECT 1
     FROM corpus_migration_automation_plans plan
     JOIN corpus_migration_runs run ON run.id=plan.run_id
@@ -1211,12 +1291,66 @@ CREATE TRIGGER knowledge_pages_protect_registered_automation_delete
 BEFORE DELETE ON knowledge_pages
 FOR EACH ROW EXECUTE FUNCTION protect_registered_automation_documents();
 
+-- Preserve rollback compatibility while replacing the path-scoped root guide.
+-- The old-image MCP still discovers the root guide at `agents`, so the corpus
+-- preparer may move that one exact occupant only as part of an audited atomic
+-- handoff. All ordinary callers retain the baseline immovability guarantee.
+CREATE OR REPLACE FUNCTION protect_root_knowledge_guide()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path=pg_catalog,public
+AS $$
+BEGIN
+  IF TG_OP='DELETE' THEN
+    IF OLD.current_path='agents' THEN
+      RAISE EXCEPTION 'the root AGENTS.md page cannot be deleted'
+        USING ERRCODE='23514';
+    END IF;
+    RETURN OLD;
+  END IF;
+
+  IF OLD.current_path='agents'
+     AND (NEW.current_path IS DISTINCT FROM 'agents' OR NEW.archived_at IS NOT NULL) THEN
+    IF current_user='context_use_boundary_owner'
+       AND (
+         session_user='context_use_corpus'
+         OR current_setting('role',true)='context_use_corpus'
+       ) THEN
+      IF EXISTS (
+        SELECT 1
+        FROM operational_document_replacements replacement
+        WHERE replacement.id::text
+          =current_setting('context_use.operational_guide_swap',true)
+          AND replacement.phase='planned'
+          AND replacement.target_kind='global_guide'
+          AND replacement.agents_occupant_document_id=OLD.id
+          AND replacement.agents_occupant_source_revision_id=OLD.current_version_id
+          AND NEW.current_path=replacement.agents_occupant_preservation_path
+          AND NEW.current_version_id
+            =replacement.agents_occupant_preservation_revision_id
+          AND NEW.archived_at IS NULL
+      ) THEN
+        RETURN NEW;
+      END IF;
+    END IF;
+    RAISE EXCEPTION 'the root AGENTS.md page must remain active at agents'
+      USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
 -- Finish one object-first managed replacement. The page/object rows are
--- inserted by the dashboard in the caller's transaction; this narrow boundary
--- verifies their exact planned identity, invalidates any older corpus audit and
--- changes only the configured operational pointer. Returning `superseded`
--- commits authoritative target drift without leaving an orphan page.
-CREATE FUNCTION retarget_managed_operational_document(p_replacement_id uuid)
+-- inserted by the corpus preparer in the caller's transaction; this narrow
+-- boundary verifies their exact planned identity, preserves any legacy page at
+-- `agents` with an append-only byte-exact revision, invalidates any older corpus
+-- audit and performs the path/pointer handoff atomically. Returning
+-- `superseded` commits authoritative target drift without blessing staged rows.
+CREATE FUNCTION retarget_managed_operational_document(
+  p_replacement_id uuid,
+  p_replacement_body_markdown text,
+  p_replacement_target_ids uuid[]
+)
 RETURNS operational_document_replacement_phase
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -1247,6 +1381,7 @@ BEGIN
     SELECT DISTINCT id
     FROM unnest(array_remove(ARRAY[
       replacement.source_document_id,replacement.replacement_document_id,
+      replacement.agents_occupant_document_id,
       replacement.state_source_document_id,replacement.state_replacement_document_id
     ],NULL)) id
     ORDER BY id
@@ -1262,7 +1397,42 @@ BEGIN
     RETURN replacement.phase;
   END IF;
 
-  IF NOT EXISTS (
+  IF replacement.target_kind='global_guide' THEN
+    IF p_replacement_body_markdown IS NULL
+       OR octet_length(p_replacement_body_markdown)<>replacement.body_size_bytes
+       OR encode(digest(convert_to(p_replacement_body_markdown,'UTF8'),'sha256'),'hex')
+          <>replacement.body_content_hash
+       OR p_replacement_target_ids IS NULL THEN
+      RAISE EXCEPTION 'managed global guide body does not match its plan'
+        USING ERRCODE='23514';
+    END IF;
+    IF NOT EXISTS (
+      SELECT 1
+      FROM hypermedia_documents document
+      JOIN hypermedia_document_revisions revision
+        ON revision.document_id=document.id
+      WHERE document.id=replacement.replacement_document_id
+        AND document.authority='knowledge' AND document.representation='markdown'
+        AND revision.id=replacement.replacement_revision_id
+        AND revision.revision_number=1
+        AND revision.body_object_key=replacement.body_object_key
+        AND revision.body_size_bytes=replacement.body_size_bytes
+        AND revision.body_content_hash=replacement.body_content_hash
+        AND NOT EXISTS (
+          SELECT 1 FROM knowledge_pages
+          WHERE id=replacement.replacement_document_id
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM knowledge_page_versions
+          WHERE id=replacement.replacement_revision_id
+             OR page_id=replacement.replacement_document_id
+        )
+      FOR UPDATE OF revision
+    ) THEN
+      RAISE EXCEPTION 'managed global guide object does not match its plan'
+        USING ERRCODE='23514';
+    END IF;
+  ELSIF NOT EXISTS (
     SELECT 1
     FROM knowledge_pages page
     JOIN hypermedia_documents document ON document.id=page.id
@@ -1320,6 +1490,79 @@ BEGIN
       USING ERRCODE='23514';
   END IF;
 
+  IF replacement.target_kind='global_guide'
+     AND replacement.agents_occupant_document_id IS NOT NULL
+     AND NOT EXISTS (
+       SELECT 1
+       FROM knowledge_pages page
+       JOIN knowledge_page_versions source_version
+         ON source_version.id=page.current_version_id AND source_version.page_id=page.id
+       JOIN hypermedia_document_revisions source_revision
+         ON source_revision.id=source_version.id AND source_revision.document_id=page.id
+       JOIN knowledge_page_versions preserved_version
+         ON preserved_version.id=replacement.agents_occupant_preservation_revision_id
+           AND preserved_version.page_id=page.id
+       JOIN hypermedia_document_revisions preserved_revision
+         ON preserved_revision.id=preserved_version.id
+           AND preserved_revision.document_id=page.id
+       WHERE page.id=replacement.agents_occupant_document_id
+         AND page.current_path='agents'
+         AND page.current_version_id=replacement.agents_occupant_source_revision_id
+         AND page.archived_at IS NULL
+         AND source_version.title=replacement.agents_occupant_preservation_title
+         AND source_version.summary=replacement.agents_occupant_preservation_summary
+         AND source_revision.body_size_bytes
+           =replacement.agents_occupant_preservation_body_size_bytes
+         AND source_revision.body_content_hash
+           =replacement.agents_occupant_preservation_body_content_hash
+         AND preserved_version.version_number
+           =replacement.agents_occupant_preservation_revision_number
+         AND preserved_version.path=replacement.agents_occupant_preservation_path
+         AND preserved_version.title=replacement.agents_occupant_preservation_title
+         AND preserved_version.summary=replacement.agents_occupant_preservation_summary
+         AND preserved_version.actor_kind='dashboard'
+         AND preserved_version.actor_subject=replacement.actor_subject
+         AND preserved_revision.revision_number
+           =replacement.agents_occupant_preservation_revision_number
+         AND preserved_revision.body_object_key
+           =replacement.agents_occupant_preservation_body_object_key
+         AND preserved_revision.body_size_bytes
+           =replacement.agents_occupant_preservation_body_size_bytes
+         AND preserved_revision.body_content_hash
+           =replacement.agents_occupant_preservation_body_content_hash
+         AND preserved_revision.links_indexed_at IS NOT NULL
+       FOR UPDATE OF page
+     ) THEN
+    RAISE EXCEPTION 'agents occupant preservation does not match its plan'
+      USING ERRCODE='23514';
+  END IF;
+  IF replacement.target_kind='global_guide'
+     AND replacement.agents_occupant_document_id IS NOT NULL
+     AND (
+       EXISTS (
+         SELECT 1 FROM automation_registry
+         WHERE instructions_document_id=replacement.agents_occupant_document_id
+           OR state_document_id=replacement.agents_occupant_document_id
+       )
+       OR EXISTS (
+         SELECT 1
+         FROM corpus_migration_automation_plans plan
+         JOIN corpus_migration_runs run ON run.id=plan.run_id
+         WHERE run.phase='applying'
+           AND (
+             plan.instructions_document_id=replacement.agents_occupant_document_id
+             OR plan.state_document_id=replacement.agents_occupant_document_id
+           )
+       )
+       OR EXISTS (
+         SELECT 1 FROM directory_hub_migrations
+         WHERE document_id=replacement.agents_occupant_document_id
+       )
+     ) THEN
+    RAISE EXCEPTION 'the agents occupant is reserved by another operational role'
+      USING ERRCODE='23514';
+  END IF;
+
   IF NOT EXISTS (
     SELECT 1 FROM knowledge_pages page
     WHERE page.id=replacement.source_document_id
@@ -1359,6 +1602,23 @@ BEGIN
       WHERE id=replacement.id;
       RETURN 'superseded';
     END IF;
+    IF replacement.agents_occupant_document_id IS NULL THEN
+      PERFORM 1 FROM knowledge_pages
+      WHERE current_path='agents' AND archived_at IS NULL FOR UPDATE;
+      IF FOUND THEN
+        UPDATE operational_document_replacements
+        SET phase='superseded',updated_at=now(),superseded_at=now()
+        WHERE id=replacement.id;
+        RETURN 'superseded';
+      END IF;
+    END IF;
+    IF EXISTS (SELECT 1 FROM knowledge_directories WHERE current_path='agents')
+       OR EXISTS (
+         SELECT 1 FROM assets WHERE current_path='agents' AND deleted_at IS NULL
+       ) THEN
+      RAISE EXCEPTION 'the agents path is occupied by a non-page resource'
+        USING ERRCODE='23505';
+    END IF;
   ELSE
     SELECT id,key,instructions_document_id,state_document_id
     INTO current_registration
@@ -1393,6 +1653,42 @@ BEGIN
   WHERE phase IN ('applying','ready');
 
   IF replacement.target_kind='global_guide' THEN
+    PERFORM set_config(
+      'context_use.operational_guide_swap',replacement.id::text,true
+    );
+    IF replacement.agents_occupant_document_id IS NOT NULL THEN
+      UPDATE knowledge_pages
+      SET current_path=replacement.agents_occupant_preservation_path,
+          current_version_id=replacement.agents_occupant_preservation_revision_id,
+          updated_at=now()
+      WHERE id=replacement.agents_occupant_document_id
+        AND current_path='agents'
+        AND current_version_id=replacement.agents_occupant_source_revision_id
+        AND archived_at IS NULL;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'agents occupant changed during managed replacement'
+          USING ERRCODE='40001';
+      END IF;
+    END IF;
+    INSERT INTO knowledge_pages(id,current_path,current_version_id,search_vector)
+    VALUES (
+      replacement.replacement_document_id,'agents',replacement.replacement_revision_id,
+      page_search_vector(
+        'agents',replacement.replacement_title,replacement.replacement_summary,
+        p_replacement_body_markdown
+      )
+    );
+    INSERT INTO knowledge_page_versions(
+      id,page_id,version_number,path,title,summary,
+      commit_message,actor_kind,actor_subject
+    ) VALUES (
+      replacement.replacement_revision_id,replacement.replacement_document_id,1,
+      'agents',replacement.replacement_title,replacement.replacement_summary,
+      'Install managed operational document','dashboard',replacement.actor_subject
+    );
+    PERFORM replace_knowledge_revision_projections(
+      replacement.replacement_revision_id,p_replacement_target_ids
+    );
     UPDATE knowledge_settings
     SET global_guide_document_id=replacement.replacement_document_id,updated_at=now()
     WHERE singleton AND global_guide_document_id=replacement.source_document_id;
@@ -1558,6 +1854,39 @@ BEGIN
         USING ERRCODE='23514';
     END IF;
     RETURN OLD;
+  END IF;
+  IF NEW.current_path IS DISTINCT FROM OLD.current_path
+     AND current_user='context_use_boundary_owner'
+     AND (
+       session_user='context_use_corpus'
+       OR current_setting('role',true)='context_use_corpus'
+     ) THEN
+    IF EXISTS (
+      SELECT 1
+      FROM operational_document_replacements replacement
+      WHERE replacement.id::text
+         =current_setting('context_use.operational_guide_swap',true)
+        AND replacement.phase='planned'
+        AND replacement.target_kind='global_guide'
+        AND (
+          (
+            replacement.replacement_document_id=OLD.id
+            AND OLD.current_path=replacement.replacement_path
+            AND NEW.current_path='agents'
+            AND NEW.current_version_id=replacement.replacement_revision_id
+          )
+          OR
+          (
+            replacement.agents_occupant_document_id=OLD.id
+            AND OLD.current_path='agents'
+            AND NEW.current_path=replacement.agents_occupant_preservation_path
+            AND NEW.current_version_id
+              =replacement.agents_occupant_preservation_revision_id
+          )
+        )
+    ) THEN
+      RETURN NEW;
+    END IF;
   END IF;
   IF (
     NEW.archived_at IS NOT NULL
@@ -2252,7 +2581,7 @@ REVOKE ALL ON FUNCTION lock_corpus_migration_runs_for_operational_change() FROM 
 REVOKE ALL ON FUNCTION prevent_operational_document_publication() FROM PUBLIC;
 REVOKE ALL ON FUNCTION prevent_operational_publication_intent() FROM PUBLIC;
 REVOKE ALL ON FUNCTION protect_registered_automation_documents() FROM PUBLIC;
-REVOKE ALL ON FUNCTION retarget_managed_operational_document(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION retarget_managed_operational_document(uuid,text,uuid[]) FROM PUBLIC;
 REVOKE ALL ON FUNCTION validate_published_page_directory_ancestors() FROM PUBLIC;
 REVOKE ALL ON FUNCTION protect_published_page_directory_ancestors() FROM PUBLIC;
 REVOKE ALL ON FUNCTION reset_corpus_migration_operational_state() FROM PUBLIC;
@@ -2274,6 +2603,9 @@ GRANT UPDATE ON knowledge_directories,knowledge_pages,knowledge_page_versions,
   knowledge_asset_links,automation_registry,knowledge_settings,
   public_knowledge_settings,public_resources,public_route_aliases,
   public_projection_state,published_page_artifacts TO context_use_boundary_owner;
+GRANT INSERT ON knowledge_pages,knowledge_page_versions TO context_use_boundary_owner;
+GRANT EXECUTE ON FUNCTION page_search_vector(text,text,text,text)
+  TO context_use_boundary_owner;
 GRANT SELECT (singleton,generation) ON public_projection_state
   TO context_use_boundary_owner;
 GRANT SELECT (
@@ -2301,7 +2633,7 @@ ALTER FUNCTION prevent_operational_publication_intent() OWNER TO context_use_bou
 ALTER FUNCTION prevent_automation_document_role_reuse()
   OWNER TO context_use_boundary_owner;
 ALTER FUNCTION protect_registered_automation_documents() OWNER TO context_use_boundary_owner;
-ALTER FUNCTION retarget_managed_operational_document(uuid)
+ALTER FUNCTION retarget_managed_operational_document(uuid,text,uuid[])
   OWNER TO context_use_boundary_owner;
 ALTER FUNCTION validate_published_page_directory_ancestors()
   OWNER TO context_use_boundary_owner;
@@ -2348,7 +2680,7 @@ GRANT EXECUTE ON FUNCTION lock_corpus_migration_generated_targets(uuid,uuid[])
   TO context_use_corpus;
 GRANT EXECUTE ON FUNCTION render_corpus_public_directory_hub(uuid,uuid)
   TO context_use_corpus;
-GRANT EXECUTE ON FUNCTION retarget_managed_operational_document(uuid)
+GRANT EXECUTE ON FUNCTION retarget_managed_operational_document(uuid,text,uuid[])
   TO context_use_corpus;
 
 GRANT SELECT (singleton,generation) ON public_projection_state TO context_use_corpus;
