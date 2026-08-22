@@ -65,9 +65,31 @@ type TemplateRetirements = {
   pages: string[];
 };
 
+export type KnowledgeTemplatePageContract = {
+  path: string;
+  title: string;
+  summary: string;
+  body_markdown: string;
+  management: TemplatePageManagement;
+};
+
+export type KnowledgeTemplateMigrationContract = {
+  template: string;
+  directories: Array<{ path: string; title: string; summary: string }>;
+  root_guide: KnowledgeTemplatePageContract;
+  pages: KnowledgeTemplatePageContract[];
+};
+
 export type TemplateRepositories = {
   directories: Pick<DirectoryRepository, "getByPath" | "create" | "update">;
   pages: Pick<PageRepository, "getByPath" | "create" | "update" | "archive" | "version">;
+};
+
+export type KnowledgeTemplateReconcileOptions = {
+  /** Never force-overwrite these owner-authored operational documents. */
+  preserveLocallyModifiedPaths?: ReadonlySet<string>;
+  /** Their live contracts are managed by setting/registry identity, not path. */
+  skipOperationalPaths?: ReadonlySet<string>;
 };
 
 const RESULT_INDICATORS = {
@@ -336,6 +358,24 @@ function missingCreateOnlyStructure(page: TemplatePage, input: CreatePageInput):
   return [...new Set(missing)];
 }
 
+export function knowledgeTemplatePageContractMatches(
+  page: { title: string; summary: string; body_markdown: string },
+  contract: KnowledgeTemplatePageContract,
+): boolean {
+  if (contract.management === "managed") {
+    return page.title === contract.title
+      && page.summary === contract.summary
+      && page.body_markdown === contract.body_markdown;
+  }
+  return missingCreateOnlyStructure(page as TemplatePage, {
+    path: contract.path,
+    title: contract.title,
+    summary: contract.summary,
+    body_markdown: contract.body_markdown,
+    commit_message: "Validate knowledge template contract",
+  }).length === 0;
+}
+
 export type KnowledgeTemplateBaseline = {
   template: string;
   root_directory: { title: string; summary: string };
@@ -373,12 +413,57 @@ export async function knowledgeTemplateBaseline(
   };
 }
 
+/**
+ * Resolve the shipped, validated presentation and operational page contracts
+ * used during the one-time hypermedia corpus migration. This deliberately
+ * reuses the template parser instead of hard-coding directory names or prompt
+ * bodies in the migration service.
+ */
+export async function knowledgeTemplateMigrationContract(
+  templateName = "default",
+  templatesRoot = TEMPLATES_ROOT,
+): Promise<KnowledgeTemplateMigrationContract> {
+  assertTemplateName(templateName);
+  const rootPath = new URL(`${templateName}/`, templatesRoot).pathname;
+  const guideDirectoryPaths = await discoverGuideDirectories(rootPath);
+  const presentations = await readDirectoryPresentations(rootPath, guideDirectoryPaths);
+  const pages = await readTemplatePages(
+    rootPath,
+    new Set(presentations.keys()),
+    guideDirectoryPaths,
+    templateName,
+  );
+  const baseline = await knowledgeTemplateBaseline(templateName, templatesRoot);
+  return {
+    template: templateName,
+    directories: [...presentations.entries()].map(([path, presentation]) => ({
+      path,
+      ...presentation,
+    })),
+    root_guide: {
+      path: "agents",
+      title: baseline.root_guide.title,
+      summary: baseline.root_guide.summary,
+      body_markdown: baseline.root_guide.body_markdown,
+      management: "managed",
+    },
+    pages: pages.map(({ input, management }) => ({
+      path: input.path,
+      title: input.title,
+      summary: input.summary,
+      body_markdown: input.body_markdown,
+      management,
+    })),
+  };
+}
+
 export async function reconcileKnowledgeTemplate(
   repositories: TemplateRepositories,
   templateName = "default",
   apply = false,
   forceTemplate = false,
   templatesRoot = TEMPLATES_ROOT,
+  options: KnowledgeTemplateReconcileOptions = {},
 ): Promise<TemplateResult> {
   assertTemplateName(templateName);
   const rootUrl = new URL(`${templateName}/`, templatesRoot);
@@ -496,6 +581,7 @@ export async function reconcileKnowledgeTemplate(
   for (const directoryPath of guideDirectoryPaths) {
     if (blockedDirectories.has(directoryPath)) continue;
     const path = guidePath(directoryPath);
+    if (options.skipOperationalPaths?.has(path)) continue;
     const bodyMarkdown = await readFile(join(rootPath, directoryPath, "AGENTS.md"), "utf8");
     const input: CreatePageInput = {
       path,
@@ -527,19 +613,6 @@ export async function reconcileKnowledgeTemplate(
       }
       continue;
     }
-    if (forceTemplate) {
-      actions.push({
-        action: "replace-guide",
-        path,
-        detail: "Overwrite locally modified guide",
-        replaces_local: true,
-      });
-      if (apply) {
-        const update: UpdatePageInput = { ...input, expected_version_number: existing.version_number };
-        await repositories.pages.update(existing.id, update, templateActor(templateName));
-      }
-      continue;
-    }
     if (!currentVersion || !templateOwnsCurrentVersion(currentVersion.actor_subject, templateName)) {
       actions.push({ action: "conflict", path, detail: "Preserve locally modified guide" });
       continue;
@@ -553,6 +626,7 @@ export async function reconcileKnowledgeTemplate(
 
   for (const definition of templatePages) {
     const { input, management } = definition;
+    if (options.skipOperationalPaths?.has(input.path)) continue;
     const parentPath = input.path.includes("/") ? input.path.replace(/\/[^/]+$/, "") : "";
     if (blockedDirectories.has(parentPath)) {
       actions.push({ action: "conflict", path: input.path, detail: "Parent template directory is unavailable" });
@@ -598,7 +672,7 @@ export async function reconcileKnowledgeTemplate(
       }
       continue;
     }
-    if (forceTemplate) {
+    if (forceTemplate && !options.preserveLocallyModifiedPaths?.has(input.path)) {
       actions.push({
         action: "update-page",
         path: input.path,
@@ -624,6 +698,7 @@ export async function reconcileKnowledgeTemplate(
 
   if (!blockedDirectories.has("")) {
     for (const path of retirements.pages) {
+      if (options.skipOperationalPaths?.has(path)) continue;
       const existing = await repositories.pages.getByPath(path, true) as TemplatePage | null;
       if (!existing) continue;
       if (existing.archived_at) {

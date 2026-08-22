@@ -31,11 +31,9 @@ import { z } from "zod";
 import { config } from "./config.ts";
 import { createAssetCapability } from "./mcp-asset-capability.ts";
 import {
-  createGuidanceReceipt,
   createKnowledgeGuideReceipt,
   guidanceGuidesFromReceipt,
   type GuidanceGuideVersion,
-  verifyGuidanceReceipt,
   verifyKnowledgeGuideReceipt,
 } from "./mcp-guidance-receipt.ts";
 import type { SourceRecordReader } from "./nango-records.ts";
@@ -50,8 +48,9 @@ const SERVER_INSTRUCTIONS = "Use Context Use proactively when the user states a 
   + "durable fact, decision, correction, relationship, plan, or completed activity about "
   + "their life or work, even if they do not explicitly say “remember.” Before the first "
   + "knowledge mutation in an authenticated session, call begin_knowledge_session, read its "
-  + "guide, and reuse its receipt for targets without additional scoped guides. During the "
-  + "guidance transition, call prepare_change for a target where scoped guides still apply.";
+  + "configured global guide, and reuse its receipt across every target in that session. "
+  + "prepare_change remains a transitional alias for deployed workflows, but it loads the same "
+  + "single global guide and does not apply path-scoped instructions.";
 
 const MCP_BACKLINK_LIMIT = 100;
 
@@ -167,11 +166,11 @@ type ApplicableGuide = GuidanceGuideVersion & {
 };
 
 const guidanceReceiptSchema = z.string().min(1).max(100_000).optional().describe(
-  "Transitional full-chain receipt from prepare_change. It remains required for targets with additional scoped guides until those guides are retired.",
+  "Transitional receipt from prepare_change for the exact configured global guide. It is valid across targets in this authenticated session until that guide changes.",
 );
 
 const knowledgeSessionReceiptSchema = z.string().min(1).max(8_192).optional().describe(
-  "Receipt from begin_knowledge_session. Reuse it in this authenticated session for targets without additional scoped guides until the global guide changes; during the transition, targets with scoped guides require prepare_change and its guidance_receipt. Never store receipts in knowledge.",
+  "Receipt from begin_knowledge_session. Reuse it across every target in this authenticated session until the configured global guide changes. Never store receipts in knowledge.",
 );
 
 const mutationReceiptSchemas = {
@@ -202,10 +201,10 @@ const preparedChangeOutputSchema = z.object({
       reuse_from_previous_prepare_change: z.literal(true),
     }).strict(),
   ])).describe(
-    "The complete applicable guide chain in root-to-leaf order. Read body_markdown when present. When reuse_from_previous_prepare_change is true, reuse that guide's body from the previous prepare_change associated with cached_guidance_receipt.",
+    "The configured global guide. Read body_markdown when present. When reuse_from_previous_prepare_change is true, reuse that exact guide body from the previous prepare_change associated with cached_guidance_receipt.",
   ),
   removed_guides: z.array(KnowledgePath).optional().describe(
-    "Guides from cached_guidance_receipt that no longer apply and must no longer be followed.",
+    "Legacy path-scoped guides from cached_guidance_receipt that no longer apply and must no longer be followed.",
   ),
 }).strict();
 
@@ -216,22 +215,21 @@ function preparedChange(
   context: McpContext,
   cachedReceipt?: string,
 ): z.infer<typeof preparedChangeOutputSchema> {
+  const cachedGlobalGuide = cachedReceipt
+    ? verifyKnowledgeGuideReceipt(cachedReceipt, {
+        documentId: guides[0]!.id,
+        revisionId: guides[0]!.current_version_id,
+      }, context)
+    : false;
   const cachedGuides = cachedReceipt
     ? guidanceGuidesFromReceipt(cachedReceipt, context) ?? []
     : [];
-  const cachedVersions = new Map(cachedGuides.map((guide) => [
-    guide.current_path,
-    guide.current_version_id,
-  ]));
   const currentPaths = new Set(guides.map((guide) => guide.current_path));
-  const cachedIndexes = new Set(guides.flatMap((guide, index) => (
-    cachedVersions.get(guide.current_path) === guide.current_version_id ? [index] : []
-  )));
   const removedGuides = cachedGuides.filter((guide) => !currentPaths.has(guide.current_path));
   return {
     target_path: targetPath,
     guidance_receipt: receipt,
-    guides: guides.map((guide, index) => cachedIndexes.has(index)
+    guides: guides.map((guide) => cachedGlobalGuide
       ? {
           path: guide.current_path,
           reuse_from_previous_prepare_change: true as const,
@@ -250,23 +248,15 @@ function guidanceRequired(targetPath: string, retryTool: string) {
   const argumentsJson = JSON.stringify({ target_path: targetPath });
   return textContent([
     "KNOWLEDGE_GUIDE_REQUIRED",
-    "Call begin_knowledge_session with {}, read the returned global guide, and retry with its knowledge_session_receipt when this target has no additional scoped guides.",
-    `During the guidance transition, if scoped guides apply, call prepare_change with ${argumentsJson}, read the complete returned chain, and retry ${retryTool} with its guidance_receipt.`,
+    "Call begin_knowledge_session with {}, read the returned configured global guide, and retry with its knowledge_session_receipt.",
+    `A deployed legacy workflow may instead call prepare_change with ${argumentsJson}; it loads the same global guide and returns a guidance_receipt that is likewise valid across targets. Then retry ${retryTool}.`,
   ].join("\n\n"), true);
-}
-
-function hasExactGlobalGuide(
-  guides: ApplicableGuide[],
-  guide: { document_id: string; current_revision_id: string },
-): boolean {
-  return guides.some((candidate) => candidate.id === guide.document_id
-    && candidate.current_version_id === guide.current_revision_id);
 }
 
 function globalGuideUnavailable() {
   return textContent([
     "KNOWLEDGE_GUIDE_UNAVAILABLE",
-    "The configured global guide and its exact current revision are not present in the applicable guide chain, so no transitional mutation receipt was issued.",
+    "The configured global guide and its exact current revision could not be loaded, so no mutation receipt was issued.",
   ].join("\n\n"), true);
 }
 
@@ -384,26 +374,25 @@ export async function createMcpServer(
   }
 
   async function hasCurrentGuidance(
-    targetPath: string,
+    _targetPath: string,
     knowledgeSessionReceipt?: string,
     guidanceReceipt?: string,
   ): Promise<boolean> {
-    // The supplied receipt type is authoritative. Do not let a stale, cross-session, or
-    // scoped-inapplicable session receipt fall back to a separately supplied scoped receipt.
+    // The supplied receipt type is authoritative. Do not let a stale or cross-session
+    // session receipt fall back to a separately supplied transitional receipt.
+    const guide = await knowledgeSettings.globalGuide();
+    if (!guide) return false;
     if (knowledgeSessionReceipt !== undefined) {
-      const guide = await knowledgeSettings.globalGuide();
-      if (!guide || !verifyKnowledgeGuideReceipt(knowledgeSessionReceipt, {
+      return verifyKnowledgeGuideReceipt(knowledgeSessionReceipt, {
         documentId: guide.document_id,
         revisionId: guide.current_revision_id,
-      }, context)) return false;
-      const guides = await pages.guidesForPath(targetPath) as ApplicableGuide[];
-      return guides.length === 1 && hasExactGlobalGuide(guides, guide);
+      }, context);
     }
     if (!guidanceReceipt) return false;
-    const guides = await pages.guidesForPath(targetPath) as ApplicableGuide[];
-    const guide = await knowledgeSettings.globalGuide();
-    if (!guide || !hasExactGlobalGuide(guides, guide)) return false;
-    return verifyGuidanceReceipt(guidanceReceipt, guides, context);
+    return verifyKnowledgeGuideReceipt(guidanceReceipt, {
+      documentId: guide.document_id,
+      revisionId: guide.current_revision_id,
+    }, context);
   }
 
   if (sourceRecords) {
@@ -511,7 +500,7 @@ export async function createMcpServer(
   });
 
   server.registerTool("browse_directory", {
-    description: "Explore a bounded directory subtree recursively without loading page bodies. Returns compact Markdown by default; request JSON only when programmatic structure is useful. Includes directory, page, and applicable AGENTS.md metadata; use read_page for selected bodies. Depth 0 includes only the starting directory's pages. Child directories are limited independently in every expanded directory, with the number of additional immediate children reported at each truncated folder.",
+    description: "Explore a bounded directory subtree recursively without loading page bodies. Returns compact Markdown by default; request JSON only when programmatic structure is useful. Includes directory, page, and legacy AGENTS.md metadata; use read_page for selected bodies. AGENTS.md pages outside the configured global guide are ordinary knowledge, not inherited instructions. Depth 0 includes only the starting directory's pages. Child directories are limited independently in every expanded directory, with the number of additional immediate children reported at each truncated folder.",
     inputSchema: z.object({
       path: DirectoryPath,
       depth: z.number().int().min(0).max(5).default(2),
@@ -604,7 +593,7 @@ export async function createMcpServer(
   });
 
   server.registerTool("begin_knowledge_session", {
-    description: "Call once before the first knowledge mutation in each authenticated MCP session. Read the exact current global hypermedia-maintenance guide returned here, then reuse its knowledge_session_receipt across stateless calls for targets without additional scoped guides. During the guidance transition, a target with scoped guides requires prepare_change and its full-chain guidance_receipt. Call again only after context loss, a new authenticated session, or a stale-receipt response. Never store receipts in knowledge.",
+    description: "Call once before the first knowledge mutation in each authenticated MCP session. Read the exact configured global hypermedia-maintenance guide returned here, then reuse its knowledge_session_receipt across stateless calls and every target. Path-scoped AGENTS.md pages are ordinary knowledge and do not add instructions. Call again only after context loss, a new authenticated session, or a stale-receipt response. Never store receipts in knowledge.",
     inputSchema: z.object({}).strict(),
     outputSchema: knowledgeSessionOutputSchema,
     annotations: { readOnlyHint: true },
@@ -638,21 +627,33 @@ export async function createMcpServer(
   });
 
   server.registerTool("prepare_change", {
-    description: "Transitional path-scoped guidance entry point for targets where scoped AGENTS.md guides still apply and for deployed automation instructions. It returns the complete applicable chain in root-to-leaf order and a session-bound guidance_receipt only when that chain contains the exact configured global guide revision. With cached_guidance_receipt, unchanged entries explicitly say to reuse their bodies from the previous prepare_change in this authenticated session; omit it to reload every guide after context loss or compaction. Never store receipts in knowledge.",
+    description: "Transitional alias retained for deployed workflows. It ignores target scope, loads only the exact configured global guide by document and current revision, and returns a session-bound guidance_receipt valid across targets until that guide changes. With cached_guidance_receipt, an unchanged global guide says to reuse its body from the previous prepare_change in this authenticated session; omit it to reload the guide after context loss or compaction. Never store receipts in knowledge.",
     inputSchema: z.object({
       target_path: DirectoryPath,
       cached_guidance_receipt: z.string().min(1).max(100_000).optional()
-        .describe("A receipt from a previous prepare_change whose guide bodies remain in context. Omit it to reload every applicable guide body."),
+        .describe("A receipt from a previous prepare_change whose global guide body remains in context. Omit it to reload the guide."),
     }).strict(),
     outputSchema: preparedChangeOutputSchema,
     annotations: { readOnlyHint: true },
   }, async ({ target_path, cached_guidance_receipt }) => {
-    const guides = await pages.guidesForPath(target_path) as ApplicableGuide[];
-    const guide = await knowledgeSettings.globalGuide();
-    if (!guide || !hasExactGlobalGuide(guides, guide)) return globalGuideUnavailable();
+    const metadata = await knowledgeSettings.globalGuide();
+    if (!metadata) return globalGuideUnavailable();
+    const version = await pages.version(metadata.document_id, metadata.revision_number);
+    if (!version || version.id !== metadata.current_revision_id) return globalGuideUnavailable();
+    const guides: ApplicableGuide[] = [{
+      id: metadata.document_id,
+      // Compatibility label only. Guide authority comes exclusively from the
+      // configured document/revision IDs, never from its filesystem placement.
+      current_path: "agents",
+      current_version_id: metadata.current_revision_id,
+      body_markdown: version.body_markdown,
+    }];
     return jsonObjectContent(preparedChange(
       target_path,
-      createGuidanceReceipt(guides, context),
+      createKnowledgeGuideReceipt({
+        documentId: metadata.document_id,
+        revisionId: metadata.current_revision_id,
+      }, context),
       guides,
       context,
       cached_guidance_receipt,
@@ -786,7 +787,7 @@ export async function createMcpServer(
   });
 
   server.registerTool("update_page", {
-    description: "Replace or move an existing Markdown knowledge page by creating a new immutable version. Read it first with read_page and pass its current version for optimistic concurrency. The same knowledge_session_receipt from begin_knowledge_session or full-chain guidance_receipt from prepare_change must authorize both its existing and requested paths; moves across different scoped guide chains are rejected during the guidance transition. A page whose publication state is published is owner-curated: editing it does not change the public page, which keeps serving its published version until the owner republishes, so write new detail to a private page instead.",
+    description: "Replace or move an existing Markdown knowledge page by creating a new immutable version. Read it first with read_page and pass its current version for optimistic concurrency. A current knowledge_session_receipt from begin_knowledge_session or transitional guidance_receipt from prepare_change authorizes the mutation across every target path. A page whose publication state is published is owner-curated: editing it does not change the public page, which keeps serving its published version until the owner republishes, so write new detail to a private page instead.",
     inputSchema: updatePageSchema.extend({
       page_id: z.string().uuid(),
       ...mutationReceiptSchemas,

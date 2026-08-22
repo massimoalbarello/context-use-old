@@ -1,7 +1,7 @@
 {
   "automations/activity-distiller/instructions": {
     "title": "Activity distiller",
-    "summary": "Instructions for distilling connected activity one record at a time into dense, linked canonical knowledge.",
+    "summary": "Instructions for reconciling connected activity one record at a time into maintained, linked hypermedia knowledge.",
     "body_file": "_pages/activity-distiller/instructions.md",
     "management": "managed"
   },
@@ -13,7 +13,7 @@
   },
   "automations/diary-composer/instructions": {
     "title": "Diary composer",
-    "summary": "Instructions for selecting diary-worthy activity deltas and composing them into connected prose without duplicating entity pages.",
+    "summary": "Instructions for selecting diary-worthy activity deltas and composing them into connected prose within the knowledge neighborhood.",
     "body_file": "_pages/diary-composer/instructions.md",
     "management": "managed"
   },
