@@ -2663,7 +2663,7 @@ ALTER FUNCTION lock_corpus_migration_generated_targets(uuid,uuid[])
 REVOKE CREATE ON SCHEMA public FROM context_use_boundary_owner;
 
 GRANT EXECUTE ON FUNCTION lock_operational_document(uuid)
-  TO context_use_dashboard,context_use_boundary_owner;
+  TO context_use_dashboard,context_use_mcp,context_use_boundary_owner;
 GRANT EXECUTE ON FUNCTION lock_automation_registry_for_operational_retarget()
   TO context_use_corpus;
 GRANT EXECUTE ON FUNCTION lock_corpus_migration_runs_for_operational_change()
