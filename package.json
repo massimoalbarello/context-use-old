@@ -20,7 +20,7 @@
     "build": "bun run --filter '@context-use/*' build",
     "typecheck": "bun run --filter '@context-use/*' typecheck",
     "test": "bun test apps packages",
-    "db:bootstrap": "bun apps/server/src/template-command.ts apply default",
+    "db:bootstrap": "bun apps/server/src/corpus-migration-command.ts",
     "db:initialize": "bun --cwd packages/database initialize",
     "db:migrate": "bun --cwd packages/database migrate",
     "db:test": "bun scripts/test-database.ts",

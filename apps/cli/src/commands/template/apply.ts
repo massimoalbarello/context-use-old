@@ -4,17 +4,17 @@ import { z } from "zod";
 import { runKnowledgeTemplateCommand } from "../../knowledge-template.ts";
 
 export const command = defineCommand("template apply", {
-  description: "Create missing template knowledge and update eligible guides and managed pages.",
+  description: "Run isolated template, operational-document, and corpus preparation.",
   options: {
     "force-template": {
       schema: z.boolean().optional(),
-      description: "Replace eligible local directory metadata, guides, and managed pages with the template.",
+      description: "Replace eligible template-owned directory metadata and managed pages; preserve owner-authored guides and control documents.",
     },
   },
   handler: async ({ options }) => {
     const output = (await runKnowledgeTemplateCommand("apply", {
       forceTemplate: options["force-template"] ?? false,
     })).trim();
-    p.note(output || "No template changes", "Default template applied");
+    p.note(output || "Knowledge preparation completed", "Knowledge prepared");
   },
 });

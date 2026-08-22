@@ -1,7 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { summarizeTemplateResult, type TemplateResult } from "@context-use/shared";
+import {
+  KNOWLEDGE_PREPARATION_SCOPE,
+  summarizeTemplateResult,
+  type TemplateResult,
+} from "@context-use/shared";
 import { renderToStaticMarkup } from "react-dom/server";
-import { TemplatePlan } from "./KnowledgeTemplate.tsx";
+import {
+  KnowledgePreparationScopeNotice,
+  TemplatePlan,
+  canApplyTemplateChanges,
+  preparationActionLabel,
+} from "./KnowledgeTemplate.tsx";
 
 const plan: TemplateResult = {
   template: "default",
@@ -38,7 +47,7 @@ describe("knowledge template settings", () => {
       ...plan,
       actions: [
         { action: "update-directory", path: "people", detail: "Overwrite local directory metadata with the template", replaces_local: true },
-        { action: "replace-guide", path: "agents", detail: "Overwrite locally modified guide", replaces_local: true },
+        { action: "replace-guide", path: "agents", detail: "Replace eligible template-owned guide", replaces_local: true },
         { action: "conflict", path: "people/agents", detail: "Guide was archived locally" },
       ],
     };
@@ -56,5 +65,26 @@ describe("knowledge template settings", () => {
     }} />);
     expect(html).toContain("Template is current");
     expect(html).toContain("matches the default template bundled with this release");
+  });
+
+  test("keeps isolated full preparation distinct from dashboard template changes", () => {
+    const summary = summarizeTemplateResult({
+      template: "default",
+      applied: false,
+      actions: [{ action: "unchanged", path: "agents", detail: "Already current" }],
+    });
+    expect(preparationActionLabel(summary, false)).toBe("Apply template changes");
+    expect(preparationActionLabel({ ...summary, conflicts: 1 }, false))
+      .toBe("Apply template changes");
+    expect(canApplyTemplateChanges(summary, false)).toBe(false);
+    expect(canApplyTemplateChanges(summary, true)).toBe(true);
+    const html = renderToStaticMarkup(
+      <KnowledgePreparationScopeNotice scope={KNOWLEDGE_PREPARATION_SCOPE} />,
+    );
+    expect(html).toContain("isolated deployment one-shot");
+    expect(html).toContain("context-use knowledge-template apply");
+    expect(html).toContain("hypermedia corpus");
+    expect(html).toContain("pinned public revisions remain protected");
+    expect(html).not.toContain("preparation completed");
   });
 });

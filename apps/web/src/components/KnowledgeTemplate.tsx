@@ -1,7 +1,10 @@
 import {
   summarizeTemplateResult,
+  type KnowledgePreparationResponse,
+  type KnowledgePreparationScope,
   type TemplateAction,
   type TemplateResult,
+  type TemplateSummary,
 } from "@context-use/shared";
 import { useState } from "react";
 import { api } from "../api.ts";
@@ -36,12 +39,36 @@ export function TemplatePlan({ result }: { result: TemplateResult }) {
   </div>;
 }
 
+export function KnowledgePreparationScopeNotice({
+  scope,
+}: {
+  scope: KnowledgePreparationScope;
+}) {
+  if (scope.managed_operational_documents !== "deployment_one_shot"
+      || scope.hypermedia_corpus !== "deployment_one_shot") return null;
+  return <p className="template-preparation-scope"><strong>Full knowledge preparation still requires the isolated deployment one-shot.</strong> Changes applied here only reconcile eligible template-owned pages. Run <code>context-use knowledge-template apply</code> or redeploy Context Use to reconcile private operational documents and audit the hypermedia corpus. Owner-authored pages and pinned public revisions remain protected.</p>;
+}
+
+export function preparationActionLabel(
+  _summary: TemplateSummary,
+  _forceTemplate: boolean,
+): string {
+  return "Apply template changes";
+}
+
+export function canApplyTemplateChanges(
+  summary: TemplateSummary,
+  forceTemplate: boolean,
+): boolean {
+  return summary.changes > 0 || forceTemplate;
+}
+
 export function KnowledgeTemplateSettings({
   onKnowledgeChanged,
 }: {
   onKnowledgeChanged: () => Promise<void>;
 }) {
-  const [plan, setPlan] = useState<TemplateResult | null>(null);
+  const [plan, setPlan] = useState<KnowledgePreparationResponse | null>(null);
   const [forceTemplate, setForceTemplate] = useState(false);
   const [plannedForce, setPlannedForce] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -57,7 +84,7 @@ export function KnowledgeTemplateSettings({
     setMessage("");
     try {
       const suffix = force ? "?force_template=true" : "";
-      setPlan(await api<TemplateResult>(`/api/dashboard/knowledge-template/plan${suffix}`));
+      setPlan(await api<KnowledgePreparationResponse>(`/api/dashboard/knowledge-template/plan${suffix}`));
       setPlannedForce(force);
     } catch (error) {
       setPlan(null);
@@ -82,7 +109,7 @@ export function KnowledgeTemplateSettings({
     setApplying(true);
     setApplyError("");
     try {
-      const result = await api<TemplateResult>("/api/dashboard/knowledge-template/apply", {
+      const result = await api<KnowledgePreparationResponse>("/api/dashboard/knowledge-template/apply", {
         method: "POST",
         body: JSON.stringify({ force_template: forceTemplate }),
       });
@@ -90,10 +117,10 @@ export function KnowledgeTemplateSettings({
       setConfirming(false);
       setForceTemplate(false);
       setPlannedForce(false);
-      setMessage(`Applied ${summary.changes} template change${summary.changes === 1 ? "" : "s"}.${summary.conflicts ? ` Preserved ${summary.conflicts} conflict${summary.conflicts === 1 ? "" : "s"}.` : ""}`);
+      setMessage(`Template reconciliation completed. Applied ${summary.changes} template change${summary.changes === 1 ? "" : "s"}.${summary.conflicts ? ` Preserved ${summary.conflicts} conflict${summary.conflicts === 1 ? "" : "s"}.` : ""} Full knowledge preparation remains pending; run context-use knowledge-template apply or redeploy.`);
       await onKnowledgeChanged().catch(() => undefined);
       try {
-        setPlan(await api<TemplateResult>("/api/dashboard/knowledge-template/plan"));
+        setPlan(await api<KnowledgePreparationResponse>("/api/dashboard/knowledge-template/plan"));
       } catch {
         setPlan(null);
         setCheckError("The template was applied, but its current status could not be rechecked.");
@@ -106,7 +133,6 @@ export function KnowledgeTemplateSettings({
   };
 
   const summary = plan ? summarizeTemplateResult(plan) : null;
-  const hasWork = Boolean(summary && (summary.changes || summary.conflicts));
   const planMatchesChoice = plannedForce === forceTemplate;
 
   return <section className="template-settings">
@@ -117,24 +143,27 @@ export function KnowledgeTemplateSettings({
     {message && <p className="template-message" role="status">{message}</p>}
     {plan && <div className={`template-result${checking ? " checking" : ""}`} aria-busy={checking}>
       <TemplatePlan result={plan} />
+      <KnowledgePreparationScopeNotice scope={plan.preparation_scope} />
       {(summary!.conflicts > 0 || forceTemplate) && <label className="template-force-option">
         <input type="checkbox" checked={forceTemplate} disabled={checking || applying} onChange={(event) => void changeForceTemplate(event.currentTarget.checked)} />
-        <span><strong>Replace eligible local customizations</strong><small>Preview and overwrite changed directory metadata, active guides, and managed template pages. Archived, published, structurally invalid, and create-only content remains protected.</small></span>
+        <span><strong>Replace eligible template-owned customizations</strong><small>Preview and overwrite eligible template-owned directory metadata and managed pages. Owner-authored guides and control documents, published or archived content, and create-only state remain protected.</small></span>
       </label>}
-      {hasWork && <div className="template-controls">
-        <button className={forceTemplate ? "danger" : "primary"} disabled={checking || applying || !summary!.changes || !planMatchesChoice} onClick={() => { setApplyError(""); setConfirming(true); }}>
-          {forceTemplate ? "Force template update" : "Apply safe changes"}
-        </button>
+      <div className="template-controls">
+        {canApplyTemplateChanges(summary!, forceTemplate) && <button className={forceTemplate ? "danger" : "primary"} disabled={checking || applying || !planMatchesChoice} onClick={() => { setApplyError(""); setConfirming(true); }}>
+          {preparationActionLabel(summary!, forceTemplate)}
+        </button>}
         {checking && <span>Refreshing preview…</span>}
-      </div>}
+      </div>
     </div>}
     {confirming && plan && <ActionDialog
       eyebrow="Knowledge template"
-      title={forceTemplate ? "Force this template update?" : "Apply this template update?"}
+      title={forceTemplate
+        ? "Force this template update?"
+        : "Apply these template changes?"}
       description={forceTemplate
-        ? `Apply ${summary!.changes} changes, including ${summary!.replacements} eligible local replacement${summary!.replacements === 1 ? "" : "s"}. Content protected by ${summary!.conflicts} remaining conflict${summary!.conflicts === 1 ? "" : "s"} will be preserved.`
-        : `Apply ${summary!.changes} safe template change${summary!.changes === 1 ? "" : "s"}. ${summary!.conflicts} local conflict${summary!.conflicts === 1 ? "" : "s"} will be preserved.`}
-      confirmLabel={forceTemplate ? "Force update" : "Apply changes"}
+        ? `Apply ${summary!.changes} changes, including ${summary!.replacements} eligible local replacement${summary!.replacements === 1 ? "" : "s"}. Content protected by ${summary!.conflicts} remaining conflict${summary!.conflicts === 1 ? "" : "s"} will be preserved. Run context-use knowledge-template apply or redeploy afterward to complete isolated preparation.`
+        : `Apply ${summary!.changes} safe template change${summary!.changes === 1 ? "" : "s"}. ${summary!.conflicts} local conflict${summary!.conflicts === 1 ? "" : "s"} will be preserved. Run context-use knowledge-template apply or redeploy afterward to complete isolated preparation.`}
+      confirmLabel="Apply template changes"
       workingLabel="Applying template…"
       confirmTone={forceTemplate ? "danger" : "primary"}
       working={applying}

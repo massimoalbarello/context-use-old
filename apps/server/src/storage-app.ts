@@ -22,7 +22,10 @@ const privateDocumentKeySchema = z.string().regex(/^documents\/private\/[a-f0-9-
 const publicDocumentKeySchema = z.string().regex(/^documents\/public\/[a-f0-9-]{36}\.md$/);
 const generatedObjectKeySchema = z.string().regex(/^exports\/[a-f0-9-]{36}\.zip$/);
 const verificationSchema = z.object({
-  object_key: objectKeySchema,
+  // Public projection artifacts are verify-only through this privileged
+  // integrity endpoint. Accepting their exact key shape here does not expose
+  // either the private or public read routes to the dashboard caller.
+  object_key: z.union([objectKeySchema, publicDocumentKeySchema]),
   size_bytes: z.number().int().nonnegative().max(5_000_000_000),
   content_hash: z.string().regex(/^[a-f0-9]{64}$/),
 }).strict();

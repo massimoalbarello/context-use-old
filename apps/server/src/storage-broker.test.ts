@@ -17,6 +17,7 @@ const publishedKey = "objects/11111111-1111-4111-8111-111111111111";
 const privateKey = "objects/22222222-2222-4222-8222-222222222222";
 const newKey = "objects/33333333-3333-4333-8333-333333333333";
 const exportKey = "exports/44444444-4444-4444-8444-444444444444.zip";
+const publicDocumentKey = "documents/public/55555555-5555-4555-8555-555555555555.md";
 
 function privateAssets(
   rows: Record<string, { filename: string; contentType: string; bytes: string | Uint8Array }>,
@@ -285,6 +286,42 @@ describe("storage broker capabilities", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ object_key: privateKey, size_bytes: 7, content_hash: "a".repeat(64) }),
     }))).status).toBe(404);
+  });
+
+  test("only the dashboard can verify an exact public document artifact", async () => {
+    const storage = new MemoryStorage();
+    const artifact = Buffer.from("published projection");
+    storage.objects.set(publicDocumentKey, artifact);
+    const app = createStorageBrokerApp({
+      storage,
+      privateAssets: privateAssets({}),
+      publicAssets: { assetByPublicPath: async () => null },
+      tokens,
+    });
+    const payload = {
+      object_key: publicDocumentKey,
+      size_bytes: artifact.byteLength,
+      content_hash: createHash("sha256").update(artifact).digest("hex"),
+    };
+
+    const dashboard = await app.handle(authorized(tokens.dashboard, "/private/verify", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    }));
+    expect(dashboard.status).toBe(200);
+    expect(await dashboard.json()).toEqual({ verified: true });
+    for (const token of [tokens.mcp, tokens.public]) {
+      expect((await app.handle(authorized(token, "/private/verify", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      }))).status).toBe(404);
+    }
+    expect((await app.handle(authorized(
+      tokens.dashboard,
+      `/private/document?key=${encodeURIComponent(publicDocumentKey)}`,
+    ))).status).toBe(404);
   });
 
   test("streams multi-chunk video bytes through the Unix storage broker", async () => {
