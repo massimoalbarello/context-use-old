@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
+import type { DashboardDocumentSummary } from "@context-use/shared";
 import { api } from "../api.ts";
 import { confirmPageDeletion } from "../page-deletion-auth.ts";
 import { confirmPublicationChange } from "../publication-auth.ts";
 import { isPublishedPageOutdated } from "../publication-status.ts";
 import type { Page, PageVersionDiff, Version } from "../types.ts";
 import { ActionDialog } from "./ActionDialog.tsx";
+import { DocumentNeighborhood } from "./DocumentNeighborhood.tsx";
 import { PublicationDialog } from "./PublicationDialog.tsx";
 
 const diffFieldLabels: Record<PageVersionDiff["metadata_changes"][number]["field"], string> = {
@@ -88,10 +90,12 @@ export function Editor({
   pageId,
   onChanged,
   onDeleted,
+  onOpenDocument,
 }: {
   pageId: string;
   onChanged: () => Promise<void> | void;
   onDeleted: () => Promise<void> | void;
+  onOpenDocument: (document: DashboardDocumentSummary) => void;
 }) {
   const [page, setPage] = useState<Page | null>(null);
   const [history, setHistory] = useState<Version[]>([]);
@@ -287,7 +291,10 @@ export function Editor({
       <textarea className="markdown-editor" value={draft.body_markdown} onChange={(event) => setDraft({ ...draft, body_markdown: event.target.value })} spellCheck />
       <footer className="save-bar"><input placeholder="Describe this change (required)" value={commit} onChange={(event) => setCommit(event.target.value)} /><div className="button-row"><button onClick={cancelEdit}>Cancel</button><button className="primary" disabled={commit.trim().length < 3 || !draft.summary.trim()} onClick={save}>Save version</button></div></footer>
     </section>}
-    {!isEditing && tab === "preview" && <article className="rendered" dangerouslySetInnerHTML={{ __html: page.rendered_html ?? "" }} />}
+    {!isEditing && tab === "preview" && <>
+      <article className="rendered" dangerouslySetInnerHTML={{ __html: page.rendered_html ?? "" }} />
+      <DocumentNeighborhood documentId={page.id} onOpen={onOpenDocument} />
+    </>}
     {!isEditing && tab === "history" && <section className="history-list">
       <header><h2>Version history</h2><p>The latest editable version and the published version are independent. Publishing points the public URL at one exact snapshot.</p></header>
       {history.map((version, index) => {

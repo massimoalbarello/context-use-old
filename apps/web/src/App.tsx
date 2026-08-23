@@ -1,16 +1,19 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import type { DashboardDocumentSummary } from "@context-use/shared";
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { api, refreshCsrf } from "./api.ts";
 import { authClient } from "./auth-client.ts";
 import { AssetDetails } from "./components/Assets.tsx";
 import { Editor } from "./components/Editor.tsx";
 import { DirectoryEditor } from "./components/DirectoryEditor.tsx";
-import { KnowledgeTree, type KnowledgeSelection } from "./components/KnowledgeTree.tsx";
+import type { KnowledgeSelection } from "./components/KnowledgeTree.tsx";
+import { DocumentDetails } from "./components/DocumentDetails.tsx";
+import { DocumentNavigator } from "./components/DocumentNavigator.tsx";
 import { KnowledgeHistory } from "./components/KnowledgeHistory.tsx";
 import { Login } from "./components/Login.tsx";
 import { McpClients } from "./components/McpClients.tsx";
 import { OAuthConsent } from "./components/OAuthConsent.tsx";
 import { Settings, type PasskeySummary } from "./components/Settings.tsx";
-import type { Asset, Directory, PageMetadata } from "./types.ts";
+import type { Asset } from "./types.ts";
 
 type SessionInfo = { owner: { id: string; email: string }; passkey_count: number; passkeys: PasskeySummary[] };
 type Section = "knowledge" | "history" | "mcp" | "settings";
@@ -51,10 +54,12 @@ function CloseIcon() {
   return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" /></svg>;
 }
 
-function selectionFromLocation(): KnowledgeSelection | null {
-  const match = window.location.pathname.match(/^\/app\/(pages|directories|assets)\/([0-9a-f-]+)/);
+type DashboardSelection = { kind: "document" | "directory"; id: string };
+
+function selectionFromLocation(): DashboardSelection | null {
+  const match = window.location.pathname.match(/^\/app\/(documents|pages|directories|assets)\/([0-9a-f-]+)/);
   if (!match) return null;
-  return { kind: match[1] === "pages" ? "page" : match[1] === "directories" ? "directory" : "asset", id: match[2]! };
+  return { kind: match[1] === "directories" ? "directory" : "document", id: match[2]! };
 }
 
 function sectionFromLocation(): Section {
@@ -68,10 +73,10 @@ export function App() {
   const { data: authSession, isPending } = authClient.useSession();
   const [sessionResolved, setSessionResolved] = useState(false);
   const [session, setSession] = useState<SessionInfo | null>(null);
-  const [pages, setPages] = useState<PageMetadata[]>([]);
-  const [directories, setDirectories] = useState<Directory[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
-  const [selected, setSelected] = useState<KnowledgeSelection | null>(selectionFromLocation);
+  const [selected, setSelected] = useState<DashboardSelection | null>(selectionFromLocation);
+  const [selectedDocument, setSelectedDocument] = useState<DashboardDocumentSummary | null>(null);
+  const [navigatorRefresh, setNavigatorRefresh] = useState(0);
   const [section, setSection] = useState<Section>(sectionFromLocation);
   const [query, setQuery] = useState("");
   const [showArchived, setShowArchived] = useState(false);
@@ -91,40 +96,48 @@ export function App() {
     setSession(value);
     await refreshCsrf();
   };
-  const loadPages = async () => {
-    const parameters = new URLSearchParams();
-    if (query) parameters.set("q", query);
-    if (showArchived) parameters.set("archived", "true");
-    setPages(await api<PageMetadata[]>(`/api/dashboard/pages${parameters.size ? `?${parameters}` : ""}`));
-  };
   const loadAssets = async () => setAssets(await api<Asset[]>("/api/dashboard/assets"));
-  const loadDirectories = async () => {
-    const parameters = new URLSearchParams();
-    if (query) parameters.set("q", query);
-    setDirectories(await api<Directory[]>(`/api/dashboard/directories${parameters.size ? `?${parameters}` : ""}`));
-  };
   useEffect(() => { if (!isPending) setSessionResolved(true); }, [isPending]);
   useEffect(() => { if (authSession) loadSession().catch(() => setSession(null)); }, [authSession]);
-  useEffect(() => { if (session) loadPages().catch(() => undefined); }, [session, query, showArchived]);
   useEffect(() => { if (session) loadAssets().catch(() => undefined); }, [session]);
-  useEffect(() => { if (session) loadDirectories().catch(() => undefined); }, [session, query]);
   useEffect(() => {
     if (!session || section !== "knowledge") return;
     const interval = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
-      void Promise.all([loadPages(), loadDirectories(), loadAssets()]);
-    }, 2_500);
+      setNavigatorRefresh((value) => value + 1);
+      void loadAssets();
+    }, 5_000);
     return () => window.clearInterval(interval);
-  }, [session, section, query, showArchived]);
+  }, [session, section]);
   useEffect(() => {
     const syncLocation = () => {
       setSelected(selectionFromLocation());
+      setSelectedDocument(null);
       setSection(sectionFromLocation());
       setMobileSidebarOpen(false);
     };
     window.addEventListener("popstate", syncLocation);
     return () => window.removeEventListener("popstate", syncLocation);
   }, []);
+  useEffect(() => {
+    if (!session || selected?.kind !== "document") {
+      setSelectedDocument(null);
+      return;
+    }
+    const controller = new AbortController();
+    api<DashboardDocumentSummary>(`/api/dashboard/documents/${selected.id}`, {
+      signal: controller.signal,
+    }).then((document) => {
+      setSelectedDocument(document);
+      if (!window.location.pathname.startsWith("/app/documents/")) {
+        history.replaceState({}, "", `/app/documents/${document.document_id}${window.location.hash}`);
+      }
+    }).catch((caught: unknown) => {
+      if (caught instanceof DOMException && caught.name === "AbortError") return;
+      setMessage(caught instanceof Error ? caught.message : "Could not open document");
+    });
+    return () => controller.abort();
+  }, [navigatorRefresh, selected?.id, selected?.kind, session]);
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") return;
@@ -195,13 +208,9 @@ export function App() {
     };
   }, [mobileSidebarOpen]);
 
-  const visibleAssets = useMemo(() => {
-    const normalized = query.trim().toLocaleLowerCase();
-    return normalized
-      ? assets.filter((asset) => `${asset.current_path} ${asset.filename}`.toLocaleLowerCase().includes(normalized))
-      : assets;
-  }, [assets, query]);
-  const selectedAsset = selected?.kind === "asset" ? assets.find((asset) => asset.id === selected.id) ?? null : null;
+  const selectedAsset = selected?.kind === "document" && selectedDocument?.document_kind === "asset"
+    ? assets.find((asset) => asset.id === selected.id) ?? null
+    : null;
 
   // Only the first session lookup replaces the page. A failed passkey attempt
   // makes Better Auth re-read the session, and swapping in a loading screen
@@ -213,14 +222,31 @@ export function App() {
   if (!session) return <main className="center-card">Verifying owner session…</main>;
   if (session.passkey_count === 0) return <main className="center-card"><h1>Owner passkey missing</h1><p>This installation must always retain at least one owner passkey.</p></main>;
 
-  const selectKnowledge = (selection: KnowledgeSelection) => {
-    setSelected(selection);
+  const openDocument = (document: DashboardDocumentSummary, fragment = "") => {
+    setSelected({ kind: "document", id: document.document_id });
+    setSelectedDocument(document);
     setSection("knowledge");
-    // Keep the drawer open while expanding directories so nested pages remain
-    // reachable with a single browsing pass on small screens.
-    if (selection.kind !== "directory") setMobileSidebarOpen(false);
-    const collection = selection.kind === "page" ? "pages" : selection.kind === "directory" ? "directories" : "assets";
-    history.pushState({}, "", `/app/${collection}/${selection.id}`);
+    setMobileSidebarOpen(false);
+    history.pushState({}, "", `/app/documents/${document.document_id}${fragment}`);
+  };
+
+  const openDocumentId = (documentId: string, fragment = "") => {
+    setSelected({ kind: "document", id: documentId });
+    setSelectedDocument(null);
+    setSection("knowledge");
+    setMobileSidebarOpen(false);
+    history.pushState({}, "", `/app/documents/${documentId}${fragment}`);
+  };
+
+  const selectKnowledge = (selection: KnowledgeSelection) => {
+    if (selection.kind !== "directory") {
+      openDocumentId(selection.id);
+      return;
+    }
+    setSelected({ kind: "directory", id: selection.id });
+    setSelectedDocument(null);
+    setSection("knowledge");
+    history.pushState({}, "", `/app/directories/${selection.id}`);
   };
 
   const openSettings = () => {
@@ -244,8 +270,24 @@ export function App() {
   const openKnowledge = () => {
     setSection("knowledge");
     setMobileSidebarOpen(false);
-    const collection = selected?.kind === "page" ? "pages" : selected?.kind === "directory" ? "directories" : "assets";
-    history.pushState({}, "", selected ? `/app/${collection}/${selected.id}` : "/app");
+    history.pushState({}, "", selected
+      ? selected.kind === "directory"
+        ? `/app/directories/${selected.id}`
+        : `/app/documents/${selected.id}`
+      : "/app");
+  };
+
+  const followDocumentLink = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const target = event.target instanceof Element ? event.target.closest("a") : null;
+    if (!(target instanceof HTMLAnchorElement) || target.target === "_blank") return;
+    const url = new URL(target.href, window.location.href);
+    const match = url.origin === window.location.origin
+      ? /^\/app\/documents\/([0-9a-f-]{36})$/.exec(url.pathname)
+      : null;
+    if (!match) return;
+    event.preventDefault();
+    openDocumentId(match[1]!, url.hash);
   };
 
   const startSidebarResize = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -264,13 +306,13 @@ export function App() {
     event.preventDefault();
   };
 
-  return <div className="shell" style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}>
+  return <div className="shell" style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties} onClickCapture={followDocumentLink}>
     <header className="mobile-topbar">
       <button
         ref={mobileSidebarToggleRef}
         type="button"
         className={`mobile-sidebar-toggle${mobileSidebarOpen ? " active" : ""}`}
-        aria-label={mobileSidebarOpen ? "Close knowledge folders" : "Open knowledge folders"}
+        aria-label={mobileSidebarOpen ? "Close knowledge browser" : "Open knowledge browser"}
         aria-controls="knowledge-sidebar"
         aria-expanded={mobileSidebarOpen}
         onClick={() => setMobileSidebarOpen((open) => !open)}
@@ -295,8 +337,14 @@ export function App() {
         <button className={section === "mcp" ? "active" : ""} onClick={openMcpClients}><SectionIcon section="mcp" /><span>MCP clients</span></button>
       </nav>
       <label className="sidebar-search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5" /><path d="m12.25 12.25 4 4" /></svg><input ref={searchRef} className="search" aria-label="Search knowledge" placeholder="Search knowledge…" value={query} onChange={(event) => setQuery(event.target.value)} /><kbd>⌘K</kbd></label>
-      <KnowledgeTree pages={pages} directories={directories} assets={visibleAssets} query={query} selected={section === "knowledge" ? selected : null} onSelect={selectKnowledge} />
-      <label className="archive-toggle"><input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />Include archived pages</label>
+      <DocumentNavigator
+        query={query}
+        includeRetired={showArchived}
+        selectedId={section === "knowledge" && selected?.kind === "document" ? selected.id : null}
+        refreshToken={navigatorRefresh}
+        onSelect={openDocument}
+      />
+      <label className="archive-toggle"><input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />Include archived and deleted</label>
       <footer>
         <button className={section === "settings" ? "settings-button active" : "settings-button"} onClick={openSettings}><SectionIcon section="settings" /><span>Settings</span></button>
         <div className="sidebar-account"><span className="user-avatar">{session.owner.email.slice(0, 1).toUpperCase()}</span><span className="sidebar-user"><strong>{session.owner.email}</strong><small>{session.passkey_count} secure passkey{session.passkey_count === 1 ? "" : "s"}</small></span><button type="button" className="sign-out-button" onClick={() => authClient.signOut({ fetchOptions: { onSuccess: () => location.assign("/app") } })}><SignOutIcon /><span>Sign out</span></button></div>
@@ -315,7 +363,7 @@ export function App() {
       onKeyDown={resizeSidebarWithKeyboard}
       onDoubleClick={() => setSidebarWidth(DEFAULT_SIDEBAR_WIDTH)}
     />
-    {section === "settings" ? <Settings passkeys={session.passkeys} onPasskeysChanged={loadSession} onKnowledgeChanged={async () => { await Promise.all([loadPages(), loadDirectories()]); }} /> : section === "history" ? <KnowledgeHistory onOpenPage={(pageId) => selectKnowledge({ kind: "page", id: pageId })} /> : section === "mcp" ? <McpClients /> : selected?.kind === "page" ? <Editor pageId={selected.id} onChanged={loadPages} onDeleted={async () => { setSelected(null); history.pushState({}, "", "/app"); await loadPages(); setMessage("Page and retained content versions deleted. A body-free tombstone remains in Change history."); }} /> : selected?.kind === "directory" ? <DirectoryEditor directoryId={selected.id} onChanged={loadDirectories} onDeleted={async () => { setSelected(null); history.pushState({}, "", "/app"); await Promise.all([loadDirectories(), loadPages(), loadAssets()]); setMessage("Empty directory deleted."); }} onSelect={selectKnowledge} /> : selectedAsset ? <AssetDetails key={selectedAsset.id} asset={selectedAsset} onChanged={loadAssets} onDeleted={async () => { setSelected(null); history.pushState({}, "", "/app"); await loadAssets(); setMessage("Asset deleted. S3 versioning retains a recoverable noncurrent copy for the configured safety period."); }} /> : <main className="editor-empty"><div className="empty-content"><span className="empty-kicker"><i />Private by default</span><h1>Your context,<br />ready when you need it.</h1><p>Browse durable knowledge managed through your authenticated MCP connection. Your content stays private until you explicitly publish an exact version.</p><div className="empty-details"><span>Markdown-native</span><span>Versioned history</span><span>Agent-managed</span></div></div><div className="empty-sigil" aria-hidden="true"><span>c</span><span>u</span></div></main>}
+    {section === "settings" ? <Settings passkeys={session.passkeys} onPasskeysChanged={loadSession} onKnowledgeChanged={async () => { setNavigatorRefresh((value) => value + 1); }} /> : section === "history" ? <KnowledgeHistory onOpenPage={(pageId) => openDocumentId(pageId)} /> : section === "mcp" ? <McpClients /> : selected?.kind === "directory" ? <DirectoryEditor directoryId={selected.id} onChanged={async () => { setNavigatorRefresh((value) => value + 1); }} onDeleted={async () => { setSelected(null); history.pushState({}, "", "/app"); setNavigatorRefresh((value) => value + 1); await loadAssets(); setMessage("Empty directory deleted."); }} onSelect={selectKnowledge} /> : selected?.kind === "document" && selectedDocument?.document_kind === "knowledge" ? <Editor pageId={selected.id} onChanged={async () => { setNavigatorRefresh((value) => value + 1); }} onDeleted={async () => { setSelected(null); setSelectedDocument(null); history.pushState({}, "", "/app"); setNavigatorRefresh((value) => value + 1); setMessage("Page and retained content versions deleted. A body-free tombstone remains in Change history."); }} onOpenDocument={openDocument} /> : selectedAsset ? <AssetDetails key={selectedAsset.id} asset={selectedAsset} onChanged={async () => { await loadAssets(); setNavigatorRefresh((value) => value + 1); }} onDeleted={async () => { setSelected(null); setSelectedDocument(null); history.pushState({}, "", "/app"); await loadAssets(); setNavigatorRefresh((value) => value + 1); setMessage("Asset deleted. S3 versioning retains a recoverable noncurrent copy for the configured safety period."); }} /> : selected?.kind === "document" && selectedDocument ? <DocumentDetails document={selectedDocument} /> : selected?.kind === "document" ? <main className="editor-empty">Loading document…</main> : <main className="editor-empty"><div className="empty-content"><span className="empty-kicker"><i />Private by default</span><h1>Your context,<br />ready when you need it.</h1><p>Search your knowledge, open a document, then follow its links and backlinks. Your content stays private until you explicitly publish an exact version.</p><div className="empty-details"><span>Search-first</span><span>Hyperlinked</span><span>Versioned history</span></div></div><div className="empty-sigil" aria-hidden="true"><span>c</span><span>u</span></div></main>}
     {message && <div className="toast">{message}</div>}
   </div>;
 }
