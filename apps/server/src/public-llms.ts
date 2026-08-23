@@ -114,7 +114,7 @@ export function renderLlmsTxt(pages: PublicPage[], options: PublicLlmsOptions): 
     "",
     "## Discovery",
     "",
-    `- [Human-readable knowledge index](${siteOrigin}/p/): Browse every published branch.`,
+    `- [Public entrypoint](${siteOrigin}/p/): Open the configured starting document.`,
     `- [XML sitemap](${siteOrigin}/sitemap.xml): Canonical HTML URLs for every published page.`,
     "",
     "## Complete public context",
@@ -143,7 +143,7 @@ export function renderPublicPageMarkdown(page: PublicPage, options: PublicLlmsOp
     "",
     `- Canonical URL: [${canonicalUrl}](${canonicalUrl})`,
     `- Site index: [${siteOrigin}/llms.txt](${siteOrigin}/llms.txt)`,
-    `- Knowledge index: [${siteOrigin}/p/](${siteOrigin}/p/)`,
+    `- Public entrypoint: [${siteOrigin}/p/](${siteOrigin}/p/)`,
   ];
   const edited = dateIso(page.last_edited_at);
   if (edited !== null) lines.push(`- Last edited: ${edited}`);
@@ -166,7 +166,7 @@ export function renderLlmsFullTxt(pages: PublicPage[], options: PublicLlmsOption
     "This document contains every explicitly published page.",
     "",
     `- Concise index: [${siteOrigin}/llms.txt](${siteOrigin}/llms.txt)`,
-    `- Human-readable knowledge index: [${siteOrigin}/p/](${siteOrigin}/p/)`,
+    `- Public entrypoint: [${siteOrigin}/p/](${siteOrigin}/p/)`,
     `- Published pages: ${ordered.length}`,
   ];
   const lastEdited = latestEdit(ordered);
@@ -181,7 +181,7 @@ export function renderLlmsFullTxt(pages: PublicPage[], options: PublicLlmsOption
       `## ${normalizedInlineText(page.title)}`,
       "",
       `- Canonical URL: [${canonicalUrl}](${canonicalUrl})`,
-      `- Public path: \`${page.public_path}\``,
+      `- Public ID: \`${page.public_path}\``,
       `- Summary: ${normalizedInlineText(page.summary)}`,
     );
     const edited = dateIso(page.last_edited_at);

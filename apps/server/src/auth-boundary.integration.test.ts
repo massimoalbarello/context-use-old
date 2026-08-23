@@ -524,10 +524,18 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       new TextEncoder().encode(body),
     )).toString("hex");
     const objectKey = `documents/public/${artifactId}.md`;
+    let previousEntrypoint: { entrypoint_public_id: string | null; updated_at: Date | null } | undefined;
     await client.connect();
     try {
       await client.query("BEGIN");
       await client.query("SET LOCAL session_replication_role=replica");
+      previousEntrypoint = (await client.query<{
+        entrypoint_public_id: string | null;
+        updated_at: Date | null;
+      }>(
+        `SELECT entrypoint_public_id,updated_at
+         FROM pathless_publication_settings WHERE singleton`,
+      )).rows[0];
       await client.query(
         "INSERT INTO knowledge_pages(id,current_path,current_version_id) VALUES ($1,$2,$3)",
         [pageId, `pathless-route-${publicId}`, revisionId],
@@ -590,6 +598,11 @@ describeApplication("HTTP credential and OAuth boundary", () => {
         "INSERT INTO page_publications(public_id,artifact_id) VALUES ($1,$2)",
         [publicId, artifactId],
       );
+      await client.query(
+        `UPDATE pathless_publication_settings
+         SET entrypoint_public_id=$1,updated_at=now() WHERE singleton`,
+        [publicId],
+      );
       await client.query("COMMIT");
       await testStorage!.write({
         id: artifactId,
@@ -612,6 +625,15 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       expect(markdown.headers.get("link")).toBe(
         `<${config.APP_ORIGIN}/p/${publicId}>; rel="canonical"`,
       );
+      const entrypoint = await application!.handle(new Request("http://localhost:3000/p/"));
+      expect(entrypoint.status).toBe(302);
+      expect(entrypoint.headers.get("location")).toBe(`/p/${publicId}`);
+      const llms = await application!.handle(new Request("http://localhost:3000/llms.txt"));
+      expect(await llms.text()).toContain(`${config.APP_ORIGIN}/p/${publicId}.md`);
+      const sitemap = await application!.handle(new Request("http://localhost:3000/sitemap.xml"));
+      expect(await sitemap.text()).toContain(`<loc>${config.APP_ORIGIN}/p/${publicId}</loc>`);
+      const landing = await application!.handle(new Request("http://localhost:3000/"));
+      expect(await landing.text()).toContain("A page without a filesystem path.");
 
       await client.query("DELETE FROM page_publications WHERE public_id=$1", [publicId]);
       expect((await application!.handle(new Request(`http://localhost:3000/p/${publicId}`))).status).toBe(404);
@@ -619,6 +641,13 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       await client.query("ROLLBACK").catch(() => undefined);
       await client.query("BEGIN").catch(() => undefined);
       await client.query("SET LOCAL session_replication_role=replica").catch(() => undefined);
+      if (previousEntrypoint) {
+        await client.query(
+          `UPDATE pathless_publication_settings
+           SET entrypoint_public_id=$1,updated_at=$2 WHERE singleton`,
+          [previousEntrypoint.entrypoint_public_id, previousEntrypoint.updated_at],
+        ).catch(() => undefined);
+      }
       await client.query("DELETE FROM page_publications WHERE public_id=$1", [publicId]).catch(() => undefined);
       await client.query("DELETE FROM public_page_artifacts WHERE artifact_id=$1", [artifactId]).catch(() => undefined);
       await client.query(

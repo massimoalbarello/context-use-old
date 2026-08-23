@@ -25,8 +25,6 @@ describe("asset references", () => {
     const html = renderToStaticMarkup(createElement(AssetDetails, {
       asset: {
         id,
-        current_path: "media/portrait",
-        public_path: null,
         public_id: null,
         pathless_published: false,
         filename: "portrait.jpg",
@@ -41,6 +39,5 @@ describe("asset references", () => {
 
     expect(html).toContain(`context-use://document/${id}`);
     expect(html).not.toContain("context-use://asset/");
-    expect(html).not.toContain("media/portrait");
   });
 });

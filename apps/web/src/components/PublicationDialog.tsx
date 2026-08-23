@@ -7,11 +7,16 @@ import type {
   RepublicationReview as Review,
 } from "../types.ts";
 
-const FIELD_LABELS: Record<Review["metadata_changes"][number]["field"], string> = {
-  path: "Path",
+const FIELD_LABELS = {
   title: "Title",
   summary: "Summary",
-};
+} as const;
+
+function publicMetadataChanges(review: Review) {
+  return review.metadata_changes.filter(
+    (change): change is typeof change & { field: "title" | "summary" } => change.field !== "path",
+  );
+}
 
 function versionAuthor(version: Review["queued_versions"][number]): string {
   if (version.actor_kind === "mcp") {
@@ -21,7 +26,7 @@ function versionAuthor(version: Review["queued_versions"][number]): string {
 }
 
 export function republicationChanged(review: Review): boolean {
-  return review.metadata_changes.length > 0 || review.markdown_changes.length > 0;
+  return publicMetadataChanges(review).length > 0 || review.markdown_changes.length > 0;
 }
 
 /**
@@ -47,7 +52,7 @@ export function RepublicationReview({ review, candidateVersionNumber }: {
         This version is identical to the one already public.
       </p>
       : <>
-        {review.metadata_changes.map((change) => <div className="republication-metadata" key={change.field}>
+        {publicMetadataChanges(review).map((change) => <div className="republication-metadata" key={change.field}>
           <span>{FIELD_LABELS[change.field]}</span>
           <del>{change.before ?? "—"}</del>
           <ins>{change.after}</ins>

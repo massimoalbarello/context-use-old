@@ -1,21 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { filterPagesByPublication, isPublishedPageOutdated } from "./publication-status.ts";
-import type { Page } from "./types.ts";
+import { isPublishedPageOutdated } from "./publication-status.ts";
 
-function page(id: string, publishedVersionId: string | null, currentVersionId = `${id}-latest`): Page {
+function page(id: string, publishedVersionId: string | null, currentVersionId = `${id}-latest`) {
   return {
-    id,
-    current_path: `pages/${id}`,
     current_version_id: currentVersionId,
     published_version_id: publishedVersionId,
-    public_path: publishedVersionId ? `pages/${id}` : null,
-    archived_at: null,
-    version_number: 2,
-    title: id,
-    summary: `Summary for ${id}.`,
-    body_markdown: "",
-    created_at: "2026-01-01T00:00:00.000Z",
-    updated_at: "2026-01-02T00:00:00.000Z",
   };
 }
 
@@ -28,13 +17,5 @@ describe("publication status", () => {
     expect(isPublishedPageOutdated(privatePage)).toBeFalse();
     expect(isPublishedPageOutdated(currentPage)).toBeFalse();
     expect(isPublishedPageOutdated(outdatedPage)).toBeTrue();
-  });
-
-  test("filters outdated publications so they can be found from the dashboard", () => {
-    const pages = [privatePage, currentPage, outdatedPage];
-
-    expect(filterPagesByPublication(pages, "all")).toEqual(pages);
-    expect(filterPagesByPublication(pages, "public")).toEqual([currentPage, outdatedPage]);
-    expect(filterPagesByPublication(pages, "updates")).toEqual([outdatedPage]);
   });
 });

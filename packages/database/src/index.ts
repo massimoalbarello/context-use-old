@@ -189,6 +189,7 @@ export {
   type PathlessPublicUnassignedRoute,
   type PathlessPublicUnavailableRoute,
   type PathlessPublicationAdoption,
+  type PathlessPublicationAdoptionCandidate,
   type PathlessPublicationAdoptionArtifactReceipt,
   type PathlessPublicationAdoptionKind,
   type PathlessPublicationAdoptionPhase,

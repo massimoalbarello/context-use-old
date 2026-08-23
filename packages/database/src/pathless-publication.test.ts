@@ -317,6 +317,32 @@ describe("pathless publication storage boundary", () => {
 });
 
 describe("pathless publication adoption boundary", () => {
+  test("lists only the ordered, resumable corpus adoption worklist", async () => {
+    const rows = [{
+      adoption_kind: "legacy_page" as const,
+      source_document_id: documentId,
+      adoption_id: null,
+      source_body_object_key: "must-not-escape",
+    }, {
+      adoption_kind: "directory_hub" as const,
+      source_document_id: linkedPublicId,
+      adoption_id: adoptionId,
+      source_revision_id: revisionId,
+    }];
+    const corpus = recordingPool(rows);
+
+    expect(await new PathlessPublicationAdoptionRepository(corpus.pool).candidates())
+      .toEqual([
+        { adoption_kind: "legacy_page", source_document_id: documentId, adoption_id: null },
+        { adoption_kind: "directory_hub", source_document_id: linkedPublicId, adoption_id: adoptionId },
+      ]);
+    expect(corpus.calls[0]!.sql).toContain(
+      "FROM list_pathless_publication_adoption_candidates()",
+    );
+    expect(corpus.calls[0]!.sql).not.toContain("object_key");
+    expect(corpus.calls[0]!.sql).not.toContain("source_revision_id");
+  });
+
   test("keeps corpus planning/apply separate from claimed storage materialization", async () => {
     const plan: PathlessPublicationAdoption = {
       id: adoptionId,

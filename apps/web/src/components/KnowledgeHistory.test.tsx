@@ -26,7 +26,8 @@ describe("knowledge change history row", () => {
     const html = renderToStaticMarkup(<KnowledgeChangeRow change={change} onOpenPage={() => undefined} />);
 
     expect(html).toContain("Updated");
-    expect(html).toContain("about/intro");
+    expect(html).toContain("Introduction");
+    expect(html).not.toContain("about/intro");
     expect(html).toContain("Clarify the current introduction");
     expect(html).toContain("v3");
     expect(html).toContain("<button");

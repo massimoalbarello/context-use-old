@@ -40,7 +40,7 @@ export function AssetDetails({
   const [previewFailed, setPreviewFailed] = useState(false);
   const [pendingAction, setPendingAction] = useState<"publish" | "unpublish" | "delete" | null>(null);
   const [actionError, setActionError] = useState("");
-  const isPublic = asset.pathless_published || Boolean(asset.public_path);
+  const isPublic = asset.pathless_published;
 
   const refreshStatus = async () => {
     const status = await api<AssetStatus>(`/api/dashboard/assets/${asset.id}/status`);

@@ -86,8 +86,8 @@ export function KnowledgeChangeRow({
     <div className="knowledge-change-main">
       <div className="knowledge-change-heading">
         {change.change_kind === "deleted"
-          ? <strong>{change.path}</strong>
-          : <button type="button" onClick={() => onOpenPage(change.page_id)}>{change.path}</button>}
+          ? <strong>{change.title}</strong>
+          : <button type="button" onClick={() => onOpenPage(change.page_id)}>{change.title}</button>}
         <span>v{change.version_number}</span>
       </div>
       <p>{change.commit_message}</p>
@@ -155,7 +155,7 @@ export function KnowledgeHistory({ onOpenPage }: { onOpenPage: (pageId: string) 
       <div><span className="eyebrow">Knowledge ledger</span><h1>Change history</h1></div>
     </header>
     <section className="knowledge-history-intro">
-      <p>A chronological record of page changes, including paths and commit metadata. Page bodies and diffs are never stored here.</p>
+      <p>A chronological record of document changes and commit metadata. Page bodies and diffs are never stored here.</p>
     </section>
     <section className="knowledge-change-list" aria-live="polite">
       {!loading && !error && changes.length === 0 && <p className="knowledge-history-empty">No page changes have been recorded yet.</p>}

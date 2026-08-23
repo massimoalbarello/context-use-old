@@ -1,10 +1,18 @@
 import { pathToFileURL } from "node:url";
-import { createPool, formatTemplateResult } from "@context-use/database";
+import {
+  PathlessPublicationAdoptionRepository,
+  createPool,
+  formatTemplateResult,
+} from "@context-use/database";
 import { BrokeredMarkdownObjectStore } from "./markdown-object-store.ts";
 import { prepareKnowledgeCorpus } from "./knowledge-prepare.ts";
 import { CorpusMigrationBlockedError } from "./corpus-migration.ts";
 import { CorpusMigrationObjectError } from "./corpus-migration-execution.ts";
 import { BrokeredStorage } from "./storage-client.ts";
+import {
+  PathlessPublicationAdoptionError,
+  adoptRetainedPublications,
+} from "./pathless-publication-adoption.ts";
 
 export async function runKnowledgePrepareCommand(options: {
   templateName?: string;
@@ -53,6 +61,14 @@ export async function runKnowledgePrepareCommand(options: {
       unrecognized_automation_document_ids:
         result.corpus.unrecognized_automation_document_ids,
     }));
+    const adoption = await adoptRetainedPublications({
+      adoptions: new PathlessPublicationAdoptionRepository(corpusPool),
+      storage,
+    });
+    console.log(JSON.stringify({
+      event: "pathless_publications_adopted",
+      ...adoption,
+    }));
   } finally {
     await corpusPool.end();
   }
@@ -89,6 +105,16 @@ export function isolatedCorpusDatabaseUrl(configured: string | undefined): strin
 }
 
 export function knowledgePreparationFailure(error: unknown): Record<string, unknown> {
+  if (error instanceof PathlessPublicationAdoptionError) {
+    return {
+      event: "pathless_publication_adoption_failed",
+      operation: error.operation,
+      ...(error.adoptionKind ? { adoption_kind: error.adoptionKind } : {}),
+      ...(error.sourceDocumentId ? { source_document_id: error.sourceDocumentId } : {}),
+      ...(error.adoptionId ? { adoption_id: error.adoptionId } : {}),
+      ...(error.databaseCode ? { database_code: error.databaseCode } : {}),
+    };
+  }
   if (error instanceof CorpusMigrationBlockedError) {
     return {
       event: "knowledge_corpus_preparation_blocked",

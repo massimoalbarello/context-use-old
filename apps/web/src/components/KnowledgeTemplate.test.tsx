@@ -37,8 +37,10 @@ describe("knowledge template settings", () => {
     const html = renderToStaticMarkup(<TemplatePlan result={plan} />);
     expect(html).toContain("2</strong> changes");
     expect(html).toContain("1</strong> conflict");
-    expect(html).toContain("topics");
-    expect(html).toContain("people/agents");
+    expect(html).toContain("Create Topics");
+    expect(html).toContain("Preserve locally modified guide");
+    expect(html).not.toContain("people/agents");
+    expect(html).not.toContain("<code>");
     expect(html).not.toContain("about/tasks/agents");
   });
 
@@ -55,6 +57,8 @@ describe("knowledge template settings", () => {
     const html = renderToStaticMarkup(<TemplatePlan result={forced} />);
     expect(html).toContain("2</strong> local replacements");
     expect(html).toContain("Guide was archived locally");
+    expect(html).toContain("collection metadata");
+    expect(html).not.toContain("directory metadata");
   });
 
   test("reports when the installed template is already current", () => {

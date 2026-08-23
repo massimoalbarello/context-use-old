@@ -375,6 +375,19 @@ describeDatabase("pathless publication adoption boundaries", () => {
       "SELECT public_id FROM public_resources WHERE document_id=$1",
       [assetId],
     )).rows[0]!.public_id;
+    const candidate = await asRole(client, "context_use_corpus", async () =>
+      (await client.query(
+        `SELECT adoption_kind,source_document_id,adoption_id
+         FROM list_pathless_publication_adoption_candidates()
+         WHERE source_document_id=$1`,
+        [assetId],
+      )).rows[0],
+    );
+    expect(candidate).toEqual({
+      adoption_kind: "legacy_asset",
+      source_document_id: assetId,
+      adoption_id: null,
+    });
     const adoptionId = randomUUID();
     const planned = await beginAdoption(
       client,
@@ -383,6 +396,13 @@ describeDatabase("pathless publication adoption boundaries", () => {
       assetId,
     );
     expect(planned.public_id).toBe(publicId);
+    expect(await asRole(client, "context_use_corpus", async () =>
+      (await client.query<{ adoption_id: string }>(
+        `SELECT adoption_id FROM list_pathless_publication_adoption_candidates()
+         WHERE source_document_id=$1`,
+        [assetId],
+      )).rows[0]!.adoption_id,
+    )).toBe(adoptionId);
 
     const target = await getAdoptionTarget(client, adoptionId);
     expect(target.public_duration_seconds).toBe("1.2300");
@@ -406,6 +426,13 @@ describeDatabase("pathless publication adoption boundaries", () => {
       source_adoption_id: adoptionId,
       public_path: currentPath,
     });
+    expect(await asRole(client, "context_use_corpus", async () =>
+      (await client.query(
+        `SELECT 1 FROM list_pathless_publication_adoption_candidates()
+         WHERE source_document_id=$1`,
+        [assetId],
+      )).rowCount,
+    )).toBe(0);
   });
 
   test("copies the exact active legacy page artifact through checked roles", async () => {
@@ -496,6 +523,13 @@ describeDatabase("pathless publication adoption boundaries", () => {
 
   test("promotes a linked ready hub and never resurrects it on applied replay", async () => {
     const hub = await seedHubSource(client);
+    expect(await asRole(client, "context_use_corpus", async () =>
+      (await client.query<{ adoption_kind: string }>(
+        `SELECT adoption_kind FROM list_pathless_publication_adoption_candidates()
+         WHERE source_document_id=$1`,
+        [hub.pageId],
+      )).rows[0]!.adoption_kind,
+    )).toBe("directory_hub");
     const adoptionId = randomUUID();
     await beginAdoption(client, adoptionId, "directory_hub", hub.pageId);
     const target = await getAdoptionTarget(client, adoptionId);

@@ -192,6 +192,38 @@ describeDatabase("PostgreSQL security roles", () => {
     }
   });
 
+  test("only corpus can enumerate resumable retained-publication adoption work", async () => {
+    const signature = "list_pathless_publication_adoption_candidates()";
+    for (const role of [
+      "context_use_auth",
+      "context_use_dashboard",
+      "context_use_mcp",
+      "context_use_public",
+      "context_use_confirmation",
+      "context_use_storage",
+      "context_use_backup",
+    ]) {
+      expect((await admin.query<{ allowed: boolean }>(
+        "SELECT has_function_privilege($1,$2,'EXECUTE') AS allowed",
+        [role, signature],
+      )).rows[0]?.allowed).toBe(false);
+    }
+    expect((await admin.query<{ allowed: boolean }>(
+      "SELECT has_function_privilege('context_use_corpus',$1,'EXECUTE') AS allowed",
+      [signature],
+    )).rows[0]?.allowed).toBe(true);
+
+    await admin.query("SET ROLE context_use_corpus");
+    try {
+      const result = await admin.query(
+        "SELECT adoption_kind,source_document_id,adoption_id FROM list_pathless_publication_adoption_candidates()",
+      );
+      expect(Array.isArray(result.rows)).toBe(true);
+    } finally {
+      await admin.query("RESET ROLE");
+    }
+  });
+
   test("page writers retain history without receiving deletion or pruning access", async () => {
     for (const role of ["context_use_dashboard", "context_use_mcp"]) {
       expect((await admin.query<{ allowed: boolean }>(

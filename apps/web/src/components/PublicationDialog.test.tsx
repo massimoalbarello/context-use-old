@@ -67,7 +67,7 @@ describe("republication review", () => {
     expect(republicationChanged(unchanged)).toBe(false);
   });
 
-  test("shows a moved path as a before and after rather than a body diff", () => {
+  test("does not surface retained filesystem-path changes", () => {
     const html = renderToStaticMarkup(<RepublicationReview
       review={{
         ...review,
@@ -77,9 +77,10 @@ describe("republication review", () => {
       candidateVersionNumber={5}
     />);
 
-    expect(html).toContain("Path");
-    expect(html).toContain("about/intro");
-    expect(html).toContain("about/profile");
+    expect(html).toContain("identical to the one already public");
+    expect(html).not.toContain("Path");
+    expect(html).not.toContain("about/intro");
+    expect(html).not.toContain("about/profile");
   });
 
   test("counts any change as a change for the confirmation wording", () => {
