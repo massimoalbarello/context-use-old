@@ -329,6 +329,161 @@ button:disabled {
   font: 9px/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+.document-navigator {
+  min-height: 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+
+.document-filter {
+  padding: 1px 3px 7px;
+  display: flex;
+  gap: 3px;
+}
+
+.document-filter button {
+  min-height: 27px;
+  padding: 5px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #817c74;
+  font-size: 10px;
+  font-weight: 630;
+}
+
+.document-filter button:hover,
+.document-filter button.active {
+  background: rgba(255, 255, 255, .75);
+  color: var(--ink);
+}
+
+.document-filter button.active { box-shadow: inset 0 0 0 1px var(--line); }
+
+.document-list-heading {
+  padding: 4px 7px 7px;
+  display: flex;
+  justify-content: space-between;
+  color: #8d887f;
+  font-size: 9px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.document-list-heading strong { font-weight: 720; }
+
+.document-list {
+  min-height: 0;
+  padding: 0 2px 10px;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.document-result {
+  width: 100%;
+  min-height: 68px;
+  padding: 8px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+
+.document-result:hover { background: rgba(255, 255, 255, .6); }
+
+.document-result.selected {
+  background: rgba(255, 255, 255, .94);
+  box-shadow: 0 1px 3px rgba(45, 40, 32, .06), inset 3px 0 var(--accent);
+}
+
+.document-result-icon {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: rgba(223, 219, 210, .56);
+  color: #777168;
+}
+
+.document-result-icon svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.3;
+}
+
+.document-result-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.document-result-title {
+  overflow: hidden;
+  color: #3f3b36;
+  font-size: 12px;
+  font-weight: 660;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.document-result-summary {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #7d7870;
+  font-size: 10px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.document-result-meta {
+  display: flex;
+  gap: 7px;
+  color: #99938a;
+  font-size: 8px;
+  font-weight: 630;
+  text-transform: capitalize;
+}
+
+.document-result-meta i { font-style: normal; }
+.document-result-meta time { margin-left: auto; }
+
+.document-list-state {
+  padding: 26px 12px;
+  color: #8c877f;
+  font-size: 11px;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.document-load-more {
+  min-height: 30px;
+  margin: 2px 4px 6px;
+  flex: 0 0 auto;
+  background: transparent;
+  color: #716c64;
+  font-size: 10px;
+}
+
+.document-inline-error { margin: 0 8px 5px; font-size: 9px; }
+
 .archive-toggle {
   min-height: 28px;
   padding: 4px 7px;
@@ -898,6 +1053,135 @@ button:disabled {
 
 .rendered pre code,
 .publication-preview pre code { background: transparent; }
+
+.document-neighborhood {
+  width: min(920px, calc(100% - 84px));
+  margin: -46px auto 72px;
+  padding-top: 26px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 28px;
+  border-top: 1px solid var(--line);
+}
+
+.document-neighborhood.compact {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.document-neighborhood section { min-width: 0; }
+
+.document-neighborhood section > header {
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #8a857d;
+}
+
+.document-neighborhood h2 {
+  margin: 0;
+  color: #4f4b45;
+  font-size: 11px;
+  letter-spacing: .02em;
+}
+
+.document-neighborhood section > header span { font-size: 9px; }
+
+.document-neighborhood section > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.document-neighborhood section button {
+  min-height: 0;
+  padding: 9px 28px 9px 10px;
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid transparent;
+  background: #f5f3ee;
+  text-align: left;
+}
+
+.document-neighborhood section button:hover {
+  border-color: var(--line);
+  background: #efede7;
+}
+
+.document-neighborhood section button span {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.document-neighborhood section button small {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.document-neighborhood section button i {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  color: var(--faint);
+  font-style: normal;
+}
+
+.document-neighborhood p {
+  margin: 8px 2px 0;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.document-index-state { grid-column: 1 / -1; }
+
+.document-kicker {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 720;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+.catalog-document-card {
+  width: min(920px, 100%);
+  margin: 0 auto;
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-strong);
+}
+
+.catalog-document-card dl {
+  margin: 0 0 24px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.catalog-document-card dt {
+  color: var(--faint);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.catalog-document-card dd { margin: 5px 0 0; font-size: 12px; }
+.catalog-document-card > p { color: var(--muted); font-size: 12px; }
 
 .directory-edit-grid { min-height: calc(100vh - 170px); }
 
@@ -2883,6 +3167,8 @@ button:disabled {
 
   .page-tree .tree-label { font-size: 13px; }
 
+  .document-result { min-height: 74px; padding-block: 10px; }
+
   .archive-toggle {
     min-height: 38px;
     font-size: 11px;
@@ -2975,6 +3261,13 @@ button:disabled {
 
   .content-page > header h1 { font-size: 40px; }
   .asset-card dl { grid-template-columns: 1fr; }
+  .document-neighborhood {
+    width: auto;
+    margin-right: 22px;
+    margin-left: 22px;
+    grid-template-columns: 1fr;
+  }
+  .catalog-document-card dl { grid-template-columns: 1fr; }
 
   .action-dialog-content { padding: 28px 24px 24px; }
 

@@ -151,7 +151,7 @@ function privatePageResolvers(sourcePath: string) {
   return {
     page: async (id: string) => {
       const page = await dashboardPages.metadata(id);
-      return page ? { available: true as const, href: `/app/pages/${id}` } : { available: false as const };
+      return page ? { available: true as const, href: `/app/documents/${id}` } : { available: false as const };
     },
     directory: async (id: string) => {
       const directory = await dashboardDirectories.get(id);
@@ -160,7 +160,7 @@ function privatePageResolvers(sourcePath: string) {
     pagePath: async (path: string) => {
       for (const candidate of wikiLinkCandidatePaths(path, sourcePath)) {
         const page = await dashboardPages.metadataByPath(candidate);
-        if (page) return { available: true as const, href: `/app/pages/${page.id}` };
+        if (page) return { available: true as const, href: `/app/documents/${page.id}` };
         const directory = await dashboardDirectories.getByPath(candidate);
         if (directory) return { available: true as const, href: `/app/directories/${directory.id}` };
       }
