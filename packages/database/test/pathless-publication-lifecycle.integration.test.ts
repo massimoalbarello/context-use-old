@@ -437,6 +437,13 @@ describeDatabase("pathless publication lifecycle coexistence", () => {
         "SELECT reserve_public_representation_token($1,$2,'page')",
         [representationToken, artifactId],
       );
+      await client.query(
+        `INSERT INTO pathless_publication_object_claims(
+           allocation_kind,allocation_id,artifact_id,body_object_key,
+           claim_token,finalized_at,body_size_bytes,body_content_hash
+         ) VALUES ('pathless_intent',$1,$2,$3,$4,now(),4,$5)`,
+        [intentId, artifactId, objectKey, randomUUID(), hash("b")],
+      );
       expect(await sqlState(client, () => client.query(
         `INSERT INTO pathless_publication_artifact_staging(
            intent_id,target_kind,candidate_public_id,artifact_id,

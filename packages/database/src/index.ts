@@ -195,6 +195,7 @@ export {
   type PathlessPublicationEntrypoint,
   type PathlessPublicationEntrypointCandidate,
   type PathlessPublicationIntent,
+  type PathlessPublicationObjectClaim,
   type PathlessPublicationPrincipal,
   type PathlessPublicationProjectionOutcome,
   type PathlessPublicationProjectionTarget,

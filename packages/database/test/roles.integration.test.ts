@@ -912,8 +912,11 @@ describeDatabase("PostgreSQL security roles", () => {
       "reconcile_finished_operational_public_namespace_conflicts",
       "reconcile_planned_public_namespace_conflicts",
       "reconcile_superseded_public_namespace_conflicts",
+      "reject_pending_pathless_publication_claim_challenge",
+      "require_finalized_pathless_publication_object_claim",
       "reserve_legacy_page_artifact_identity",
       "reserve_public_artifact_identity",
+      "guard_pathless_publication_object_claim_history",
       "validate_active_pathless_publication_pin",
     ];
     const functions = await admin.query<{ proname: string; owner: string; security_definer: boolean }>(
@@ -985,6 +988,7 @@ describeDatabase("PostgreSQL security roles", () => {
       "pathless_publication_adoptions",
       "pathless_publication_artifact_staging",
       "pathless_publication_intents",
+      "pathless_publication_object_claims",
       "pathless_publication_settings",
       "public_artifact_id_reservations",
       "public_asset_artifacts",
@@ -996,6 +1000,37 @@ describeDatabase("PostgreSQL security roles", () => {
         "SELECT has_table_privilege('context_use_backup',$1,'SELECT') AS allowed",
         [relation],
       )).rows[0]?.allowed).toBe(true);
+    }
+
+    const storageClaimFunctions = [
+      "claim_pathless_publication_artifact(uuid,uuid)",
+      "claim_pathless_publication_adoption_artifact(uuid,uuid)",
+      "finalize_pathless_publication_artifact_claim(uuid,uuid,publication_target,bigint,text,text,text,timestamp with time zone,text,text,integer,integer,text,uuid[],uuid[],text)",
+      "finalize_pathless_publication_adoption_claim(uuid,uuid,pathless_publication_adoption_kind,bigint,text,text,text,timestamp with time zone,text,text,integer,integer,text,uuid[],uuid[],text)",
+    ];
+    for (const fn of storageClaimFunctions) {
+      expect((await admin.query<{ owner: string; security_definer: boolean }>(
+        `SELECT pg_get_userbyid(proowner) AS owner,prosecdef AS security_definer
+         FROM pg_proc WHERE oid=$1::regprocedure`,
+        [fn],
+      )).rows[0]).toEqual({
+        owner: "context_use_pathless_storage_owner",
+        security_definer: true,
+      });
+      expect((await admin.query<{ allowed: boolean }>(
+        "SELECT has_function_privilege('context_use_storage',$1,'EXECUTE') AS allowed",
+        [fn],
+      )).rows[0]?.allowed).toBe(true);
+      for (const role of [
+        "context_use_auth", "context_use_backup", "context_use_confirmation",
+        "context_use_corpus", "context_use_dashboard", "context_use_mcp",
+        "context_use_public",
+      ]) {
+        expect((await admin.query<{ allowed: boolean }>(
+          "SELECT has_function_privilege($1,$2,'EXECUTE') AS allowed",
+          [role, fn],
+        )).rows[0]?.allowed).toBe(false);
+      }
     }
 
     const allocator = "reserve_public_artifact_identity(uuid,text,public_artifact_allocation_kind,uuid)";

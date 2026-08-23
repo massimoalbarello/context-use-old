@@ -24,6 +24,7 @@ describe("development data reset", () => {
       "public_representation_token_reservations",
       "pathless_publication_intents",
       "publication_intent_id_reservations",
+      "pathless_publication_object_claims",
       "pathless_publication_artifact_staging",
       "public_page_artifacts",
       "public_asset_artifacts",

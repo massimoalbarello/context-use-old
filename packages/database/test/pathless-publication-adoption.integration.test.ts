@@ -11,6 +11,7 @@ const hash = (value: string): string =>
 const fixtureDocumentIds = new Set<string>();
 
 type AdoptionTarget = {
+  claim_token: string;
   adoption_kind: "legacy_page" | "legacy_asset" | "directory_hub";
   source_body_size_bytes: string;
   source_body_content_hash: string;
@@ -48,11 +49,12 @@ async function stageAdoption(
 ): Promise<void> {
   await asRole(client, "context_use_storage", async () => {
     await client.query(
-      `SELECT stage_pathless_publication_adoption(
-         $1,$2,$3::bigint,$4,$5,$6,$7::timestamptz,$8,$9,$10,$11,$12,
-         $13::uuid[],$14::uuid[],$15
+      `SELECT finalize_pathless_publication_adoption_claim(
+         $1,$2,$3,$4::bigint,$5,$6,$7,$8::timestamptz,$9,$10,$11,$12,
+         $13,$14::uuid[],$15::uuid[],$16
        )`,
       [
+        target.claim_token,
         adoptionId,
         target.adoption_kind,
         overrides.bodySize ?? target.source_body_size_bytes,
@@ -77,12 +79,16 @@ async function getAdoptionTarget(
   client: Client,
   adoptionId: string,
 ): Promise<AdoptionTarget> {
-  return await asRole(client, "context_use_storage", async () =>
-    (await client.query<AdoptionTarget>(
-      "SELECT * FROM get_pathless_publication_adoption_write_target($1)",
-      [adoptionId],
-    )).rows[0]!,
-  );
+  return await asRole(client, "context_use_storage", async () => {
+    const claim = (await client.query<{
+      claim_token: string;
+      authorization: Omit<AdoptionTarget, "claim_token">;
+    }>(
+      "SELECT * FROM claim_pathless_publication_adoption_artifact($1,$2)",
+      [adoptionId, randomUUID()],
+    )).rows[0]!;
+    return { claim_token: claim.claim_token, ...claim.authorization };
+  });
 }
 
 async function beginAdoption(
@@ -743,7 +749,7 @@ describeDatabase("pathless publication adoption boundaries", () => {
     }
     await asRole(client, "context_use_corpus", async () => {
       await expect(
-        client.query("SELECT * FROM get_pathless_publication_adoption_write_target($1)", [randomUUID()]),
+        client.query("SELECT * FROM claim_pathless_publication_adoption_artifact($1,$2)", [randomUUID(), randomUUID()]),
       ).rejects.toMatchObject({ code: "42501" });
     });
     await asRole(client, "context_use_storage", async () => {

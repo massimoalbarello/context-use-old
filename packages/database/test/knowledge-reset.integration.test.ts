@@ -56,6 +56,7 @@ describeDatabase("passkey-confirmed knowledge base reset", () => {
            pathless_knowledge_search,knowledge_revision_contracts,
            page_publications,asset_publications,public_page_artifacts,
            public_asset_artifacts,public_representation_token_reservations,
+           pathless_publication_object_claims,
            pathless_publication_artifact_staging,pathless_publication_intents,
            publication_intent_id_reservations,
            pathless_publication_adoption_staging,pathless_publication_adoptions,
