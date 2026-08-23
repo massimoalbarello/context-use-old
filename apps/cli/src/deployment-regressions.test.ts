@@ -678,12 +678,20 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   const stopClients = "stop \\\n  dashboard-edge app auth private-mcp public-web confirmation storage backup";
   const restoreStorage = "up -d --wait storage";
   const prepareKnowledge = "--exit-code-from knowledge-prepare knowledge-prepare";
+  const compatibilityMigration = "-e MIGRATOR_MAX_VERSION=035_hydrate_ready_corpus_knowledge.sql";
+  const contractionMigration = "--profile migration run --rm migrate";
   const restorePublic = "up -d --wait --no-deps public-web";
   const restoreDashboard = "up -d --wait --no-deps \\\n  dashboard-edge";
-  expect(deployScript.indexOf(stopClients)).toBeLessThan(deployScript.indexOf("--profile migration run --rm migrate"));
-  expect(deployScript.indexOf("--profile migration run --rm migrate")).toBeLessThan(deployScript.indexOf(restoreStorage));
+  expect(deployScript.indexOf(stopClients)).toBeLessThan(deployScript.indexOf(compatibilityMigration));
+  expect(deployScript.indexOf(compatibilityMigration)).toBeLessThan(deployScript.indexOf(restoreStorage));
   expect(deployScript.indexOf(restoreStorage)).toBeLessThan(deployScript.indexOf(prepareKnowledge));
-  expect(deployScript.indexOf(prepareKnowledge)).toBeLessThan(deployScript.indexOf(restorePublic));
+  const contractionIndex = deployScript.indexOf(
+    contractionMigration,
+    deployScript.indexOf(prepareKnowledge),
+  );
+  expect(deployScript.indexOf(prepareKnowledge)).toBeLessThan(contractionIndex);
+  expect(contractionIndex).toBeLessThan(deployScript.indexOf(restorePublic));
+  expect(deployScript).toContain("-e MIGRATOR_ALLOW_APPLIED_LATER=true");
   // The public pages are the availability priority: their path comes back
   // before the dashboard, MCP, and auth services compete for the same cores,
   // and the whole primary edge finishes before Nango is touched at all.

@@ -43,6 +43,7 @@ export function migrationsThroughVersion<T extends MigrationDescriptor>(
   files: readonly T[],
   applied: readonly AppliedMigration[],
   maximumVersion: string | undefined,
+  allowAppliedLater = false,
 ): T[] {
   if (maximumVersion === undefined) return [...files];
 
@@ -58,7 +59,7 @@ export function migrationsThroughVersion<T extends MigrationDescriptor>(
     const index = indexes.get(version);
     return index !== undefined && index > targetIndex ? [version] : [];
   });
-  if (laterApplied.length) {
+  if (laterApplied.length && !allowAppliedLater) {
     throw new Error(
       `MIGRATOR_MAX_VERSION ${maximumVersion} is older than already-applied migration(s): ${laterApplied.join(", ")}`,
     );
