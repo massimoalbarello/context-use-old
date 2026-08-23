@@ -1,21 +1,29 @@
 import {
   AssetRepository,
+  DocumentAssetRepository,
   DocumentLinkRepository,
   DirectoryNotEmptyError,
   DirectoryRepository,
   KnowledgeSettingsRepository,
+  KnowledgeDocumentRepository,
   PageRepository,
+  PrivateDocumentCatalogRepository,
   SourceRecordRepository,
 } from "@context-use/database";
 import {
   archiveAssetSchema,
+  archiveDocumentAssetSchema,
+  archiveKnowledgeDocumentSchema,
   archivePageSchema,
   assetUploadSchema,
   createDirectorySchema,
+  createDocumentAssetSchema,
+  createKnowledgeDocumentSchema,
   createPageSchema,
   deleteDirectorySchema,
   pagePublication,
   updateDirectorySchema,
+  updateKnowledgeDocumentSchema,
   updatePageSchema,
 } from "@context-use/shared";
 import { DirectoryPath, KnowledgePath } from "@context-use/shared";
@@ -26,6 +34,7 @@ import type {
   PagePublication,
   PagePublicationSource,
 } from "@context-use/shared";
+import type { PrivateDocumentCatalogItem } from "@context-use/database";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { config } from "./config.ts";
@@ -50,7 +59,10 @@ const SERVER_INSTRUCTIONS = "Use Context Use proactively when the user states a 
   + "knowledge mutation in an authenticated session, call begin_knowledge_session, read its "
   + "configured global guide, and reuse its receipt across every target in that session. "
   + "prepare_change remains a transitional alias for deployed workflows, but it loads the same "
-  + "single global guide and does not apply path-scoped instructions.";
+  + "single global guide and does not apply path-scoped instructions. Prefer the stable-ID "
+  + "document tools (search_documents, read_document, create_document, update_document, "
+  + "archive_document, create_document_asset_upload, archive_document_asset). Filesystem "
+  + "page, asset and directory tools are transitional compatibility surfaces.";
 
 const MCP_BACKLINK_LIMIT = 100;
 
@@ -311,6 +323,46 @@ function assetPathIsDirectory(path: string) {
   ].join("\n\n"), true);
 }
 
+export type PathlessMcpRepositories = {
+  knowledgeDocuments: KnowledgeDocumentRepository;
+  documentAssets: DocumentAssetRepository;
+  documentCatalog: PrivateDocumentCatalogRepository;
+};
+
+function documentCatalogSummary(document: PrivateDocumentCatalogItem) {
+  return {
+    document_id: document.document_id,
+    document_kind: document.document_kind,
+    authority: document.authority,
+    representation: document.representation,
+    lifecycle: document.lifecycle,
+    current_revision_id: document.current_revision_id,
+    title: document.title,
+    summary: document.summary,
+    filename: document.filename,
+    content_type: document.content_type,
+    operational_roles: document.operational_roles,
+    updated_at: document.updated_at,
+    reference: `context-use://document/${document.document_id}`,
+  };
+}
+
+function unknownDocument(documentId: string, retryTool: string) {
+  return textContent([
+    "DOCUMENT_NOT_FOUND",
+    `No active knowledge document has id ${documentId}, so nothing was changed.`,
+    `Use search_documents, copy the stable document_id exactly, and retry ${retryTool}.`,
+  ].join("\n\n"), true);
+}
+
+function documentGuidanceRequired(retryTool: string) {
+  return textContent([
+    "KNOWLEDGE_GUIDE_REQUIRED",
+    "Call begin_knowledge_session with {}, read the returned configured global guide, and retry with its knowledge_session_receipt.",
+    `Then retry ${retryTool}. The path-scoped prepare_change alias is not needed for stable document writes.`,
+  ].join("\n\n"), true);
+}
+
 export async function createMcpServer(
   context: McpContext,
   pages: PageRepository,
@@ -320,6 +372,7 @@ export async function createMcpServer(
   recordDocuments: SourceRecordRepository | undefined,
   knowledgeSettings: KnowledgeSettingsRepository,
   documentLinks?: DocumentLinkRepository,
+  pathless?: PathlessMcpRepositories,
 ): Promise<McpServer> {
   const skillPages = await pages.metadataInDirectory?.("skills") ?? [];
   const skills = skillPages
@@ -393,6 +446,210 @@ export async function createMcpServer(
       documentId: guide.document_id,
       revisionId: guide.current_revision_id,
     }, context);
+  }
+
+  if (pathless) {
+    server.registerTool("search_documents", {
+      description: "Search the unified private document catalog by title, summary, filename and indexed text. Returns stable document references and preview metadata without filesystem paths, storage locators or source-system identifiers. Use read_document to load one selected document.",
+      inputSchema: z.object({
+        query: z.string().trim().min(1).max(500),
+        document_kind: z.enum(["knowledge", "record", "asset"]).optional(),
+        include_retired: z.boolean().default(false),
+        cursor: z.string().min(1).max(4096).optional(),
+        limit: z.number().int().min(1).max(100).default(30),
+      }).strict(),
+      annotations: { readOnlyHint: true },
+    }, async ({ query, document_kind, include_retired, cursor, limit }) => {
+      const result = await pathless.documentCatalog.search(query, {
+        ...(document_kind ? { document_kind } : {}),
+        include_retired,
+        ...(cursor ? { cursor } : {}),
+        limit,
+      });
+      return jsonObjectContent({
+        documents: result.documents.map(documentCatalogSummary),
+        next_cursor: result.next_cursor,
+        has_more: result.has_more,
+      });
+    });
+
+    server.registerTool("read_document", {
+      description: "Read one private document by stable UUID. Knowledge and source documents return current Markdown and hypermedia links; assets return metadata and a short-lived checksum-bound download request. No filesystem paths or storage keys are exposed.",
+      inputSchema: z.object({ document_id: z.string().uuid() }).strict(),
+      annotations: { readOnlyHint: true },
+    }, async ({ document_id }) => {
+      const catalog = await pathless.documentCatalog.get(document_id);
+      if (!catalog) return jsonContent(null);
+      if (catalog.document_kind === "knowledge") {
+        const document = await pathless.knowledgeDocuments.get(document_id);
+        if (!document) return jsonContent(null);
+        return jsonContent({
+          ...documentCatalogSummary(catalog),
+          revision_number: document.revision_number,
+          body_markdown: document.body_markdown,
+          hypermedia: await hypermedia(document.document_id, document.current_revision_id),
+        });
+      }
+      if (catalog.document_kind === "record") {
+        const record = await recordDocuments?.get(document_id);
+        if (!record) return jsonContent(null);
+        return jsonContent({
+          ...documentCatalogSummary(catalog),
+          revision_number: record.revision_number,
+          body_markdown: record.body_markdown,
+          hypermedia: await hypermedia(record.document_id, record.current_revision_id),
+        });
+      }
+      const asset = await pathless.documentAssets.get(document_id, { include_deleted: true });
+      if (!asset) return jsonContent(null);
+      const capability = createAssetCapability("download", document_id, context);
+      return jsonContent({
+        ...documentCatalogSummary(catalog),
+        size_bytes: asset.size_bytes,
+        content_hash: asset.content_hash,
+        width: asset.width,
+        height: asset.height,
+        duration_seconds: asset.duration_seconds,
+        download: {
+          method: "GET",
+          url: `${config.APP_ORIGIN}/api/mcp/assets/${encodeURIComponent(document_id)}/content`,
+          headers: { "x-context-use-download-token": capability.token },
+          expires_at: capability.expiresAt,
+        },
+      });
+    });
+
+    server.registerTool("create_document", {
+      description: "Create a private Markdown knowledge document with a stable UUID and no caller-selected path. Requires a current knowledge_session_receipt from begin_knowledge_session. The summary is used in search and link previews.",
+      inputSchema: createKnowledgeDocumentSchema.extend(mutationReceiptSchemas).strict(),
+      annotations: { destructiveHint: false },
+    }, async ({ knowledge_session_receipt, guidance_receipt, ...input }) => {
+      if (!await hasCurrentGuidance("", knowledge_session_receipt, guidance_receipt)) {
+        return documentGuidanceRequired("create_document");
+      }
+      const document = await pathless.knowledgeDocuments.create(input, actor);
+      return jsonContent({
+        document_id: document.document_id,
+        current_revision_id: document.current_revision_id,
+        revision_number: document.revision_number,
+        title: document.title,
+        summary: document.summary,
+        body_markdown: document.body_markdown,
+        reference: `context-use://document/${document.document_id}`,
+      });
+    });
+
+    server.registerTool("update_document", {
+      description: "Create a new immutable revision of an active knowledge document by stable UUID. Read it first and pass expected_revision_number for optimistic concurrency. The document never moves because it has no semantic filesystem path.",
+      inputSchema: updateKnowledgeDocumentSchema.extend({
+        document_id: z.string().uuid(),
+        ...mutationReceiptSchemas,
+        acknowledge_published_document: z.literal(true).optional().describe(
+          "Required only when the owner asked to edit a document with a legacy publication pin.",
+        ),
+      }).strict(),
+      annotations: { destructiveHint: false },
+    }, async ({
+      document_id,
+      knowledge_session_receipt,
+      guidance_receipt,
+      acknowledge_published_document,
+      ...input
+    }) => {
+      const existing = await pathless.knowledgeDocuments.get(document_id);
+      if (!existing || existing.archived_at) return unknownDocument(document_id, "update_document");
+      if (!await hasCurrentGuidance("", knowledge_session_receipt, guidance_receipt)) {
+        return documentGuidanceRequired("update_document");
+      }
+      if (existing.legacy_published && !acknowledge_published_document) {
+        return textContent([
+          "PUBLISHED_DOCUMENT",
+          "The owner has a legacy public version pinned. This edit would remain private until a later publication change.",
+          "Retry update_document with acknowledge_published_document: true only when the owner asked for this published document itself to change.",
+        ].join("\n\n"), true);
+      }
+      const updated = await pathless.knowledgeDocuments.update(document_id, input, actor);
+      if (!updated) return unknownDocument(document_id, "update_document");
+      return jsonContent({
+        document_id: updated.document_id,
+        current_revision_id: updated.current_revision_id,
+        revision_number: updated.revision_number,
+        title: updated.title,
+        summary: updated.summary,
+        body_markdown: updated.body_markdown,
+        reference: `context-use://document/${updated.document_id}`,
+      });
+    });
+
+    server.registerTool("archive_document", {
+      description: "Archive one unpublished knowledge document by stable UUID using optimistic concurrency. Requires a current knowledge_session_receipt from begin_knowledge_session.",
+      inputSchema: archiveKnowledgeDocumentSchema.extend({
+        document_id: z.string().uuid(),
+        ...mutationReceiptSchemas,
+      }).strict(),
+      annotations: { destructiveHint: true },
+    }, async ({ document_id, knowledge_session_receipt, guidance_receipt, ...input }) => {
+      const existing = await pathless.knowledgeDocuments.get(document_id);
+      if (!existing) return unknownDocument(document_id, "archive_document");
+      if (!await hasCurrentGuidance("", knowledge_session_receipt, guidance_receipt)) {
+        return documentGuidanceRequired("archive_document");
+      }
+      const archived = await pathless.knowledgeDocuments.archive(document_id, input, actor);
+      return archived ? jsonContent({
+        document_id: archived.document_id,
+        current_revision_id: archived.current_revision_id,
+        revision_number: archived.revision_number,
+        archived_at: archived.archived_at,
+        reference: `context-use://document/${archived.document_id}`,
+      }) : unknownDocument(document_id, "archive_document");
+    });
+
+    server.registerTool("create_document_asset_upload", {
+      description: "Create a checksum-bound private asset document without choosing a filesystem path. PUT the exact raw bytes to the returned URL with every returned header before expires_at.",
+      inputSchema: createDocumentAssetSchema.extend(mutationReceiptSchemas).strict(),
+      annotations: { destructiveHint: false },
+    }, async ({ knowledge_session_receipt, guidance_receipt, ...input }) => {
+      if (!await hasCurrentGuidance("", knowledge_session_receipt, guidance_receipt)) {
+        return documentGuidanceRequired("create_document_asset_upload");
+      }
+      const created = await pathless.documentAssets.create(input);
+      const documentId = created.document.document_id;
+      const capability = createAssetCapability("upload", documentId, context);
+      const reference = `context-use://document/${documentId}`;
+      const markdownAlt = created.document.filename.replace(/[\[\]\r\n]+/g, " ")
+        .replace(/\s+/g, " ").trim() || "Image";
+      const imageMarkdown = `![${markdownAlt}](${reference})`;
+      return jsonContent({
+        document: created.document,
+        reference,
+        ...(/^image\/(?:png|jpeg|gif|webp|avif)(?:;|$)/i.test(created.document.content_type)
+          ? { page_markdown: { default: imageMarkdown, formatted_example: `${imageMarkdown}{size=medium align=center shape=auto}` } }
+          : {}),
+        upload: {
+          method: "PUT",
+          url: `${config.APP_ORIGIN}/api/mcp/assets/${encodeURIComponent(documentId)}/content`,
+          headers: {
+            "content-type": created.document.content_type,
+            "content-length": created.document.size_bytes,
+            "x-context-use-upload-token": capability.token,
+          },
+          expires_at: capability.expiresAt,
+        },
+      });
+    });
+
+    server.registerTool("archive_document_asset", {
+      description: "Archive one private asset document by stable UUID. Published assets and assets referenced by active knowledge are rejected.",
+      inputSchema: archiveDocumentAssetSchema.extend(mutationReceiptSchemas).strict(),
+      annotations: { destructiveHint: true },
+    }, async ({ asset_id, knowledge_session_receipt, guidance_receipt }) => {
+      const asset = await pathless.documentAssets.get(asset_id);
+      if (!asset) return jsonContent(null);
+      if (!await hasCurrentGuidance("", knowledge_session_receipt, guidance_receipt)) {
+        return documentGuidanceRequired("archive_document_asset");
+      }
+      return jsonContent(await pathless.documentAssets.archive({ asset_id }));
+    });
   }
 
   if (sourceRecords) {

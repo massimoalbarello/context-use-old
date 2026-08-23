@@ -361,6 +361,11 @@ button:disabled {
 
 .document-filter button.active { box-shadow: inset 0 0 0 1px var(--line); }
 
+.document-filter .document-create {
+  margin-left: auto;
+  color: var(--accent);
+}
+
 .document-list-heading {
   padding: 4px 7px 7px;
   display: flex;
@@ -901,6 +906,7 @@ button:disabled {
 }
 
 .editor-fields .summary-field { grid-column: 1 / -1; }
+.editor-fields.pathless > label { grid-column: 1 / -1; }
 
 .editor-fields label,
 .modal label {

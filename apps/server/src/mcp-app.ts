@@ -1,9 +1,12 @@
 import {
   AssetRepository,
   DirectoryRepository,
+  DocumentAssetRepository,
   DocumentLinkRepository,
+  KnowledgeDocumentRepository,
   KnowledgeSettingsRepository,
   PageRepository,
+  PrivateDocumentCatalogRepository,
   SourceRecordRepository,
   createPool,
 } from "@context-use/database";
@@ -46,6 +49,9 @@ const storage = new BrokeredStorage({
 });
 const markdownObjects = new BrokeredMarkdownObjectStore(storage);
 const pages = new PageRepository(pool, markdownObjects);
+const knowledgeDocuments = new KnowledgeDocumentRepository(pool, markdownObjects);
+const documentAssets = new DocumentAssetRepository(pool);
+const documentCatalog = new PrivateDocumentCatalogRepository(pool);
 const recordDocuments = new SourceRecordRepository(pool, markdownObjects);
 const knowledgeSettings = new KnowledgeSettingsRepository(pool);
 const documentLinks = new DocumentLinkRepository(pool);
@@ -68,6 +74,7 @@ const knowledgeMcp = createMcpRequestHandler(
   recordDocuments,
   knowledgeSettings,
   documentLinks,
+  { knowledgeDocuments, documentAssets, documentCatalog },
 );
 const upload = createMcpAssetUploadHandler(assets, storage);
 const download = createMcpAssetDownloadHandler(assets, storage);

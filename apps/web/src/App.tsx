@@ -11,6 +11,7 @@ import { DocumentNavigator } from "./components/DocumentNavigator.tsx";
 import { KnowledgeHistory } from "./components/KnowledgeHistory.tsx";
 import { Login } from "./components/Login.tsx";
 import { McpClients } from "./components/McpClients.tsx";
+import { NewKnowledgeDocument } from "./components/NewKnowledgeDocument.tsx";
 import { OAuthConsent } from "./components/OAuthConsent.tsx";
 import { Settings, type PasskeySummary } from "./components/Settings.tsx";
 import type { Asset } from "./types.ts";
@@ -76,6 +77,9 @@ export function App() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [selected, setSelected] = useState<DashboardSelection | null>(selectionFromLocation);
   const [selectedDocument, setSelectedDocument] = useState<DashboardDocumentSummary | null>(null);
+  const [creatingDocument, setCreatingDocument] = useState(
+    window.location.pathname === "/app/documents/new",
+  );
   const [navigatorRefresh, setNavigatorRefresh] = useState(0);
   const [section, setSection] = useState<Section>(sectionFromLocation);
   const [query, setQuery] = useState("");
@@ -113,6 +117,7 @@ export function App() {
     const syncLocation = () => {
       setSelected(selectionFromLocation());
       setSelectedDocument(null);
+      setCreatingDocument(window.location.pathname === "/app/documents/new");
       setSection(sectionFromLocation());
       setMobileSidebarOpen(false);
     };
@@ -223,6 +228,7 @@ export function App() {
   if (session.passkey_count === 0) return <main className="center-card"><h1>Owner passkey missing</h1><p>This installation must always retain at least one owner passkey.</p></main>;
 
   const openDocument = (document: DashboardDocumentSummary, fragment = "") => {
+    setCreatingDocument(false);
     setSelected({ kind: "document", id: document.document_id });
     setSelectedDocument(document);
     setSection("knowledge");
@@ -231,6 +237,7 @@ export function App() {
   };
 
   const openDocumentId = (documentId: string, fragment = "") => {
+    setCreatingDocument(false);
     setSelected({ kind: "document", id: documentId });
     setSelectedDocument(null);
     setSection("knowledge");
@@ -250,24 +257,28 @@ export function App() {
   };
 
   const openSettings = () => {
+    setCreatingDocument(false);
     setSection("settings");
     setMobileSidebarOpen(false);
     if (window.location.pathname !== "/app/settings") history.pushState({}, "", "/app/settings");
   };
 
   const openMcpClients = () => {
+    setCreatingDocument(false);
     setSection("mcp");
     setMobileSidebarOpen(false);
     history.pushState({}, "", "/app/mcp");
   };
 
   const openHistory = () => {
+    setCreatingDocument(false);
     setSection("history");
     setMobileSidebarOpen(false);
     history.pushState({}, "", "/app/history");
   };
 
   const openKnowledge = () => {
+    setCreatingDocument(false);
     setSection("knowledge");
     setMobileSidebarOpen(false);
     history.pushState({}, "", selected
@@ -275,6 +286,15 @@ export function App() {
         ? `/app/directories/${selected.id}`
         : `/app/documents/${selected.id}`
       : "/app");
+  };
+
+  const createDocument = () => {
+    setSelected(null);
+    setSelectedDocument(null);
+    setCreatingDocument(true);
+    setSection("knowledge");
+    setMobileSidebarOpen(false);
+    history.pushState({}, "", "/app/documents/new");
   };
 
   const followDocumentLink = (event: ReactMouseEvent<HTMLDivElement>) => {
@@ -342,6 +362,7 @@ export function App() {
         includeRetired={showArchived}
         selectedId={section === "knowledge" && selected?.kind === "document" ? selected.id : null}
         refreshToken={navigatorRefresh}
+        onCreate={createDocument}
         onSelect={openDocument}
       />
       <label className="archive-toggle"><input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />Include archived and deleted</label>
@@ -363,7 +384,7 @@ export function App() {
       onKeyDown={resizeSidebarWithKeyboard}
       onDoubleClick={() => setSidebarWidth(DEFAULT_SIDEBAR_WIDTH)}
     />
-    {section === "settings" ? <Settings passkeys={session.passkeys} onPasskeysChanged={loadSession} onKnowledgeChanged={async () => { setNavigatorRefresh((value) => value + 1); }} /> : section === "history" ? <KnowledgeHistory onOpenPage={(pageId) => openDocumentId(pageId)} /> : section === "mcp" ? <McpClients /> : selected?.kind === "directory" ? <DirectoryEditor directoryId={selected.id} onChanged={async () => { setNavigatorRefresh((value) => value + 1); }} onDeleted={async () => { setSelected(null); history.pushState({}, "", "/app"); setNavigatorRefresh((value) => value + 1); await loadAssets(); setMessage("Empty directory deleted."); }} onSelect={selectKnowledge} /> : selected?.kind === "document" && selectedDocument?.document_kind === "knowledge" ? <Editor pageId={selected.id} onChanged={async () => { setNavigatorRefresh((value) => value + 1); }} onDeleted={async () => { setSelected(null); setSelectedDocument(null); history.pushState({}, "", "/app"); setNavigatorRefresh((value) => value + 1); setMessage("Page and retained content versions deleted. A body-free tombstone remains in Change history."); }} onOpenDocument={openDocument} /> : selectedAsset ? <AssetDetails key={selectedAsset.id} asset={selectedAsset} onChanged={async () => { await loadAssets(); setNavigatorRefresh((value) => value + 1); }} onDeleted={async () => { setSelected(null); setSelectedDocument(null); history.pushState({}, "", "/app"); await loadAssets(); setNavigatorRefresh((value) => value + 1); setMessage("Asset deleted. S3 versioning retains a recoverable noncurrent copy for the configured safety period."); }} /> : selected?.kind === "document" && selectedDocument ? <DocumentDetails document={selectedDocument} /> : selected?.kind === "document" ? <main className="editor-empty">Loading document…</main> : <main className="editor-empty"><div className="empty-content"><span className="empty-kicker"><i />Private by default</span><h1>Your context,<br />ready when you need it.</h1><p>Search your knowledge, open a document, then follow its links and backlinks. Your content stays private until you explicitly publish an exact version.</p><div className="empty-details"><span>Search-first</span><span>Hyperlinked</span><span>Versioned history</span></div></div><div className="empty-sigil" aria-hidden="true"><span>c</span><span>u</span></div></main>}
+    {section === "settings" ? <Settings passkeys={session.passkeys} onPasskeysChanged={loadSession} onKnowledgeChanged={async () => { setNavigatorRefresh((value) => value + 1); }} /> : section === "history" ? <KnowledgeHistory onOpenPage={(pageId) => openDocumentId(pageId)} /> : section === "mcp" ? <McpClients /> : creatingDocument ? <NewKnowledgeDocument onCancel={openKnowledge} onCreated={(documentId) => { setNavigatorRefresh((value) => value + 1); openDocumentId(documentId); }} /> : selected?.kind === "directory" ? <DirectoryEditor directoryId={selected.id} onChanged={async () => { setNavigatorRefresh((value) => value + 1); }} onDeleted={async () => { setSelected(null); history.pushState({}, "", "/app"); setNavigatorRefresh((value) => value + 1); await loadAssets(); setMessage("Empty directory deleted."); }} onSelect={selectKnowledge} /> : selected?.kind === "document" && selectedDocument?.document_kind === "knowledge" ? <Editor pageId={selected.id} onChanged={async () => { setNavigatorRefresh((value) => value + 1); }} onDeleted={async () => { setSelected(null); setSelectedDocument(null); history.pushState({}, "", "/app"); setNavigatorRefresh((value) => value + 1); setMessage("Page and retained content versions deleted. A body-free tombstone remains in Change history."); }} onOpenDocument={openDocument} /> : selectedAsset ? <AssetDetails key={selectedAsset.id} asset={selectedAsset} onChanged={async () => { await loadAssets(); setNavigatorRefresh((value) => value + 1); }} onDeleted={async () => { setSelected(null); setSelectedDocument(null); history.pushState({}, "", "/app"); await loadAssets(); setNavigatorRefresh((value) => value + 1); setMessage("Asset deleted. S3 versioning retains a recoverable noncurrent copy for the configured safety period."); }} /> : selected?.kind === "document" && selectedDocument ? <DocumentDetails document={selectedDocument} /> : selected?.kind === "document" ? <main className="editor-empty">Loading document…</main> : <main className="editor-empty"><div className="empty-content"><span className="empty-kicker"><i />Private by default</span><h1>Your context,<br />ready when you need it.</h1><p>Search your knowledge, open a document, then follow its links and backlinks. Your content stays private until you explicitly publish an exact version.</p><div className="empty-details"><span>Search-first</span><span>Hyperlinked</span><span>Versioned history</span></div></div><div className="empty-sigil" aria-hidden="true"><span>c</span><span>u</span></div></main>}
     {message && <div className="toast">{message}</div>}
   </div>;
 }

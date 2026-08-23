@@ -14,6 +14,23 @@ export type Page = {
   rendered_html?: string;
 };
 
+export type KnowledgeDocumentPage = {
+  id: string;
+  current_version_id: string;
+  published_version_id: string | null;
+  public_id: string | null;
+  archived_at: string | null;
+  version_number: number;
+  title: string;
+  summary: string;
+  body_markdown: string;
+  rendered_html: string;
+  legacy_published: boolean;
+  legacy_publication_eligible: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
 export type PageMetadata = Pick<
   Page,
   | "id"
@@ -31,7 +48,7 @@ export type Version = {
   id: string;
   page_id: string;
   version_number: number;
-  path: string;
+  path?: string;
   title: string;
   summary: string;
   body_markdown?: string;
@@ -39,6 +56,11 @@ export type Version = {
   actor_kind: "dashboard" | "mcp";
   actor_subject: string;
   created_at: string;
+};
+
+export type KnowledgeDocumentHistory = {
+  revisions: Version[];
+  has_more: boolean;
 };
 
 export type PageVersionDiff = {

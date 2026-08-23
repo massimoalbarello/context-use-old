@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.ts";
 import { confirmPublicationChange } from "../publication-auth.ts";
-import type { Page, PublicationPreview, RepublicationReview as Review } from "../types.ts";
+import type {
+  KnowledgeDocumentPage,
+  PublicationPreview,
+  RepublicationReview as Review,
+} from "../types.ts";
 
 const FIELD_LABELS: Record<Review["metadata_changes"][number]["field"], string> = {
   path: "Path",
@@ -72,7 +76,7 @@ export function RepublicationReview({ review, candidateVersionNumber }: {
 }
 
 export function PublicationDialog({ page, versionNumber, publishedVersionNumber, onClose, onChanged }: {
-  page: Page;
+  page: KnowledgeDocumentPage;
   versionNumber: number;
   publishedVersionNumber: number | undefined;
   onClose: () => void;

@@ -63,12 +63,14 @@ export function DocumentNavigator({
   includeRetired,
   selectedId,
   refreshToken,
+  onCreate,
   onSelect,
 }: {
   query: string;
   includeRetired: boolean;
   selectedId: string | null;
   refreshToken: number;
+  onCreate?: () => void;
   onSelect: (document: DashboardDocumentSummary) => void;
 }) {
   const [kind, setKind] = useState<DocumentKindFilter>("all");
@@ -149,6 +151,7 @@ export function DocumentNavigator({
         key={value}
         onClick={() => setKind(value)}
       >{value === "all" ? "All" : value === "knowledge" ? "Pages" : "Assets"}</button>)}
+      {onCreate && <button type="button" className="document-create" onClick={onCreate}>+ New page</button>}
     </div>
     <div className="document-list-heading">
       <strong>{query.trim() ? "Search results" : "Recently updated"}</strong>

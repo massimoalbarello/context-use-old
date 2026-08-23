@@ -3,6 +3,7 @@ import {
   AssetRepository,
   AutomationRegistryRepository,
   DirectoryRepository,
+  KnowledgeDocumentRepository,
   KnowledgeExportRepository,
   KnowledgeResetRepository,
   KnowledgeSettingsRepository,
@@ -26,12 +27,15 @@ import {
   KNOWLEDGE_PREPARATION_ACTION,
   KNOWLEDGE_PREPARATION_SCOPE,
   assetUploadSchema,
+  archiveKnowledgeDocumentSchema,
   archivePageSchema,
+  createKnowledgeDocumentSchema,
   createDirectorySchema,
   createPageSchema,
   deleteDirectorySchema,
   publicationIntentSchema,
   updateDirectorySchema,
+  updateKnowledgeDocumentSchema,
   updatePageSchema,
 } from "@context-use/shared";
 import { Elysia } from "elysia";
@@ -53,6 +57,11 @@ import {
   parseDashboardDocumentCatalogQuery,
   parseDashboardDocumentNeighborhoodQuery,
 } from "./dashboard-document-discovery.ts";
+import {
+  dashboardKnowledgeDocument,
+  dashboardKnowledgeRevision,
+  dashboardKnowledgeRevisionDelta,
+} from "./dashboard-knowledge-documents.ts";
 import { bodyJson, json, problem, routeError } from "./http.ts";
 import { publicationWarnings, renderMarkdown } from "./markdown.ts";
 import { pageDelta } from "./page-delta.ts";
@@ -84,6 +93,7 @@ const storage = new BrokeredStorage({
 const markdownObjects = new BrokeredMarkdownObjectStore(storage);
 
 const dashboardPages = new PageRepository(dashboardPool, markdownObjects);
+const dashboardKnowledgeDocuments = new KnowledgeDocumentRepository(dashboardPool, markdownObjects);
 const dashboardDirectories = new DirectoryRepository(dashboardPool);
 const dashboardKnowledgeSettings = new KnowledgeSettingsRepository(dashboardPool);
 const dashboardAutomationRegistry = new AutomationRegistryRepository(dashboardPool);
@@ -149,6 +159,23 @@ async function ownerRequest(request: Request, mutation: boolean | "upload" = fal
 
 function privatePageResolvers(sourcePath: string) {
   return {
+    document: async (id: string) => {
+      const document = await dashboardDocumentCatalog.get(id);
+      if (!document || document.lifecycle !== "active") return { available: false as const };
+      if (document.document_kind === "asset") {
+        return {
+          available: true as const,
+          representation: "asset" as const,
+          href: `/api/dashboard/assets/${id}/content`,
+          contentType: document.content_type ?? "application/octet-stream",
+        };
+      }
+      return {
+        available: true as const,
+        representation: document.document_kind === "record" ? "record" as const : "page" as const,
+        href: `/app/documents/${id}`,
+      };
+    },
     page: async (id: string) => {
       const page = await dashboardPages.metadata(id);
       return page ? { available: true as const, href: `/app/documents/${id}` } : { available: false as const };
@@ -173,6 +200,24 @@ function privatePageResolvers(sourcePath: string) {
         : { available: false as const };
     },
   };
+}
+
+async function dashboardKnowledgeDocumentResponse(documentId: string) {
+  const [document, compatibility] = await Promise.all([
+    dashboardKnowledgeDocuments.get(documentId),
+    dashboardPages.metadata(documentId),
+  ]);
+  if (!document || !compatibility) return null;
+  const renderedHtml = await renderMarkdown(
+    document.body_markdown,
+    privatePageResolvers(compatibility.current_path),
+  );
+  return dashboardKnowledgeDocument(document, renderedHtml, {
+    // A pathless-created compatibility label is deliberately not a public
+    // route. The later pathless-publication cutover gives these documents an
+    // opaque representation token instead.
+    legacy_publication_eligible: !compatibility.current_path.startsWith("pathless-page-"),
+  });
 }
 
 function isDirectoryAncestor(directoryPath: string, pagePath: string): boolean {
@@ -699,6 +744,16 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
       : await dashboardDocumentCatalog.list(parsed.options);
     return json(dashboardDocumentCatalogPage(page));
   })
+  .post("/api/dashboard/documents", async ({ request }) => {
+    const principal = await ownerRequest(request, true);
+    const input = createKnowledgeDocumentSchema.parse(await bodyJson(request));
+    const created = await dashboardKnowledgeDocuments.create(input, {
+      kind: "dashboard",
+      subject: principal.userId,
+    });
+    const response = await dashboardKnowledgeDocumentResponse(created.document_id);
+    return response ? json(response, 201) : problem("Document was not retained", 409, "write_conflict");
+  })
   .get("/api/dashboard/documents/:id", async ({ request, params }) => {
     await ownerRequest(request);
     const document = await dashboardDocumentCatalog.get(z.string().uuid().parse(params.id));
@@ -715,6 +770,79 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     return neighborhood
       ? json(dashboardDocumentNeighborhood(neighborhood))
       : problem("Document not found", 404, "not_found");
+  })
+  .get("/api/dashboard/knowledge-documents/:id", async ({ request, params }) => {
+    await ownerRequest(request);
+    const document = await dashboardKnowledgeDocumentResponse(z.string().uuid().parse(params.id));
+    return document ? json(document) : problem("Knowledge document not found", 404, "not_found");
+  })
+  .put("/api/dashboard/knowledge-documents/:id", async ({ request, params }) => {
+    const principal = await ownerRequest(request, true);
+    const documentId = z.string().uuid().parse(params.id);
+    const input = updateKnowledgeDocumentSchema.parse(await bodyJson(request));
+    const updated = await dashboardKnowledgeDocuments.update(documentId, input, {
+      kind: "dashboard",
+      subject: principal.userId,
+    });
+    if (!updated) return problem("Knowledge document not found", 404, "not_found");
+    const response = await dashboardKnowledgeDocumentResponse(documentId);
+    return response ? json(response) : problem("Document update was not retained", 409, "write_conflict");
+  })
+  .post("/api/dashboard/knowledge-documents/:id/archive", async ({ request, params }) => {
+    const principal = await ownerRequest(request, true);
+    const documentId = z.string().uuid().parse(params.id);
+    const input = archiveKnowledgeDocumentSchema.parse(await bodyJson(request));
+    const archived = await dashboardKnowledgeDocuments.archive(documentId, input, {
+      kind: "dashboard",
+      subject: principal.userId,
+    });
+    if (!archived) return problem("Knowledge document not found", 404, "not_found");
+    const response = await dashboardKnowledgeDocumentResponse(documentId);
+    return response ? json(response) : problem("Document archive was not retained", 409, "write_conflict");
+  })
+  .get("/api/dashboard/knowledge-documents/:id/history", async ({ request, params, query }) => {
+    await ownerRequest(request);
+    const history = await dashboardKnowledgeDocuments.history(
+      z.string().uuid().parse(params.id),
+      {
+        ...(query.before === undefined ? {} : {
+          before_revision_number: z.coerce.number().int().positive().parse(query.before),
+        }),
+        limit: query.limit === undefined
+          ? 100
+          : z.coerce.number().int().min(1).max(100).parse(query.limit),
+      },
+    );
+    return json({
+      revisions: history.revisions.map(dashboardKnowledgeRevision),
+      has_more: history.has_more,
+    });
+  })
+  .get("/api/dashboard/knowledge-documents/:id/versions/:version/diff", async ({ request, params, query }) => {
+    await ownerRequest(request);
+    const documentId = z.string().uuid().parse(params.id);
+    const revisionNumber = z.coerce.number().int().positive().parse(params.version);
+    const previousRevisionNumber = query.from === undefined
+      ? null
+      : z.coerce.number().int().positive().parse(query.from);
+    if (previousRevisionNumber !== null && previousRevisionNumber >= revisionNumber) {
+      return problem("The comparison revision must be earlier than the selected revision", 422, "invalid_comparison");
+    }
+    const [previous, current] = await Promise.all([
+      previousRevisionNumber === null
+        ? Promise.resolve(null)
+        : dashboardKnowledgeDocuments.revision(documentId, previousRevisionNumber),
+      dashboardKnowledgeDocuments.revision(documentId, revisionNumber),
+    ]);
+    if (!current) return problem("Revision not found", 404, "not_found");
+    if (previousRevisionNumber !== null && !previous) {
+      return problem("Comparison revision not found", 404, "not_found");
+    }
+    return json({
+      page_id: documentId,
+      comparison: { from_version: previousRevisionNumber, to_version: revisionNumber },
+      ...await dashboardKnowledgeRevisionDelta(previous, current),
+    });
   })
   .get("/api/dashboard/knowledge-changes", async ({ request, query }) => {
     await ownerRequest(request);

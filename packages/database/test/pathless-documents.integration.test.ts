@@ -198,6 +198,13 @@ describeDatabase("pathless private documents", () => {
 
     const history = await knowledge.history(created.document_id, { limit: Number.NaN });
     expect(history.revisions.map(({ revision_number }) => revision_number)).toEqual([3, 2, 1]);
+    expect(await knowledge.revision(created.document_id, 2)).toMatchObject({
+      document_id: created.document_id,
+      revision_number: 2,
+      title: "Pathless lifecycle updated",
+      body_markdown: "Searchable current body term pathlesscurrentneedle",
+    });
+    expect(await knowledge.revision(created.document_id, 99)).toBeNull();
     const archived = await knowledge.archive(created.document_id, {
       commit_message: "Archive pathless lifecycle document",
       expected_revision_number: 3,

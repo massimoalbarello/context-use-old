@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import type {
   AssetRepository,
+  DocumentAssetRepository,
   DirectoryRepository,
   DocumentLinkRepository,
   KnowledgeSettingsRepository,
+  KnowledgeDocumentRepository,
   PageRepository,
+  PrivateDocumentCatalogRepository,
   SourceRecordRepository,
 } from "@context-use/database";
 import { DirectoryNotEmptyError } from "@context-use/database";
@@ -15,7 +18,7 @@ import {
   createKnowledgeGuideReceipt,
   verifyKnowledgeGuideReceipt,
 } from "./mcp-guidance-receipt.ts";
-import { createMcpServer } from "./mcp-server.ts";
+import { createMcpServer, type PathlessMcpRepositories } from "./mcp-server.ts";
 import { createStatelessMcpTransport } from "./mcp-transport.ts";
 import type { SourceRecordReader } from "./nango-records.ts";
 
@@ -66,6 +69,7 @@ function serverWith(
     recordDocuments?: SourceRecordRepository;
     knowledgeSettings?: KnowledgeSettingsRepository;
     documentLinks?: DocumentLinkRepository;
+    pathless?: PathlessMcpRepositories;
   } = {},
 ) {
   const knowledgeSettings = options.knowledgeSettings ?? {
@@ -88,6 +92,7 @@ function serverWith(
     options.recordDocuments,
     knowledgeSettings,
     options.documentLinks,
+    options.pathless,
   );
 }
 
@@ -160,7 +165,10 @@ describe("MCP knowledge tools", () => {
         + "in an authenticated session, call begin_knowledge_session, read its configured global "
         + "guide, and reuse its receipt across every target in that session. prepare_change remains "
         + "a transitional alias for deployed workflows, but it loads the same single global guide "
-        + "and does not apply path-scoped instructions.",
+        + "and does not apply path-scoped instructions. Prefer the stable-ID document tools "
+        + "(search_documents, read_document, create_document, update_document, archive_document, "
+        + "create_document_asset_upload, archive_document_asset). Filesystem page, asset and "
+        + "directory tools are transitional compatibility surfaces.",
     );
 
     const listed = await mcpRequest(serverWith(), {
@@ -2030,6 +2038,129 @@ describe("MCP knowledge tools", () => {
     expect(JSON.parse(loaded.result?.content?.[0]?.text ?? "null")).toMatchObject({
       current_path: "skills/job-search-review",
       title: "SKILL.md",
+    });
+  });
+
+  test("exposes stable-ID document discovery and mutation without path inputs", async () => {
+    const documentId = "77777777-7777-4777-8777-777777777777";
+    const revisionId = "88888888-8888-4888-8888-888888888888";
+    const document = {
+      document_id: documentId,
+      current_revision_id: revisionId,
+      published_revision_id: null,
+      public_id: null,
+      revision_number: 1,
+      title: "Stable document",
+      summary: "A path-independent knowledge document.",
+      archived_at: null,
+      legacy_published: false,
+      current_link_contract: "generic_document_v1",
+      pathless_search_ready: true,
+      created_at: "2026-08-23T12:00:00.000Z",
+      updated_at: "2026-08-23T12:00:00.000Z",
+      body_markdown: "Stable body",
+    };
+    const catalogItem = {
+      document_id: documentId,
+      document_kind: "knowledge",
+      authority: "knowledge",
+      representation: "markdown",
+      lifecycle: "active",
+      current_revision_id: revisionId,
+      title: document.title,
+      summary: document.summary,
+      filename: null,
+      content_type: null,
+      operational_roles: [],
+      updated_at: document.updated_at,
+      current_path: "must-not-leak",
+    };
+    const pathless = {
+      knowledgeDocuments: {
+        async get(id: string) { return id === documentId ? document : null; },
+        async create() { return document; },
+      } as unknown as KnowledgeDocumentRepository,
+      documentAssets: {} as DocumentAssetRepository,
+      documentCatalog: {
+        async get(id: string) { return id === documentId ? catalogItem : null; },
+        async search() {
+          return { documents: [catalogItem], next_cursor: null, has_more: false };
+        },
+      } as unknown as PrivateDocumentCatalogRepository,
+    } satisfies PathlessMcpRepositories;
+    const tools = await mcpRequest(serverWith(
+      pagesWithGuidance(),
+      {} as AssetRepository,
+      {} as DirectoryRepository,
+      undefined,
+      { pathless },
+    ), {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+      params: {},
+    });
+    const names = tools.result?.tools?.map(({ name }) => name) ?? [];
+    expect(names).toEqual(expect.arrayContaining([
+      "search_documents",
+      "read_document",
+      "create_document",
+      "update_document",
+      "archive_document",
+      "create_document_asset_upload",
+      "archive_document_asset",
+    ]));
+    for (const name of ["create_document", "update_document", "create_document_asset_upload"]) {
+      expect(tools.result?.tools?.find((tool) => tool.name === name)?.inputSchema?.properties)
+        .not.toHaveProperty("path");
+    }
+
+    const searched = await mcpRequest(serverWith(
+      pagesWithGuidance(),
+      {} as AssetRepository,
+      {} as DirectoryRepository,
+      undefined,
+      { pathless },
+    ), {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "search_documents", arguments: { query: "stable" } },
+    });
+    const searchResult = JSON.parse(searched.result?.content?.[0]?.text ?? "null");
+    expect(searchResult.documents[0]).toMatchObject({
+      document_id: documentId,
+      reference: `context-use://document/${documentId}`,
+      title: "Stable document",
+      summary: "A path-independent knowledge document.",
+    });
+    expect(searchResult.documents[0]).not.toHaveProperty("current_path");
+
+    const created = await mcpRequest(serverWith(
+      pagesWithGuidance(),
+      {} as AssetRepository,
+      {} as DirectoryRepository,
+      undefined,
+      { pathless },
+    ), {
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: {
+        name: "create_document",
+        arguments: {
+          title: document.title,
+          summary: document.summary,
+          body_markdown: document.body_markdown,
+          commit_message: "Create stable document",
+          knowledge_session_receipt: rootGuidanceReceipt,
+        },
+      },
+    });
+    expect(JSON.parse(created.result?.content?.[0]?.text ?? "null")).toMatchObject({
+      document_id: documentId,
+      current_revision_id: revisionId,
+      reference: `context-use://document/${documentId}`,
     });
   });
 

@@ -4,7 +4,12 @@ import { api } from "../api.ts";
 import { confirmPageDeletion } from "../page-deletion-auth.ts";
 import { confirmPublicationChange } from "../publication-auth.ts";
 import { isPublishedPageOutdated } from "../publication-status.ts";
-import type { Page, PageVersionDiff, Version } from "../types.ts";
+import type {
+  KnowledgeDocumentHistory,
+  KnowledgeDocumentPage,
+  PageVersionDiff,
+  Version,
+} from "../types.ts";
 import { ActionDialog } from "./ActionDialog.tsx";
 import { DocumentNeighborhood } from "./DocumentNeighborhood.tsx";
 import { PublicationDialog } from "./PublicationDialog.tsx";
@@ -65,7 +70,7 @@ function VersionComparison({
     setError("");
     try {
       const from = previousVersionNumber === null ? "" : `?from=${previousVersionNumber}`;
-      setDiff(await api<PageVersionDiff>(`/api/dashboard/pages/${pageId}/versions/${versionNumber}/diff${from}`));
+      setDiff(await api<PageVersionDiff>(`/api/dashboard/knowledge-documents/${pageId}/versions/${versionNumber}/diff${from}`));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Comparison failed");
     } finally {
@@ -97,9 +102,10 @@ export function Editor({
   onDeleted: () => Promise<void> | void;
   onOpenDocument: (document: DashboardDocumentSummary) => void;
 }) {
-  const [page, setPage] = useState<Page | null>(null);
+  const [page, setPage] = useState<KnowledgeDocumentPage | null>(null);
   const [history, setHistory] = useState<Version[]>([]);
-  const [draft, setDraft] = useState({ path: "", title: "", summary: "", body_markdown: "" });
+  const [historyHasMore, setHistoryHasMore] = useState(false);
+  const [draft, setDraft] = useState({ title: "", summary: "", body_markdown: "" });
   const [commit, setCommit] = useState("");
   const [tab, setTab] = useState<"preview" | "history">("preview");
   const [isEditing, setIsEditing] = useState(false);
@@ -115,14 +121,15 @@ export function Editor({
   const [deletionError, setDeletionError] = useState("");
 
   const load = async (preserveDraft = false) => {
-    const [next, versions] = await Promise.all([
-      api<Page>(`/api/dashboard/pages/${pageId}`),
-      api<Version[]>(`/api/dashboard/pages/${pageId}/history`),
+    const [next, historyPage] = await Promise.all([
+      api<KnowledgeDocumentPage>(`/api/dashboard/knowledge-documents/${pageId}`),
+      api<KnowledgeDocumentHistory>(`/api/dashboard/knowledge-documents/${pageId}/history`),
     ]);
     setPage(next);
-    if (!preserveDraft) setDraft({ path: next.current_path, title: next.title, summary: next.summary, body_markdown: next.body_markdown });
-    setHistory(versions);
-    return { page: next, history: versions };
+    if (!preserveDraft) setDraft({ title: next.title, summary: next.summary, body_markdown: next.body_markdown });
+    setHistory(historyPage.revisions);
+    setHistoryHasMore(historyPage.has_more);
+    return { page: next, history: historyPage.revisions };
   };
 
   useEffect(() => {
@@ -164,13 +171,13 @@ export function Editor({
   const hasUnpublishedChanges = isPublishedPageOutdated(page);
 
   const edit = () => {
-    setDraft({ path: page.current_path, title: page.title, summary: page.summary, body_markdown: page.body_markdown });
+    setDraft({ title: page.title, summary: page.summary, body_markdown: page.body_markdown });
     setCommit("");
     setIsEditing(true);
   };
 
   const cancelEdit = () => {
-    setDraft({ path: page.current_path, title: page.title, summary: page.summary, body_markdown: page.body_markdown });
+    setDraft({ title: page.title, summary: page.summary, body_markdown: page.body_markdown });
     setCommit("");
     setIsEditing(false);
   };
@@ -178,9 +185,9 @@ export function Editor({
   const save = async () => {
     setMessage("");
     try {
-      const saved = await api<Page>(`/api/dashboard/pages/${page.id}`, {
+      const saved = await api<KnowledgeDocumentPage>(`/api/dashboard/knowledge-documents/${page.id}`, {
         method: "PUT",
-        body: JSON.stringify({ ...draft, commit_message: commit, expected_version_number: page.version_number }),
+        body: JSON.stringify({ ...draft, commit_message: commit, expected_revision_number: page.version_number }),
       });
       setCommit("");
       await load();
@@ -197,9 +204,9 @@ export function Editor({
     setArchiveWorking(true);
     setArchiveError("");
     try {
-      await api(`/api/dashboard/pages/${page.id}/archive`, {
+      await api(`/api/dashboard/knowledge-documents/${page.id}/archive`, {
         method: "POST",
-        body: JSON.stringify({ commit_message: archiveCommit.trim(), expected_version_number: page.version_number }),
+        body: JSON.stringify({ commit_message: archiveCommit.trim(), expected_revision_number: page.version_number }),
       });
       await load();
       onChanged();
@@ -254,17 +261,19 @@ export function Editor({
 
   return <main className="editor">
     <header className="editor-header">
-      <div><span className="path">{page.current_path}</span><h1>{page.title}</h1><p className="knowledge-summary">{page.summary}</p><time className="page-last-edited" dateTime={new Date(lastEditedAt).toISOString()}>Last edited {new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(lastEditedAt))}</time></div>
+      <div><span className="document-kicker">Knowledge document</span><h1>{page.title}</h1><p className="knowledge-summary">{page.summary}</p><time className="page-last-edited" dateTime={new Date(lastEditedAt).toISOString()}>Last edited {new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(lastEditedAt))}</time></div>
       <div className="button-row">
-        <span className={page.published_version_id ? "status public" : "status"}>{page.archived_at ? "Archived" : page.published_version_id ? `Public${publishedVersionNumber ? ` v${publishedVersionNumber}` : ""} · ${page.public_path}` : "Private"}</span>
-        {page.published_version_id && page.public_path && <a className="button" href={`/p/${page.public_path}`} target="_blank" rel="noreferrer">View public ↗</a>}
+        <span className={page.published_version_id ? "status public" : "status"}>{page.archived_at ? "Archived" : page.published_version_id ? `Public${publishedVersionNumber ? ` v${publishedVersionNumber}` : ""}` : "Private"}</span>
         {!page.archived_at && !page.published_version_id && <button onClick={() => { setArchiveCommit(""); setArchiveError(""); setArchiveOpen(true); }}>Archive</button>}
         {page.archived_at && <button className="danger" onClick={() => { setDeletionError(""); setDeletionOpen(true); }}>Delete permanently</button>}
-        {!page.archived_at && !page.published_version_id && <button className="primary" onClick={() => setPublishingVersion(page.version_number)}>Publish</button>}
+        {!page.archived_at && !page.published_version_id && page.legacy_publication_eligible && <button className="primary" onClick={() => setPublishingVersion(page.version_number)}>Publish</button>}
         {!page.archived_at && page.published_version_id && <button className="danger" disabled={unpublishWorking} onClick={() => void unpublish()}>{unpublishWorking ? "Waiting for passkey…" : "Unpublish"}</button>}
         {!page.archived_at && page.published_version_id && hasUnpublishedChanges && <button className="primary" onClick={() => setPublishingVersion(page.version_number)}>Publish latest</button>}
       </div>
     </header>
+    {!page.archived_at && !page.published_version_id && !page.legacy_publication_eligible && <div className="publication-notice" role="status">
+      <div><strong>Private document</strong><span>Pathless publication will be enabled in the publication cutover.</span></div>
+    </div>}
     {hasUnpublishedChanges && <div className="publication-notice pending publication-alert" role="status">
       <div>
         <strong>Published page is not up to date</strong>
@@ -286,7 +295,7 @@ export function Editor({
             <span>Saving edits creates a new private version. The published page will not update automatically.</span>
           </div>
         </div>}
-        <div className="editor-fields"><label>Path<input value={draft.path} onChange={(event) => setDraft({ ...draft, path: event.target.value })} /></label><label>Title<input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label><label className="summary-field">Summary<input maxLength={320} required value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} /></label></div>
+        <div className="editor-fields pathless"><label>Title<input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label><label className="summary-field">Summary<input maxLength={320} required value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} /></label></div>
       </div>
       <textarea className="markdown-editor" value={draft.body_markdown} onChange={(event) => setDraft({ ...draft, body_markdown: event.target.value })} spellCheck />
       <footer className="save-bar"><input placeholder="Describe this change (required)" value={commit} onChange={(event) => setCommit(event.target.value)} /><div className="button-row"><button onClick={cancelEdit}>Cancel</button><button className="primary" disabled={commit.trim().length < 3 || !draft.summary.trim()} onClick={save}>Save version</button></div></footer>
@@ -297,6 +306,7 @@ export function Editor({
     </>}
     {!isEditing && tab === "history" && <section className="history-list">
       <header><h2>Version history</h2><p>The latest editable version and the published version are independent. Publishing points the public URL at one exact snapshot.</p></header>
+      {historyHasMore && <p className="version-diff-status">Showing the latest 100 retained versions.</p>}
       {history.map((version, index) => {
         const isLatest = version.id === page.current_version_id;
         const isPublished = version.id === page.published_version_id;
@@ -310,7 +320,6 @@ export function Editor({
               <span>{version.actor_kind} · {new Date(version.created_at).toLocaleString()}</span>
             </div>
             {!page.archived_at && <div className="version-actions">
-              {isPublished && page.public_path && <a className="button" href={`/p/${page.public_path}`} target="_blank" rel="noreferrer">View public</a>}
               {isPublished
                 ? <button className="danger" disabled={unpublishWorking} onClick={() => void unpublish()}>{unpublishWorking ? "Waiting for passkey…" : "Unpublish"}</button>
                 : <button className={isLatest ? "primary" : ""} onClick={() => setPublishingVersion(version.version_number)}>Publish this version</button>}

@@ -400,6 +400,36 @@ export class KnowledgeDocumentRepository {
     return { revisions, has_more: result.rows.length > limit };
   }
 
+  async revision(
+    documentId: string,
+    revisionNumber: number,
+  ): Promise<KnowledgeDocumentRevision | null> {
+    const result = await this.pool.query<StoredKnowledgeRevisionRow>(
+      `SELECT version.page_id AS document_id,version.id AS revision_id,
+         version.version_number AS revision_number,
+         version.title,version.summary,version.commit_message,
+         version.actor_kind,version.actor_subject,version.created_at,
+         contract.link_contract::text AS link_contract,
+         contract.provenance::text AS contract_provenance,
+         contract.target_document_ids,
+         revision.body_object_key,revision.body_size_bytes,revision.body_content_hash
+       FROM knowledge_page_versions version
+       JOIN hypermedia_document_revisions revision
+         ON revision.id=version.id AND revision.document_id=version.page_id
+       LEFT JOIN knowledge_revision_contracts contract ON contract.revision_id=version.id
+       WHERE version.page_id=$1 AND version.version_number=$2`,
+      [documentId, revisionNumber],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    const { body_object_key, body_size_bytes, body_content_hash, ...metadata } = row;
+    const body_markdown = assertMarkdownObject(
+      await this.bodies.read({ body_object_key, body_size_bytes, body_content_hash }),
+      { body_object_key, body_size_bytes, body_content_hash },
+    );
+    return { ...metadata, body_markdown };
+  }
+
   async adoptCurrent(input: AdoptKnowledgeRevisionInput): Promise<KnowledgeDocumentMetadata> {
     const targets = genericDocumentTargets(input.body_markdown);
     return transaction(this.pool, async (client) => {
