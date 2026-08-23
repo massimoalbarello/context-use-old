@@ -12,7 +12,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { verifyAssetCapability } from "./mcp-asset-capability.ts";
 import {
   createGuidanceReceipt,
-  verifyGuidanceReceipt,
+  createKnowledgeGuideReceipt,
   verifyKnowledgeGuideReceipt,
 } from "./mcp-guidance-receipt.ts";
 import { createMcpServer } from "./mcp-server.ts";
@@ -108,6 +108,10 @@ const rootGuide = {
 
 function pagesWithGuidance(overrides: Record<string, unknown> = {}): PageRepository {
   return {
+    async version(documentId: string, versionNumber: number) {
+      if (documentId !== rootGuide.id || versionNumber !== rootGuide.version_number) return null;
+      return { ...rootGuide, id: rootGuide.current_version_id };
+    },
     async guidesForPath() {
       return [rootGuide];
     },
@@ -115,7 +119,10 @@ function pagesWithGuidance(overrides: Record<string, unknown> = {}): PageReposit
   } as unknown as PageRepository;
 }
 
-const rootGuidanceReceipt = createGuidanceReceipt([rootGuide], DEFAULT_MCP_CONTEXT);
+const rootGuidanceReceipt = createKnowledgeGuideReceipt({
+  documentId: rootGuide.id,
+  revisionId: rootGuide.current_version_id,
+}, DEFAULT_MCP_CONTEXT);
 
 type PreparedChangeResult = {
   target_path: string;
@@ -150,9 +157,10 @@ describe("MCP knowledge tools", () => {
       "Use Context Use proactively when the user states a concrete durable fact, decision, "
         + "correction, relationship, plan, or completed activity about their life or work, "
         + "even if they do not explicitly say “remember.” Before the first knowledge mutation "
-        + "in an authenticated session, call begin_knowledge_session, read its guide, and reuse "
-        + "its receipt for targets without additional scoped guides. During the guidance "
-        + "transition, call prepare_change for a target where scoped guides still apply.",
+        + "in an authenticated session, call begin_knowledge_session, read its configured global "
+        + "guide, and reuse its receipt across every target in that session. prepare_change remains "
+        + "a transitional alias for deployed workflows, but it loads the same single global guide "
+        + "and does not apply path-scoped instructions.",
     );
 
     const listed = await mcpRequest(serverWith(), {
@@ -162,9 +170,9 @@ describe("MCP knowledge tools", () => {
       params: {},
     });
     const prepare = listed.result?.tools?.find(({ name }) => name === "prepare_change");
-    expect(prepare?.description).toStartWith("Transitional path-scoped guidance entry point");
-    expect(prepare?.description).toContain("scoped AGENTS.md guides still apply");
-    expect(prepare?.description).toContain("omit it to reload every guide after context loss or compaction");
+    expect(prepare?.description).toStartWith("Transitional alias retained for deployed workflows");
+    expect(prepare?.description).toContain("loads only the exact configured global guide");
+    expect(prepare?.description).toContain("ignores target scope");
     expect(prepare?.description).toContain("Never store receipts in knowledge");
   });
 
@@ -227,7 +235,7 @@ describe("MCP knowledge tools", () => {
     }, { clientId: "mcp-client", sessionId: "mcp-session" })).toBe(true);
   });
 
-  test("reuses a session receipt across unscoped targets and rejects it before writes in another session or after a guide change", async () => {
+  test("reuses a session receipt across targets and rejects it before writes in another session or after a guide change", async () => {
     const guideDocumentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const originalRevisionId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
     let currentRevisionId = originalRevisionId;
@@ -330,19 +338,12 @@ describe("MCP knowledge tools", () => {
     expect(writes).toHaveLength(2);
   });
 
-  test("requires the exact configured global guide in scoped chains and preserves scoped guidance during transition", async () => {
+  test("uses only the exact configured global guide and ignores path-scoped guide pages", async () => {
     const globalGuide = {
       ...rootGuide,
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       current_version_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       body_markdown: "# Global guide",
-    };
-    const scopedGuide = {
-      ...rootGuide,
-      id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-      current_path: "scoped/agents",
-      current_version_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
-      body_markdown: "# Scoped guide",
     };
     type ConfiguredGuide = {
       document_id: string;
@@ -369,16 +370,15 @@ describe("MCP knowledge tools", () => {
       async metadataInDirectory() {
         return [];
       },
-      async version() {
+      async version(documentId: string, revisionNumber: number) {
+        if (documentId !== globalGuide.id || revisionNumber !== 1) return null;
         return {
           id: globalGuide.current_version_id,
           body_markdown: globalGuide.body_markdown,
         };
       },
       async guidesForPath(path: string) {
-        return path.startsWith("scoped/")
-          ? [globalGuide, scopedGuide]
-          : [globalGuide];
+        throw new Error(`Path-scoped guides must not be consulted: ${path}`);
       },
       async create(input: { path: string }) {
         writes.push(input.path);
@@ -435,24 +435,37 @@ describe("MCP knowledge tools", () => {
       ...pageInput("scoped/session-receipt"),
       knowledge_session_receipt: sessionReceipt,
     }, 31);
-    expect(scopedWithGlobalReceipt.result?.isError).toBe(true);
-    expect(scopedWithGlobalReceipt.result?.content?.[0]?.text).toContain("prepare_change");
-    expect(writes).toEqual([]);
+    expect(scopedWithGlobalReceipt.result?.isError).not.toBe(true);
+    expect(writes).toEqual(["scoped/session-receipt"]);
+
+    const retiredScopedReceipt = createGuidanceReceipt([globalGuide, {
+      ...rootGuide,
+      current_path: "scoped/agents",
+      current_version_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    }], DEFAULT_MCP_CONTEXT);
+    const retiredScopedMutation = await call("create_page", {
+      ...pageInput("scoped/retired-receipt"),
+      guidance_receipt: retiredScopedReceipt,
+    }, 311);
+    expect(retiredScopedMutation.result?.isError).toBe(true);
+    expect(writes).toEqual(["scoped/session-receipt"]);
 
     const prepared = await call("prepare_change", { target_path: "scoped/legacy" }, 32);
     expect(prepared.result?.isError).not.toBe(true);
     const guidanceReceipt = preparedChangeResult(prepared).guidance_receipt;
-    expect(verifyGuidanceReceipt(
-      guidanceReceipt,
-      [globalGuide, scopedGuide],
-      DEFAULT_MCP_CONTEXT,
-    )).toBe(true);
+    expect(preparedChangeResult(prepared).guides).toEqual([
+      { path: "agents", body_markdown: "# Global guide" },
+    ]);
+    expect(verifyKnowledgeGuideReceipt(guidanceReceipt, {
+      documentId: globalGuide.id,
+      revisionId: globalGuide.current_version_id,
+    }, DEFAULT_MCP_CONTEXT)).toBe(true);
     const scopedWithChainReceipt = await call("create_page", {
       ...pageInput("scoped/legacy"),
       guidance_receipt: guidanceReceipt,
     }, 33);
     expect(scopedWithChainReceipt.result?.isError).not.toBe(true);
-    expect(writes).toEqual(["scoped/legacy"]);
+    expect(writes).toEqual(["scoped/session-receipt", "scoped/legacy"]);
 
     const crossSession = await callWithContext({
       ...DEFAULT_MCP_CONTEXT,
@@ -470,7 +483,7 @@ describe("MCP knowledge tools", () => {
       guidance_receipt: guidanceReceipt,
     }, 332);
     expect(crossClient.result?.isError).toBe(true);
-    expect(writes).toEqual(["scoped/legacy"]);
+    expect(writes).toEqual(["scoped/session-receipt", "scoped/legacy"]);
 
     configuredGuide = {
       ...exactConfiguredGuide,
@@ -484,7 +497,7 @@ describe("MCP knowledge tools", () => {
       guidance_receipt: guidanceReceipt,
     }, 35);
     expect(blockedChainReceipt.result?.isError).toBe(true);
-    expect(writes).toEqual(["scoped/legacy"]);
+    expect(writes).toEqual(["scoped/session-receipt", "scoped/legacy"]);
 
     configuredGuide = {
       ...exactConfiguredGuide,
@@ -497,23 +510,11 @@ describe("MCP knowledge tools", () => {
     expect(unavailable.result?.isError).toBe(true);
   });
 
-  test("requires one receipt to authorize both sides of a page move during scoped-guide transition", async () => {
+  test("one global receipt authorizes page moves across former guide scopes", async () => {
     const globalGuide = {
       ...rootGuide,
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       current_version_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-    };
-    const scopeAGuide = {
-      ...rootGuide,
-      id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-      current_path: "scope-a/agents",
-      current_version_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
-    };
-    const scopeBGuide = {
-      ...rootGuide,
-      id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
-      current_path: "scope-b/agents",
-      current_version_id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
     };
     const pageId = "12121212-1212-4212-8212-121212121212";
     const updates: unknown[] = [];
@@ -522,9 +523,7 @@ describe("MCP knowledge tools", () => {
         return { id: globalGuide.current_version_id, body_markdown: "# Global guide" };
       },
       async guidesForPath(path: string) {
-        if (path.startsWith("scope-a/")) return [globalGuide, scopeAGuide];
-        if (path.startsWith("scope-b/")) return [globalGuide, scopeBGuide];
-        return [globalGuide];
+        throw new Error(`Path-scoped guides must not be consulted: ${path}`);
       },
       async get(id: string) {
         expect(id).toBe(pageId);
@@ -541,9 +540,20 @@ describe("MCP knowledge tools", () => {
           public_path: null,
         };
       },
-      async update(...args: unknown[]) {
-        updates.push(args);
-        return null;
+      async update(_id: string, input: { path: string }) {
+        updates.push(input);
+        return {
+          id: pageId,
+          current_path: input.path,
+          current_version_id: "56565656-5656-4656-8656-565656565656",
+          version_number: 2,
+          title: "Moved",
+          summary: "Moved page.",
+          body_markdown: "Moved.",
+          published_version_id: null,
+          published_version_number: null,
+          public_path: null,
+        };
       },
     } as unknown as PageRepository;
     const knowledgeSettings = {
@@ -587,23 +597,23 @@ describe("MCP knowledge tools", () => {
       ...updateInput("unscoped/moved"),
       knowledge_session_receipt: sessionReceipt,
     }, 39);
-    expect(scopedToUnscoped.result?.isError).toBe(true);
-    expect(scopedToUnscoped.result?.content?.[0]?.text).toContain("scope-a/original");
+    expect(scopedToUnscoped.result?.isError).not.toBe(true);
 
     const targetPreparation = await call("prepare_change", { target_path: "scope-b/moved" }, 40);
     const targetReceipt = preparedChangeResult(targetPreparation).guidance_receipt;
-    expect(verifyGuidanceReceipt(
-      targetReceipt,
-      [globalGuide, scopeBGuide],
-      DEFAULT_MCP_CONTEXT,
-    )).toBe(true);
+    expect(preparedChangeResult(targetPreparation).guides).toEqual([
+      { path: "agents", body_markdown: "# Global guide" },
+    ]);
+    expect(verifyKnowledgeGuideReceipt(targetReceipt, {
+      documentId: globalGuide.id,
+      revisionId: globalGuide.current_version_id,
+    }, DEFAULT_MCP_CONTEXT)).toBe(true);
     const scopedToOtherScope = await call("update_page", {
       ...updateInput("scope-b/moved"),
       guidance_receipt: targetReceipt,
     }, 41);
-    expect(scopedToOtherScope.result?.isError).toBe(true);
-    expect(scopedToOtherScope.result?.content?.[0]?.text).toContain("scope-a/original");
-    expect(updates).toEqual([]);
+    expect(scopedToOtherScope.result?.isError).not.toBe(true);
+    expect(updates).toHaveLength(2);
   });
 
   test("exposes one unified checkpointed source reader when Nango access is configured", async () => {
@@ -842,26 +852,18 @@ describe("MCP knowledge tools", () => {
     ]));
   });
 
-  test("reads pages by semantic path and prepares applicable change guides", async () => {
-    const guides = [
-      rootGuide,
-      {
-        id: "33333333-3333-4333-8333-333333333333",
-        current_path: "about/tasks/job-search/agents",
-        current_version_id: "44444444-4444-4444-8444-444444444444",
-        version_number: 2,
-        title: "AGENTS.md",
-        body_markdown: "Local guide",
-      },
-    ];
+  test("reads pages by semantic path and prepares only the configured global guide", async () => {
     const pages = {
       async getByPath(path: string) {
         expect(path).toBe("agents");
         return { current_path: "agents", title: "AGENTS.md", body_markdown: "Guide" };
       },
+      async version(documentId: string, versionNumber: number) {
+        expect([documentId, versionNumber]).toEqual([rootGuide.id, rootGuide.version_number]);
+        return { ...rootGuide, id: rootGuide.current_version_id };
+      },
       async guidesForPath(path: string) {
-        expect(path).toBe("about/tasks/job-search/criteria");
-        return guides;
+        throw new Error(`Path-scoped guides must not be consulted: ${path}`);
       },
     } as unknown as PageRepository;
     const pageResponse = await mcpRequest(serverWith(pages), {
@@ -897,14 +899,12 @@ describe("MCP knowledge tools", () => {
       target_path: "about/tasks/job-search/criteria",
       guides: [
         { path: "agents", body_markdown: "Root guide" },
-        { path: "about/tasks/job-search/agents", body_markdown: "Local guide" },
       ],
     });
-    expect(verifyGuidanceReceipt(
-      prepared.guidance_receipt,
-      guides,
-      DEFAULT_MCP_CONTEXT,
-    )).toBe(true);
+    expect(verifyKnowledgeGuideReceipt(prepared.guidance_receipt, {
+      documentId: rootGuide.id,
+      revisionId: rootGuide.current_version_id,
+    }, DEFAULT_MCP_CONTEXT)).toBe(true);
     expect(JSON.parse(contextResponse.result?.content?.[0]?.text ?? "null")).toEqual(prepared);
   });
 
@@ -986,7 +986,7 @@ describe("MCP knowledge tools", () => {
     });
   });
 
-  test("prepares only guidance deltas when moving between instruction scopes", async () => {
+  test("prepare_change caches only the global guide and retires legacy scoped chains", async () => {
     const aboutGuide = {
       ...rootGuide,
       id: "33333333-3333-4333-8333-333333333333",
@@ -1001,20 +1001,14 @@ describe("MCP knowledge tools", () => {
       current_version_id: "66666666-6666-4666-8666-666666666666",
       body_markdown: "Unique task instructions body",
     };
-    const placesGuide = {
-      ...rootGuide,
-      id: "77777777-7777-4777-8777-777777777777",
-      current_path: "places/agents",
-      current_version_id: "88888888-8888-4888-8888-888888888888",
-      body_markdown: "Unique place instructions body",
-    };
     const rootWithUniqueBody = { ...rootGuide, body_markdown: "Unique root instructions body" };
     const pages = {
+      async version(documentId: string, versionNumber: number) {
+        expect([documentId, versionNumber]).toEqual([rootGuide.id, rootGuide.version_number]);
+        return { ...rootWithUniqueBody, id: rootWithUniqueBody.current_version_id };
+      },
       async guidesForPath(path: string) {
-        if (path.startsWith("about/tasks/")) return [rootWithUniqueBody, aboutGuide, tasksGuide];
-        if (path.startsWith("about/")) return [rootWithUniqueBody, aboutGuide];
-        if (path.startsWith("places/")) return [rootWithUniqueBody, placesGuide];
-        return [rootWithUniqueBody];
+        throw new Error(`Path-scoped guides must not be consulted: ${path}`);
       },
     } as unknown as PageRepository;
 
@@ -1031,7 +1025,6 @@ describe("MCP knowledge tools", () => {
     const aboutReceipt = aboutPrepared.guidance_receipt;
     expect(aboutPrepared.guides).toEqual([
       { path: "agents", body_markdown: "Unique root instructions body" },
-      { path: "about/agents", body_markdown: "Unique about instructions body" },
     ]);
 
     const tasksPreparation = await mcpRequest(serverWith(pages), {
@@ -1050,14 +1043,11 @@ describe("MCP knowledge tools", () => {
     const tasksReceipt = tasksPrepared.guidance_receipt;
     expect(tasksPrepared.guides).toEqual([
       { path: "agents", reuse_from_previous_prepare_change: true },
-      { path: "about/agents", reuse_from_previous_prepare_change: true },
-      { path: "about/tasks/agents", body_markdown: "Unique task instructions body" },
     ]);
-    expect(verifyGuidanceReceipt(
-      tasksReceipt,
-      [rootWithUniqueBody, aboutGuide, tasksGuide],
-      DEFAULT_MCP_CONTEXT,
-    )).toBe(true);
+    expect(verifyKnowledgeGuideReceipt(tasksReceipt, {
+      documentId: rootGuide.id,
+      revisionId: rootGuide.current_version_id,
+    }, DEFAULT_MCP_CONTEXT)).toBe(true);
 
     const crossSessionPreparation = await mcpRequest(serverWith(
       pages,
@@ -1079,10 +1069,12 @@ describe("MCP knowledge tools", () => {
     });
     expect(preparedChangeResult(crossSessionPreparation).guides).toEqual([
       { path: "agents", body_markdown: "Unique root instructions body" },
-      { path: "about/agents", body_markdown: "Unique about instructions body" },
-      { path: "about/tasks/agents", body_markdown: "Unique task instructions body" },
     ]);
 
+    const legacyScopedReceipt = createGuidanceReceipt(
+      [rootWithUniqueBody, aboutGuide, tasksGuide],
+      DEFAULT_MCP_CONTEXT,
+    );
     const placesPreparation = await mcpRequest(serverWith(pages), {
       jsonrpc: "2.0",
       id: 42,
@@ -1091,14 +1083,13 @@ describe("MCP knowledge tools", () => {
         name: "prepare_change",
         arguments: {
           target_path: "places/london",
-          cached_guidance_receipt: tasksReceipt,
+          cached_guidance_receipt: legacyScopedReceipt,
         },
       },
     });
     const placesPrepared = preparedChangeResult(placesPreparation);
     expect(placesPrepared.guides).toEqual([
-      { path: "agents", reuse_from_previous_prepare_change: true },
-      { path: "places/agents", body_markdown: "Unique place instructions body" },
+      { path: "agents", body_markdown: "Unique root instructions body" },
     ]);
     expect(placesPrepared.removed_guides).toEqual([
       "about/agents",
@@ -1116,8 +1107,6 @@ describe("MCP knowledge tools", () => {
     });
     expect(preparedChangeResult(reloaded).guides).toEqual([
       { path: "agents", body_markdown: "Unique root instructions body" },
-      { path: "about/agents", body_markdown: "Unique about instructions body" },
-      { path: "about/tasks/agents", body_markdown: "Unique task instructions body" },
     ]);
   });
 
@@ -1148,8 +1137,8 @@ describe("MCP knowledge tools", () => {
     expect(response.result?.isError).toBe(true);
     expect(response.result?.content?.[0]?.text).toBe([
       "KNOWLEDGE_GUIDE_REQUIRED",
-      "Call begin_knowledge_session with {}, read the returned global guide, and retry with its knowledge_session_receipt when this target has no additional scoped guides.",
-      'During the guidance transition, if scoped guides apply, call prepare_change with {"target_path":"about/tasks/daily-review"}, read the complete returned chain, and retry create_page with its guidance_receipt.',
+      "Call begin_knowledge_session with {}, read the returned configured global guide, and retry with its knowledge_session_receipt.",
+      'A deployed legacy workflow may instead call prepare_change with {"target_path":"about/tasks/daily-review"}; it loads the same global guide and returns a guidance_receipt that is likewise valid across targets. Then retry create_page.',
     ].join("\n\n"));
     expect(response.result?.structuredContent).toBeUndefined();
     expect(calls).toEqual([]);
@@ -1567,7 +1556,7 @@ describe("MCP knowledge tools", () => {
     ]);
   });
 
-  test("rejects a parent receipt before writing in a folder with a newly applicable guide", async () => {
+  test("treats path-named guide pages as ordinary knowledge during mutation authorization", async () => {
     const calls: unknown[] = [];
     const localGuide = {
       ...rootGuide,
@@ -1577,7 +1566,7 @@ describe("MCP knowledge tools", () => {
     };
     const pages = {
       async guidesForPath() {
-        return [rootGuide, localGuide];
+        throw new Error(`Path-scoped guides must not be consulted: ${localGuide.current_path}`);
       },
       async create(input: unknown) {
         calls.push(input);
@@ -1602,11 +1591,8 @@ describe("MCP knowledge tools", () => {
       },
     });
 
-    expect(mutation.result?.isError).toBe(true);
-    expect(mutation.result?.content?.[0]?.text).toContain(
-      'prepare_change with {"target_path":"library/private/notes"}',
-    );
-    expect(calls).toEqual([]);
+    expect(mutation.result?.isError).not.toBe(true);
+    expect(calls).toHaveLength(1);
   });
 
   test("deletes only an inspected empty directory and reports content blockers", async () => {
@@ -1675,7 +1661,7 @@ describe("MCP knowledge tools", () => {
     expect(blocked.result?.content?.[0]?.text).toContain("Delete all pages, assets, and child directories");
   });
 
-  test("rejects a receipt when an applicable guide has changed", async () => {
+  test("rejects a receipt when the configured global guide has changed", async () => {
     const calls: unknown[] = [];
     const staleReceipt = createGuidanceReceipt([rootGuide], DEFAULT_MCP_CONTEXT);
     const changedRoot = {
@@ -1685,8 +1671,12 @@ describe("MCP knowledge tools", () => {
       body_markdown: "Changed root guide",
     };
     const pages = {
+      async version(documentId: string, versionNumber: number) {
+        expect([documentId, versionNumber]).toEqual([changedRoot.id, changedRoot.version_number]);
+        return { ...changedRoot, id: changedRoot.current_version_id };
+      },
       async guidesForPath() {
-        return [changedRoot];
+        throw new Error("Path-scoped guides must not be consulted");
       },
       async create(input: unknown) {
         calls.push(input);
@@ -1755,11 +1745,10 @@ describe("MCP knowledge tools", () => {
     expect(refreshedGuidance.guides).toEqual([
       { path: "agents", body_markdown: "Changed root guide" },
     ]);
-    expect(verifyGuidanceReceipt(
-      refreshedGuidance.guidance_receipt,
-      [changedRoot],
-      DEFAULT_MCP_CONTEXT,
-    )).toBe(true);
+    expect(verifyKnowledgeGuideReceipt(refreshedGuidance.guidance_receipt, {
+      documentId: changedRoot.id,
+      revisionId: changedRoot.current_version_id,
+    }, DEFAULT_MCP_CONTEXT)).toBe(true);
   });
 
   test("resolves an ID-only mutation target before directing guidance recovery", async () => {
@@ -1790,8 +1779,8 @@ describe("MCP knowledge tools", () => {
     expect(response.result?.isError).toBe(true);
     expect(response.result?.content?.[0]?.text).toBe([
       "KNOWLEDGE_GUIDE_REQUIRED",
-      "Call begin_knowledge_session with {}, read the returned global guide, and retry with its knowledge_session_receipt when this target has no additional scoped guides.",
-      'During the guidance transition, if scoped guides apply, call prepare_change with {"target_path":"library/private/recording"}, read the complete returned chain, and retry archive_asset with its guidance_receipt.',
+      "Call begin_knowledge_session with {}, read the returned configured global guide, and retry with its knowledge_session_receipt.",
+      'A deployed legacy workflow may instead call prepare_change with {"target_path":"library/private/recording"}; it loads the same global guide and returns a guidance_receipt that is likewise valid across targets. Then retry archive_asset.',
     ].join("\n\n"));
     expect(archiveCalls).toEqual([]);
   });
@@ -2092,8 +2081,8 @@ describe("MCP knowledge tools", () => {
     ));
     expect(beginSession?.inputSchema?.properties ?? {}).toEqual({});
     expect(beginSession?.description).toContain("Call once");
-    expect(beginSession?.description).toContain("targets without additional scoped guides");
-    expect(beginSession?.description).toContain("requires prepare_change");
+    expect(beginSession?.description).toContain("every target");
+    expect(beginSession?.description).toContain("do not add instructions");
     expect(knowledge.result?.tools?.find(({ name }) => name === "prepare_change")?.inputSchema?.properties)
       .toHaveProperty("cached_guidance_receipt");
     expect(knowledge.result?.tools?.find(({ name }) => name === "prepare_change")?.outputSchema?.properties)
