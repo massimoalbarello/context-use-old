@@ -102,11 +102,7 @@ export type PathlessAssetPublicationWriteAuthorization =
     target_projection: [];
   };
 
-/**
- * A short-lived database authorization to copy or project one exact object.
- * It is not a write-once claim on the destination object; server activation
- * still requires a conditional-create broker protocol around the object write.
- */
+/** Exact source, destination, metadata and projection frozen by a live intent. */
 export type PathlessPublicationWriteAuthorization =
   | PathlessPagePublicationWriteAuthorization
   | PathlessAssetPublicationWriteAuthorization;
@@ -181,7 +177,7 @@ export type PathlessAssetPublicationAdoptionWriteAuthorization =
     target_projection: [];
   };
 
-/** Like ordinary writes, this authorizes work but does not claim the object key. */
+/** Exact source, destination and public metadata frozen by an adoption plan. */
 export type PathlessPublicationAdoptionWriteAuthorization =
   | PathlessPagePublicationAdoptionWriteAuthorization
   | PathlessAssetPublicationAdoptionWriteAuthorization;
@@ -218,6 +214,25 @@ export type PathlessAssetPublicationAdoptionArtifactReceipt =
 export type PathlessPublicationAdoptionArtifactReceipt =
   | PathlessPagePublicationAdoptionArtifactReceipt
   | PathlessAssetPublicationAdoptionArtifactReceipt;
+
+type PathlessFinalizedObjectClaim = {
+  claim_token: string;
+  finalized: true;
+  artifact_id: string;
+  body_object_key: string;
+  body_size_bytes: number | string;
+  body_content_hash: string;
+};
+
+export type PathlessPublicationObjectClaim<Authorization> =
+  | PathlessFinalizedObjectClaim
+  | {
+    claim_token: string;
+    finalized: false;
+    artifact_id: string;
+    body_object_key: string;
+    authorization: Authorization;
+  };
 
 export type PathlessPublicationEntrypoint = {
   public_id: string | null;
@@ -398,10 +413,7 @@ export class PathlessPublicationRepository {
 }
 
 export class PathlessPublicationAdoptionRepository {
-  constructor(
-    private readonly corpusPool: Pool,
-    private readonly storagePool: Pool,
-  ) {}
+  constructor(private readonly corpusPool: Pool) {}
 
   /** Reuse `adoptionId` after a lost response to replay the same immutable plan. */
   async begin(
@@ -416,47 +428,6 @@ export class PathlessPublicationAdoptionRepository {
       [adoptionId, adoptionKind, sourceDocumentId],
     );
     return requireRow(result.rows[0], "Pathless publication adoption");
-  }
-
-  /** Re-authorizes one pending adoption write without claiming its object key. */
-  async writeTarget(adoptionId: string): Promise<PathlessPublicationAdoptionWriteAuthorization> {
-    const result = await this.storagePool.query<PathlessPublicationAdoptionWriteAuthorization>(
-      `SELECT adoption_id,adoption_kind,resource_kind,public_id,artifact_id,
-         source_body_object_key,source_body_size_bytes,source_body_content_hash,
-         body_object_key,max_body_size_bytes,public_title,public_summary,
-         public_last_edited_at,public_filename,public_content_type,public_width,
-         public_height,public_duration_seconds,projected_target_public_ids,
-         projection_receipt_hash,target_projection
-       FROM get_pathless_publication_adoption_write_target($1)`,
-      [adoptionId],
-    );
-    return requireRow(result.rows[0], "Pathless publication adoption write target");
-  }
-
-  async stage(receipt: PathlessPublicationAdoptionArtifactReceipt): Promise<void> {
-    const page = receipt.adoption_kind !== "legacy_asset";
-    await this.storagePool.query(
-      `SELECT stage_pathless_publication_adoption(
-         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15
-       )`,
-      [
-        receipt.adoption_id,
-        receipt.adoption_kind,
-        receipt.body_size_bytes,
-        receipt.body_content_hash,
-        page ? receipt.public_title : null,
-        page ? receipt.public_summary : null,
-        page ? receipt.public_last_edited_at : null,
-        page ? null : receipt.public_filename,
-        page ? null : receipt.public_content_type,
-        page ? null : (receipt.public_width ?? null),
-        page ? null : (receipt.public_height ?? null),
-        page ? null : (receipt.public_duration_seconds ?? null),
-        page ? receipt.projected_target_public_ids : [],
-        page ? receipt.observed_public_uuid_tokens : [],
-        receipt.projection_receipt_hash,
-      ],
-    );
   }
 
   async apply(adoptionId: string): Promise<PathlessPublicationAdoptionPhase> {
@@ -480,33 +451,68 @@ export class PathlessPublicationAdoptionRepository {
 export class PathlessStoragePublicationRepository {
   constructor(private readonly storagePool: Pool) {}
 
-  /**
-   * Re-authorizes an exact pending object write. The database rejects staged or
-   * challenged intents, but this lookup does not itself claim the object key.
-   */
-  async writeTarget(intentId: string): Promise<PathlessPublicationWriteAuthorization> {
-    const result = await this.storagePool.query<PathlessPublicationWriteAuthorization>(
-      `SELECT intent_id,target_kind,candidate_public_id,artifact_id,
-         source_body_object_key,source_body_size_bytes,source_body_content_hash,
-         body_object_key,max_body_size_bytes,public_title,public_summary,
-         public_last_edited_at,public_filename,public_content_type,public_width,
-         public_height,public_duration_seconds,projected_target_public_ids,
-         projection_receipt_hash,target_projection
-       FROM get_pathless_publication_write_target($1)`,
-      [intentId],
-    );
-    const target = result.rows[0];
-    if (!target) throw new Error("Pathless publication write target was not returned");
-    return target;
+  private claimRow<Authorization>(row: {
+    claim_token: string;
+    finalized: boolean;
+    artifact_id: string;
+    body_object_key: string;
+    body_size_bytes: number | string | null;
+    body_content_hash: string | null;
+    authorization: Authorization | null;
+  } | undefined): PathlessPublicationObjectClaim<Authorization> {
+    const claim = requireRow(row, "Pathless publication object claim");
+    if (claim.finalized) {
+      if (claim.body_size_bytes === null || claim.body_content_hash === null) {
+        throw new Error("Finalized publication claim is missing its byte receipt");
+      }
+      return {
+        claim_token: claim.claim_token,
+        finalized: true,
+        artifact_id: claim.artifact_id,
+        body_object_key: claim.body_object_key,
+        body_size_bytes: claim.body_size_bytes,
+        body_content_hash: claim.body_content_hash,
+      };
+    }
+    if (!claim.authorization) throw new Error("Pending publication claim is missing its authorization");
+    return {
+      claim_token: claim.claim_token,
+      finalized: false,
+      artifact_id: claim.artifact_id,
+      body_object_key: claim.body_object_key,
+      authorization: claim.authorization,
+    };
   }
 
-  async stage(receipt: PathlessPublicationArtifactReceipt): Promise<void> {
+  async claimIntent(
+    intentId: string,
+    requestedClaimToken = randomUUID(),
+  ): Promise<PathlessPublicationObjectClaim<PathlessPublicationWriteAuthorization>> {
+    const result = await this.storagePool.query<{
+      claim_token: string;
+      finalized: boolean;
+      artifact_id: string;
+      body_object_key: string;
+      body_size_bytes: number | string | null;
+      body_content_hash: string | null;
+      authorization: PathlessPublicationWriteAuthorization | null;
+    }>(
+      `SELECT claim_token,finalized,artifact_id,body_object_key,
+         body_size_bytes,body_content_hash,authorization
+       FROM claim_pathless_publication_artifact($1,$2)`,
+      [intentId, requestedClaimToken],
+    );
+    return this.claimRow(result.rows[0]);
+  }
+
+  async finalizeIntent(claimToken: string, receipt: PathlessPublicationArtifactReceipt): Promise<void> {
     const page = receipt.target_kind === "page";
     await this.storagePool.query(
-      `SELECT stage_pathless_publication_artifact(
-         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15
+      `SELECT finalize_pathless_publication_artifact_claim(
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16
        )`,
       [
+        claimToken,
         receipt.intent_id,
         receipt.target_kind,
         receipt.body_size_bytes,
@@ -522,6 +528,57 @@ export class PathlessStoragePublicationRepository {
         page ? receipt.projected_target_public_ids : [],
         page ? receipt.observed_public_uuid_tokens : [],
         page ? receipt.projection_receipt_hash : null,
+      ],
+    );
+  }
+
+  async claimAdoption(
+    adoptionId: string,
+    requestedClaimToken = randomUUID(),
+  ): Promise<PathlessPublicationObjectClaim<PathlessPublicationAdoptionWriteAuthorization>> {
+    const result = await this.storagePool.query<{
+      claim_token: string;
+      finalized: boolean;
+      artifact_id: string;
+      body_object_key: string;
+      body_size_bytes: number | string | null;
+      body_content_hash: string | null;
+      authorization: PathlessPublicationAdoptionWriteAuthorization | null;
+    }>(
+      `SELECT claim_token,finalized,artifact_id,body_object_key,
+         body_size_bytes,body_content_hash,authorization
+       FROM claim_pathless_publication_adoption_artifact($1,$2)`,
+      [adoptionId, requestedClaimToken],
+    );
+    return this.claimRow(result.rows[0]);
+  }
+
+  async finalizeAdoption(
+    claimToken: string,
+    receipt: PathlessPublicationAdoptionArtifactReceipt,
+  ): Promise<void> {
+    const page = receipt.adoption_kind !== "legacy_asset";
+    await this.storagePool.query(
+      `SELECT finalize_pathless_publication_adoption_claim(
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16
+       )`,
+      [
+        claimToken,
+        receipt.adoption_id,
+        receipt.adoption_kind,
+        receipt.body_size_bytes,
+        receipt.body_content_hash,
+        page ? receipt.public_title : null,
+        page ? receipt.public_summary : null,
+        page ? receipt.public_last_edited_at : null,
+        page ? null : receipt.public_filename,
+        page ? null : receipt.public_content_type,
+        page ? null : (receipt.public_width ?? null),
+        page ? null : (receipt.public_height ?? null),
+        page ? null : (receipt.public_duration_seconds ?? null),
+        page ? receipt.projected_target_public_ids : [],
+        page ? receipt.observed_public_uuid_tokens : [],
+        receipt.projection_receipt_hash,
       ],
     );
   }

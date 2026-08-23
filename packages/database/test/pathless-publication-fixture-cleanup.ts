@@ -137,6 +137,12 @@ export async function cleanupPathlessPublicationFixtures(
       [intentIds],
     );
     await client.query(
+      `DELETE FROM pathless_publication_object_claims
+       WHERE (allocation_kind='pathless_intent' AND allocation_id=ANY($1::uuid[]))
+          OR (allocation_kind='pathless_adoption' AND allocation_id=ANY($2::uuid[]))`,
+      [intentIds, adoptionIds],
+    );
+    await client.query(
       "DELETE FROM pathless_publication_artifact_staging WHERE intent_id=ANY($1::uuid[])",
       [intentIds],
     );

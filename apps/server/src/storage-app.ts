@@ -5,17 +5,30 @@ import {
   AssetRepository,
   DocumentMaintenanceRepository,
   MAX_MARKDOWN_DOCUMENT_BYTES,
+  PathlessStoragePublicationRepository,
   createPool,
   extractDocumentLinks,
   StoragePublicationRepository,
+  type PathlessPublicationAdoptionArtifactReceipt,
+  type PathlessPublicationAdoptionWriteAuthorization,
+  type PathlessPublicationObjectClaim,
+  type PathlessPublicationWriteAuthorization,
 } from "@context-use/database";
-import { AssetPath } from "@context-use/shared";
+import { AssetPath, type PathlessPublicationArtifactReceipt } from "@context-use/shared";
 import { Elysia } from "elysia";
 import { z } from "zod";
 import { config } from "./config.ts";
-import { FilesystemStorage, S3Storage, type ByteRange, type ObjectStorageBackend } from "./storage.ts";
+import {
+  FilesystemStorage,
+  ObjectAlreadyExistsError,
+  S3Storage,
+  type ByteRange,
+  type ObjectStorageBackend,
+  type StoredAsset,
+} from "./storage.ts";
 import { disableStreamingRequestIdleTimeout } from "./streaming-timeout.ts";
 import { projectPublicMarkdown } from "./public-markdown-projection.ts";
+import { projectPathlessPublicMarkdown } from "./pathless-public-markdown.ts";
 
 const objectKeySchema = z.string().regex(/^objects\/[a-f0-9-]{36}$/);
 const privateDocumentKeySchema = z.string().regex(/^documents\/private\/[a-f0-9-]{36}\.md$/);
@@ -107,6 +120,7 @@ const defaultStorage: ObjectStorageBackend = config.STORAGE_DRIVER === "s3"
 const storagePool = createPool(config.STORAGE_DATABASE_URL, { application_name: "context-use-storage-boundary" });
 const defaultPrivateAssets = new AssetRepository(storagePool);
 const defaultPublicAssets = new StoragePublicationRepository(storagePool);
+const defaultPathlessPublications = new PathlessStoragePublicationRepository(storagePool);
 const documentMaintenance = new DocumentMaintenanceRepository(storagePool);
 const defaultTokens: StorageBrokerTokens = {
   dashboard: config.STORAGE_DASHBOARD_TOKEN,
@@ -156,13 +170,203 @@ async function generatedObjectResponse(
   });
 }
 
+type PathlessPublicationClaims = Pick<PathlessStoragePublicationRepository,
+  "claimIntent" | "finalizeIntent" | "claimAdoption" | "finalizeAdoption">;
+
+function exactNumber(value: number | string, maximum: number): number {
+  const result = Number(value);
+  if (!Number.isSafeInteger(result) || result < 0 || result > maximum) {
+    throw new Error("Publication artifact size is not safely representable");
+  }
+  return result;
+}
+
+async function verifiedSourceBody(
+  storage: ObjectStorageBackend,
+  authorization: PathlessPublicationWriteAuthorization | PathlessPublicationAdoptionWriteAuthorization,
+): Promise<BodyInit> {
+  const size = exactNumber(authorization.source_body_size_bytes, 5_000_000_000);
+  if (!await storage.verify(
+    authorization.source_body_object_key,
+    size,
+    authorization.source_body_content_hash,
+  )) throw new Error("Publication source bytes are unavailable or corrupt");
+  return storage.read(authorization.source_body_object_key);
+}
+
+function sameUuidSet(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+async function writeClaimedArtifact(input: {
+  storage: ObjectStorageBackend;
+  claim:
+    | PathlessPublicationObjectClaim<PathlessPublicationWriteAuthorization>
+    | PathlessPublicationObjectClaim<PathlessPublicationAdoptionWriteAuthorization>;
+  allocationKind: "pathless_intent" | "pathless_adoption";
+}): Promise<{
+  claimToken: string;
+  receipt: PathlessPublicationArtifactReceipt | PathlessPublicationAdoptionArtifactReceipt | null;
+}> {
+  const { storage, claim, allocationKind } = input;
+  if (claim.finalized) {
+    const size = exactNumber(claim.body_size_bytes, 5_000_000_000);
+    if (!await storage.verify(claim.body_object_key, size, claim.body_content_hash)) {
+      throw new Error("Finalized publication artifact is unavailable or corrupt");
+    }
+    return { claimToken: claim.claim_token, receipt: null };
+  }
+
+  const authorization = claim.authorization;
+  const page = "target_kind" in authorization
+    ? authorization.target_kind === "page"
+    : authorization.resource_kind === "page";
+  const project = page && (
+    "target_kind" in authorization || authorization.adoption_kind === "directory_hub"
+  );
+  let body: ReadableStream<Uint8Array> | null;
+  let sizeBytes: number;
+  let contentHash: string;
+  let observedPublicIds: string[];
+  if (project) {
+    const source = await new Response(await verifiedSourceBody(storage, authorization)).text();
+    const projected = projectPathlessPublicMarkdown(source, authorization.target_projection);
+    observedPublicIds = projected.observedPublicIds;
+    if (!sameUuidSet(observedPublicIds, authorization.projected_target_public_ids)) {
+      throw new Error("Public projection did not observe the exact frozen UUID set");
+    }
+    const bytes = Buffer.from(projected.bodyMarkdown, "utf8");
+    sizeBytes = bytes.byteLength;
+    contentHash = createHash("sha256").update(bytes).digest("hex");
+    body = new Blob([bytes]).stream();
+  } else {
+    sizeBytes = exactNumber(authorization.source_body_size_bytes, 5_000_000_000);
+    contentHash = authorization.source_body_content_hash;
+    observedPublicIds = authorization.projected_target_public_ids;
+    const source = await verifiedSourceBody(storage, authorization);
+    body = new Response(source).body;
+  }
+  const maximum = exactNumber(authorization.max_body_size_bytes, 5_000_000_000);
+  if (sizeBytes > maximum) throw new Error("Publication artifact exceeds its frozen size limit");
+  const stored: StoredAsset = {
+    id: authorization.artifact_id,
+    objectKey: authorization.body_object_key,
+    filename: page
+      ? `${authorization.artifact_id}.md`
+      : authorization.public_filename!,
+    contentType: page
+      ? "text/markdown; charset=utf-8"
+      : authorization.public_content_type!,
+    sizeBytes,
+    contentHash,
+  };
+  try {
+    await storage.writeOnce(stored, body);
+  } catch (error) {
+    if (!(error instanceof ObjectAlreadyExistsError)) throw error;
+  }
+  if (!await storage.verify(stored.objectKey, sizeBytes, contentHash)) {
+    throw new Error("Conditional publication artifact write did not retain the exact bytes");
+  }
+
+  if (allocationKind === "pathless_intent") {
+    const target = authorization as PathlessPublicationWriteAuthorization;
+    const receipt: PathlessPublicationArtifactReceipt = target.target_kind === "page"
+      ? {
+        intent_id: target.intent_id,
+        target_kind: "page",
+        body_size_bytes: sizeBytes,
+        body_content_hash: contentHash,
+        public_title: target.public_title,
+        public_summary: target.public_summary,
+        public_last_edited_at: target.public_last_edited_at,
+        projected_target_public_ids: target.projected_target_public_ids,
+        observed_public_uuid_tokens: observedPublicIds,
+        projection_receipt_hash: target.projection_receipt_hash,
+      }
+      : {
+        intent_id: target.intent_id,
+        target_kind: "asset",
+        body_size_bytes: sizeBytes,
+        body_content_hash: contentHash,
+        public_filename: target.public_filename,
+        public_content_type: target.public_content_type,
+        ...(target.public_width === null ? {} : { public_width: target.public_width }),
+        ...(target.public_height === null ? {} : { public_height: target.public_height }),
+        ...(target.public_duration_seconds === null
+          ? {}
+          : { public_duration_seconds: target.public_duration_seconds }),
+      };
+    return { claimToken: claim.claim_token, receipt };
+  }
+
+  const target = authorization as PathlessPublicationAdoptionWriteAuthorization;
+  const receipt: PathlessPublicationAdoptionArtifactReceipt = target.resource_kind === "page"
+    ? {
+      adoption_id: target.adoption_id,
+      adoption_kind: target.adoption_kind,
+      body_size_bytes: sizeBytes,
+      body_content_hash: contentHash,
+      public_title: target.public_title,
+      public_summary: target.public_summary,
+      public_last_edited_at: target.public_last_edited_at,
+      projected_target_public_ids: target.projected_target_public_ids,
+      observed_public_uuid_tokens: observedPublicIds,
+      projection_receipt_hash: target.projection_receipt_hash,
+    }
+    : {
+      adoption_id: target.adoption_id,
+      adoption_kind: "legacy_asset",
+      body_size_bytes: sizeBytes,
+      body_content_hash: contentHash,
+      public_filename: target.public_filename,
+      public_content_type: target.public_content_type,
+      ...(target.public_width === null ? {} : { public_width: target.public_width }),
+      ...(target.public_height === null ? {} : { public_height: target.public_height }),
+      ...(target.public_duration_seconds === null
+        ? {}
+        : { public_duration_seconds: target.public_duration_seconds }),
+      projection_receipt_hash: target.projection_receipt_hash,
+    };
+  return { claimToken: claim.claim_token, receipt };
+}
+
+export async function materializePathlessPublicationArtifact(input: {
+  storage: ObjectStorageBackend;
+  claims: PathlessPublicationClaims;
+  allocationKind: "pathless_intent" | "pathless_adoption";
+  allocationId: string;
+}): Promise<void> {
+  const claim = input.allocationKind === "pathless_intent"
+    ? await input.claims.claimIntent(input.allocationId)
+    : await input.claims.claimAdoption(input.allocationId);
+  const written = await writeClaimedArtifact({
+    storage: input.storage,
+    claim,
+    allocationKind: input.allocationKind,
+  });
+  if (!written.receipt) return;
+  if (input.allocationKind === "pathless_intent") {
+    await input.claims.finalizeIntent(
+      written.claimToken,
+      written.receipt as PathlessPublicationArtifactReceipt,
+    );
+  } else {
+    await input.claims.finalizeAdoption(
+      written.claimToken,
+      written.receipt as PathlessPublicationAdoptionArtifactReceipt,
+    );
+  }
+}
+
 export function createStorageBrokerApp(input: {
   storage: ObjectStorageBackend;
   privateAssets: PrivateAssetLookup;
   publicAssets: PublishedAssetLookup;
+  pathlessPublications?: PathlessPublicationClaims;
   tokens: StorageBrokerTokens;
 }) {
-  const { storage, privateAssets, publicAssets, tokens } = input;
+  const { storage, privateAssets, publicAssets, pathlessPublications, tokens } = input;
   const activeWrites = new Set<string>();
   return new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
   .onError(() => denied())
@@ -265,6 +469,21 @@ export function createStorageBrokerApp(input: {
       activeWrites.delete(objectKey);
     }
   }, { parse: "none" })
+  .put("/private/publication-artifact", async ({ request, query }) => {
+    if (privateCapability(request, tokens) !== "dashboard" || !pathlessPublications) {
+      return denied();
+    }
+    const allocationKind = z.enum(["pathless_intent", "pathless_adoption"])
+      .parse(query.kind);
+    const allocationId = z.string().uuid().parse(query.id);
+    await materializePathlessPublicationArtifact({
+      storage,
+      claims: pathlessPublications,
+      allocationKind,
+      allocationId,
+    });
+    return new Response(null, { status: 204 });
+  }, { parse: "none" })
   .head("/private/export", async ({ request, query }) => {
     if (privateCapability(request, tokens) !== "dashboard") return denied();
     return generatedObjectResponse(request, storage, generatedObjectKeySchema.parse(query.key));
@@ -326,6 +545,7 @@ export const storageApp = createStorageBrokerApp({
   storage: defaultStorage,
   privateAssets: defaultPrivateAssets,
   publicAssets: defaultPublicAssets,
+  pathlessPublications: defaultPathlessPublications,
   tokens: defaultTokens,
 });
 
@@ -460,7 +680,7 @@ export async function listenStorageSocket(): Promise<void> {
     maxRequestBodySize: 5_500_000_000,
     fetch(request, server) {
       if (["GET", "PUT"].includes(request.method)
-          && ["/private/object", "/private/document", "/private/export"].includes(new URL(request.url).pathname)) {
+          && ["/private/object", "/private/document", "/private/export", "/private/publication-artifact"].includes(new URL(request.url).pathname)) {
         disableStreamingRequestIdleTimeout(server, request);
       }
       return storageApp.handle(request);

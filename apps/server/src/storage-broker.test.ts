@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { MAX_MARKDOWN_DOCUMENT_BYTES } from "@context-use/database";
 import { createStorageBrokerApp } from "./storage-app.ts";
 import { BrokeredStorage } from "./storage-client.ts";
-import type { ByteRange, GeneratedObjectMetadata, ObjectStorageBackend, StoredAsset } from "./storage.ts";
+import { ObjectAlreadyExistsError, type ByteRange, type GeneratedObjectMetadata, type ObjectStorageBackend, type StoredAsset } from "./storage.ts";
 
 const tokens = {
   dashboard: "dashboard-token-that-is-long-and-private",
@@ -50,9 +50,30 @@ class MemoryStorage implements ObjectStorageBackend {
     [privateKey, Buffer.from("private")],
   ]);
   readonly generated = new Map<string, GeneratedObjectMetadata>();
+  readonly pendingImmutableWrites = new Map<string, Promise<void>>();
+  immutableCreates = 0;
 
   async write(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void> {
     this.objects.set(asset.objectKey, new Uint8Array(await new Response(body).arrayBuffer()));
+  }
+
+  async writeOnce(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void> {
+    const pending = this.pendingImmutableWrites.get(asset.objectKey);
+    if (pending) {
+      await pending;
+      throw new ObjectAlreadyExistsError();
+    }
+    if (this.objects.has(asset.objectKey)) throw new ObjectAlreadyExistsError();
+    let release!: () => void;
+    const write = new Promise<void>((resolve) => { release = resolve; });
+    this.pendingImmutableWrites.set(asset.objectKey, write);
+    try {
+      this.objects.set(asset.objectKey, new Uint8Array(await new Response(body).arrayBuffer()));
+      this.immutableCreates += 1;
+    } finally {
+      this.pendingImmutableWrites.delete(asset.objectKey);
+      release();
+    }
   }
 
   async delete(objectKey: string): Promise<void> {
@@ -105,6 +126,164 @@ function authorized(token: string, path: string, init: RequestInit = {}): Reques
 }
 
 describe("storage broker capabilities", () => {
+  test("claims, conditionally writes, verifies and finalizes a pathless page artifact", async () => {
+    const storage = new MemoryStorage();
+    const intentId = "60606060-6060-4060-8060-606060606060";
+    const revisionId = "62626262-6262-4262-8262-626262626262";
+    const artifactId = "63636363-6363-4363-8363-636363636363";
+    const publicId = "64646464-6464-4464-8464-646464646464";
+    const targetId = "65656565-6565-4565-8565-656565656565";
+    const linkedPublicId = "66666666-6666-4666-8666-666666666666";
+    const sourceKey = `documents/private/${revisionId}.md`;
+    const destinationKey = `documents/public/${artifactId}.md`;
+    const source = Buffer.from(`See [the linked page](context-use://document/${targetId}).`);
+    storage.objects.set(sourceKey, source);
+    let finalized: { token: string; receipt: unknown } | null = null;
+    const claims = {
+      claimIntent: async () => ({
+        claim_token: "67676767-6767-4767-8767-676767676767",
+        finalized: false as const,
+        artifact_id: artifactId,
+        body_object_key: destinationKey,
+        authorization: {
+          intent_id: intentId,
+          target_kind: "page" as const,
+          candidate_public_id: publicId,
+          artifact_id: artifactId,
+          source_body_object_key: sourceKey,
+          source_body_size_bytes: source.byteLength,
+          source_body_content_hash: createHash("sha256").update(source).digest("hex"),
+          body_object_key: destinationKey,
+          max_body_size_bytes: 4_000_000,
+          public_title: "Public page",
+          public_summary: "A public pathless page.",
+          public_last_edited_at: "2026-08-23T12:34:56.123456Z",
+          public_filename: null,
+          public_content_type: null,
+          public_width: null,
+          public_height: null,
+          public_duration_seconds: null,
+          projected_target_public_ids: [linkedPublicId],
+          projection_receipt_hash: "a".repeat(64),
+          target_projection: [{
+            target_document_id: targetId,
+            outcome: "active_public" as const,
+            public_id: linkedPublicId,
+            public_target_kind: "page" as const,
+          }],
+        },
+      }),
+      finalizeIntent: async (token: string, receipt: unknown) => { finalized = { token, receipt }; },
+      claimAdoption: async () => { throw new Error("unexpected adoption"); },
+      finalizeAdoption: async () => { throw new Error("unexpected adoption"); },
+    };
+    const app = createStorageBrokerApp({
+      storage,
+      privateAssets: privateAssets({}),
+      publicAssets: { assetByPublicPath: async () => null },
+      pathlessPublications: claims,
+      tokens,
+    });
+
+    const response = await app.handle(authorized(
+      tokens.dashboard,
+      `/private/publication-artifact?kind=pathless_intent&id=${intentId}`,
+      { method: "PUT" },
+    ));
+
+    expect(response.status).toBe(204);
+    expect(Buffer.from(storage.objects.get(destinationKey)!).toString())
+      .toBe(`See [the linked page](/p/${linkedPublicId}).`);
+    expect(finalized).toMatchObject({
+      token: "67676767-6767-4767-8767-676767676767",
+      receipt: {
+        intent_id: intentId,
+        target_kind: "page",
+        projected_target_public_ids: [linkedPublicId],
+        observed_public_uuid_tokens: [linkedPublicId],
+      },
+    });
+    expect((await app.handle(authorized(
+      tokens.mcp,
+      `/private/publication-artifact?kind=pathless_intent&id=${intentId}`,
+      { method: "PUT" },
+    ))).status).toBe(404);
+  });
+
+  test("serializes independent brokers onto one immutable artifact", async () => {
+    const storage = new MemoryStorage();
+    const intentId = "70707070-7070-4070-8070-707070707070";
+    const assetId = "71717171-7171-4171-8171-717171717171";
+    const artifactId = "72727272-7272-4272-8272-727272727272";
+    const sourceKey = `objects/${assetId}`;
+    const destinationKey = `objects/${artifactId}`;
+    const source = Buffer.from("same immutable asset");
+    storage.objects.set(sourceKey, source);
+    const finalizations: unknown[] = [];
+    const claims = {
+      claimIntent: async () => ({
+        claim_token: "73737373-7373-4373-8373-737373737373",
+        finalized: false as const,
+        artifact_id: artifactId,
+        body_object_key: destinationKey,
+        authorization: {
+          intent_id: intentId,
+          target_kind: "asset" as const,
+          candidate_public_id: "74747474-7474-4474-8474-747474747474",
+          artifact_id: artifactId,
+          source_body_object_key: sourceKey,
+          source_body_size_bytes: source.byteLength,
+          source_body_content_hash: createHash("sha256").update(source).digest("hex"),
+          body_object_key: destinationKey,
+          max_body_size_bytes: 5_000_000_000,
+          public_title: null,
+          public_summary: null,
+          public_last_edited_at: null,
+          public_filename: "asset.bin",
+          public_content_type: "application/octet-stream",
+          public_width: null,
+          public_height: null,
+          public_duration_seconds: null,
+          projected_target_public_ids: [] as [],
+          projection_receipt_hash: null,
+          target_projection: [] as [],
+        },
+      }),
+      finalizeIntent: async (_token: string, receipt: unknown) => { finalizations.push(receipt); },
+      claimAdoption: async () => { throw new Error("unexpected adoption"); },
+      finalizeAdoption: async () => { throw new Error("unexpected adoption"); },
+    };
+    const left = createStorageBrokerApp({
+      storage,
+      privateAssets: privateAssets({}),
+      publicAssets: { assetByPublicPath: async () => null },
+      pathlessPublications: claims,
+      tokens,
+    });
+    const right = createStorageBrokerApp({
+      storage,
+      privateAssets: privateAssets({}),
+      publicAssets: { assetByPublicPath: async () => null },
+      pathlessPublications: claims,
+      tokens,
+    });
+    const request = () => authorized(
+      tokens.dashboard,
+      `/private/publication-artifact?kind=pathless_intent&id=${intentId}`,
+      { method: "PUT" },
+    );
+
+    const [first, second] = await Promise.all([
+      left.handle(request()),
+      right.handle(request()),
+    ]);
+
+    expect([first.status, second.status]).toEqual([204, 204]);
+    expect(storage.immutableCreates).toBe(1);
+    expect(storage.objects.get(destinationKey)).toEqual(source);
+    expect(finalizations).toHaveLength(2);
+  });
+
   test("public capability resolves only an exactly published path without receiving an object key", async () => {
     const storage = new MemoryStorage();
     const app = createStorageBrokerApp({

@@ -6,6 +6,7 @@ export const DEVELOPMENT_RESET_TABLES = [
   "public_page_artifacts",
   "public_asset_artifacts",
   "public_representation_token_reservations",
+  "pathless_publication_object_claims",
   "pathless_publication_artifact_staging",
   "pathless_publication_intents",
   "publication_intent_id_reservations",

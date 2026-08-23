@@ -26,6 +26,7 @@ const publicId = "00000000-0000-4000-8000-000000000040";
 const artifactId = "00000000-0000-4000-8000-000000000050";
 const linkedPublicId = "00000000-0000-4000-8000-000000000060";
 const adoptionId = "00000000-0000-4000-8000-000000000070";
+const claimToken = "00000000-0000-4000-8000-000000000080";
 const hash = (digit: string): string => digit.repeat(64);
 
 type QueryCall = { sql: string; values: unknown[] | undefined };
@@ -146,7 +147,7 @@ describe("pathless publication dashboard boundary", () => {
 });
 
 describe("pathless publication storage boundary", () => {
-  test("re-authorizes each write-target lookup without exposing a representation token", async () => {
+  test("claims an exact write target without exposing a representation token", async () => {
     const target: PathlessPublicationWriteAuthorization = {
       intent_id: intentId,
       target_kind: "page",
@@ -174,20 +175,31 @@ describe("pathless publication storage boundary", () => {
         public_target_kind: "page",
       }],
     };
-    const { calls, pool } = recordingPool([target]);
+    const row = {
+      claim_token: claimToken,
+      finalized: false,
+      artifact_id: artifactId,
+      body_object_key: target.body_object_key,
+      body_size_bytes: null,
+      body_content_hash: null,
+      authorization: target,
+    };
+    const { calls, pool } = recordingPool([row]);
     const storage = new PathlessStoragePublicationRepository(pool);
 
-    expect(await storage.writeTarget(intentId)).toEqual(target);
-    expect(await storage.writeTarget(intentId)).toEqual(target);
-    expect(calls).toHaveLength(2);
-    for (const call of calls) {
-      expect(call.sql).toContain("FROM get_pathless_publication_write_target($1)");
-      expect(call.sql).not.toContain("representation_token");
-      expect(call.values).toEqual([intentId]);
-    }
+    expect(await storage.claimIntent(intentId, claimToken)).toEqual({
+      claim_token: claimToken,
+      finalized: false,
+      artifact_id: artifactId,
+      body_object_key: target.body_object_key,
+      authorization: target,
+    });
+    expect(calls[0]!.sql).toContain("FROM claim_pathless_publication_artifact($1,$2)");
+    expect(calls[0]!.sql).not.toContain("representation_token");
+    expect(calls[0]!.values).toEqual([intentId, claimToken]);
   });
 
-  test("forwards every page receipt field and never accepts a caller token", async () => {
+  test("finalizes every page receipt field under its claim token", async () => {
     const projected = [publicId, linkedPublicId].sort();
     const receipt = {
       intent_id: intentId,
@@ -203,11 +215,12 @@ describe("pathless publication storage boundary", () => {
     } satisfies PathlessPublicationArtifactReceipt;
     const { calls, pool } = recordingPool();
 
-    await new PathlessStoragePublicationRepository(pool).stage(receipt);
+    await new PathlessStoragePublicationRepository(pool).finalizeIntent(claimToken, receipt);
 
-    expect(calls[0]!.sql).toContain("stage_pathless_publication_artifact");
+    expect(calls[0]!.sql).toContain("finalize_pathless_publication_artifact_claim");
     expect(calls[0]!.sql).not.toContain("representation_token");
     expect(calls[0]!.values).toEqual([
+      claimToken,
       intentId,
       "page",
       128,
@@ -240,9 +253,10 @@ describe("pathless publication storage boundary", () => {
     } satisfies PathlessPublicationArtifactReceipt;
     const { calls, pool } = recordingPool();
 
-    await new PathlessStoragePublicationRepository(pool).stage(receipt);
+    await new PathlessStoragePublicationRepository(pool).finalizeIntent(claimToken, receipt);
 
     expect(calls[0]!.values).toEqual([
+      claimToken,
       intentId,
       "asset",
       256,
@@ -286,7 +300,7 @@ describe("pathless publication storage boundary", () => {
 });
 
 describe("pathless publication adoption boundary", () => {
-  test("keeps corpus planning/apply separate from storage authorization/staging", async () => {
+  test("keeps corpus planning/apply separate from claimed storage materialization", async () => {
     const plan: PathlessPublicationAdoption = {
       id: adoptionId,
       adoption_kind: "legacy_asset",
@@ -321,11 +335,26 @@ describe("pathless publication adoption boundary", () => {
       projection_receipt_hash: hash("f"),
       target_projection: [],
     };
-    const storage = recordingPoolSequence([[authorization], []]);
-    const adoptions = new PathlessPublicationAdoptionRepository(corpus.pool, storage.pool);
+    const storage = recordingPoolSequence([[
+      {
+        claim_token: claimToken,
+        finalized: false,
+        artifact_id: artifactId,
+        body_object_key: authorization.body_object_key,
+        body_size_bytes: null,
+        body_content_hash: null,
+        authorization,
+      },
+    ], []]);
+    const adoptions = new PathlessPublicationAdoptionRepository(corpus.pool);
+    const materialization = new PathlessStoragePublicationRepository(storage.pool);
 
     expect(await adoptions.begin("legacy_asset", documentId, adoptionId)).toEqual(plan);
-    expect(await adoptions.writeTarget(adoptionId)).toEqual(authorization);
+    expect(await materialization.claimAdoption(adoptionId, claimToken)).toMatchObject({
+      claim_token: claimToken,
+      finalized: false,
+      authorization,
+    });
     const receipt = {
       adoption_id: adoptionId,
       adoption_kind: "legacy_asset",
@@ -338,7 +367,7 @@ describe("pathless publication adoption boundary", () => {
       public_duration_seconds: "1234567890.12345678901234567890",
       projection_receipt_hash: hash("f"),
     } satisfies PathlessPublicationAdoptionArtifactReceipt;
-    await adoptions.stage(receipt);
+    await materialization.finalizeAdoption(claimToken, receipt);
     expect(await adoptions.apply(adoptionId)).toBe("applied");
     expect(await adoptions.seedEntrypoint()).toEqual(entrypoint);
 
@@ -352,10 +381,11 @@ describe("pathless publication adoption boundary", () => {
     });
     expect(corpus.calls[2]!.sql).toContain("FROM seed_pathless_publication_entrypoint()");
     expect(storage.calls[0]!.sql).toContain(
-      "FROM get_pathless_publication_adoption_write_target($1)",
+      "FROM claim_pathless_publication_adoption_artifact($1,$2)",
     );
     expect(storage.calls[0]!.sql).not.toContain("representation_token");
     expect(storage.calls[1]!.values).toEqual([
+      claimToken,
       adoptionId,
       "legacy_asset",
       256,
@@ -377,7 +407,7 @@ describe("pathless publication adoption boundary", () => {
   test("uses adoption_id and forwards the complete directory-hub receipt", async () => {
     const projected = [publicId, linkedPublicId].sort();
     const storage = recordingPool();
-    const adoptions = new PathlessPublicationAdoptionRepository({} as Pool, storage.pool);
+    const materialization = new PathlessStoragePublicationRepository(storage.pool);
     const receipt = {
       adoption_id: adoptionId,
       adoption_kind: "directory_hub",
@@ -391,11 +421,12 @@ describe("pathless publication adoption boundary", () => {
       projection_receipt_hash: hash("f"),
     } satisfies PathlessPublicationAdoptionArtifactReceipt;
 
-    await adoptions.stage(receipt);
+    await materialization.finalizeAdoption(claimToken, receipt);
 
-    expect(storage.calls[0]!.sql).toContain("stage_pathless_publication_adoption");
+    expect(storage.calls[0]!.sql).toContain("finalize_pathless_publication_adoption_claim");
     expect(storage.calls[0]!.sql).not.toContain("intent_id");
     expect(storage.calls[0]!.values).toEqual([
+      claimToken,
       adoptionId,
       "directory_hub",
       512,

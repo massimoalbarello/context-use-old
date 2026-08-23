@@ -234,16 +234,18 @@ async function stageAssetPublication(
      )`,
     [intentId, assetId, sessionId],
   )).rows[0]!;
-  const target = (await client.query(
-    "SELECT * FROM get_pathless_publication_write_target($1)",
-    [intentId],
+  const claim = (await client.query(
+    "SELECT * FROM claim_pathless_publication_artifact($1,$2)",
+    [intentId, randomUUID()],
   )).rows[0]!;
+  const target = claim.authorization;
   await client.query(
-    `SELECT stage_pathless_publication_artifact(
-       $1,'asset',$2,$3,NULL,NULL,NULL,$4,$5,$6,$7,$8,
+    `SELECT finalize_pathless_publication_artifact_claim(
+       $1,$2,'asset',$3,$4,NULL,NULL,NULL,$5,$6,$7,$8,$9,
        '{}'::uuid[],'{}'::uuid[],NULL
      )`,
     [
+      claim.claim_token,
       intentId,
       target.source_body_size_bytes,
       target.source_body_content_hash,
@@ -257,7 +259,7 @@ async function stageAssetPublication(
   return {
     intentId,
     publicId: planned.candidate_public_id as string,
-    artifactId: target.artifact_id as string,
+    artifactId: claim.artifact_id as string,
   };
 }
 
@@ -273,15 +275,17 @@ async function stagePagePublication(
      )`,
     [intentId, page.pageId, page.revisionId, sessionId],
   )).rows[0]!;
-  const target = (await client.query(
-    "SELECT * FROM get_pathless_publication_write_target($1)",
-    [intentId],
+  const claim = (await client.query(
+    "SELECT * FROM claim_pathless_publication_artifact($1,$2)",
+    [intentId, randomUUID()],
   )).rows[0]!;
+  const target = claim.authorization;
   await client.query(
-    `SELECT stage_pathless_publication_artifact(
-       $1,'page',29,$2,$3,$4,$5,NULL,NULL,NULL,NULL,NULL,$6,$7,$8
+    `SELECT finalize_pathless_publication_artifact_claim(
+       $1,$2,'page',29,$3,$4,$5,$6,NULL,NULL,NULL,NULL,NULL,$7,$8,$9
      )`,
     [
+      claim.claim_token,
       intentId,
       hash("c"),
       target.public_title,
@@ -295,7 +299,7 @@ async function stagePagePublication(
   return {
     intentId,
     publicId: planned.candidate_public_id as string,
-    artifactId: target.artifact_id as string,
+    artifactId: claim.artifact_id as string,
   };
 }
 
@@ -353,14 +357,16 @@ describeDatabase("checked pathless publication planning and staging", () => {
     )).rows[0]!;
     expect(planned.candidate_public_id).toMatch(/^[0-9a-f-]{36}$/);
 
-    const target = (await client.query(
-      "SELECT * FROM get_pathless_publication_write_target($1)",
-      [intentId],
+    const claim = (await client.query(
+      "SELECT * FROM claim_pathless_publication_artifact($1,$2)",
+      [intentId, randomUUID()],
     )).rows[0]!;
+    const target = claim.authorization;
     expect(target.public_last_edited_at).toBe("2026-08-23T12:34:56.123456Z");
     expect(target.target_projection).toEqual([]);
 
-    const stageArguments = [
+    const finalizeArguments = [
+      claim.claim_token,
       intentId,
       "page",
       29,
@@ -378,10 +384,10 @@ describeDatabase("checked pathless publication planning and staging", () => {
       target.projection_receipt_hash,
     ];
     await client.query(
-      `SELECT stage_pathless_publication_artifact(
-         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15
+      `SELECT finalize_pathless_publication_artifact_claim(
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16
        )`,
-      stageArguments,
+      finalizeArguments,
     );
     const staged = (await client.query<{
       representation_token: string;
@@ -411,16 +417,16 @@ describeDatabase("checked pathless publication planning and staging", () => {
     );
     await client.query("UPDATE knowledge_pages SET archived_at=now() WHERE id=$1", [page.pageId]);
     await client.query(
-      `SELECT stage_pathless_publication_artifact(
-         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15
+      `SELECT finalize_pathless_publication_artifact_claim(
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16
        )`,
-      stageArguments,
+      finalizeArguments,
     );
-    const mismatched = [...stageArguments];
-    mismatched[2] = 30;
+    const mismatched = [...finalizeArguments];
+    mismatched[3] = 30;
     expect(await errorCode(client.query(
-      `SELECT stage_pathless_publication_artifact(
-         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15
+      `SELECT finalize_pathless_publication_artifact_claim(
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16
        )`,
       mismatched,
     ))).toBe("23505");
@@ -467,9 +473,9 @@ describeDatabase("checked pathless publication planning and staging", () => {
       [intentId, page.pageId, page.revisionId, `projection-${randomUUID()}`],
     )).rows[0]!;
     const target = (await client.query(
-      "SELECT * FROM get_pathless_publication_write_target($1)",
-      [intentId],
-    )).rows[0]!;
+      "SELECT * FROM claim_pathless_publication_artifact($1,$2)",
+      [intentId, randomUUID()],
+    )).rows[0]!.authorization;
     expect(target.target_projection).toEqual([{
       target_document_id: asset.assetId,
       outcome: "active_public",
@@ -494,10 +500,11 @@ describeDatabase("checked pathless publication planning and staging", () => {
     await storage.connect();
     try {
       await storage.query("SET ROLE context_use_storage");
-      const target = (await storage.query(
-        "SELECT * FROM get_pathless_publication_write_target($1)",
-        [intentId],
+      const claim = (await storage.query(
+        "SELECT * FROM claim_pathless_publication_artifact($1,$2)",
+        [intentId, randomUUID()],
       )).rows[0]!;
+      const target = claim.authorization;
       expect(target.public_duration_seconds).toBe(duration);
       expect(await errorCode(storage.query(
         "SELECT id FROM pathless_publication_intents WHERE id=$1",
@@ -520,11 +527,12 @@ describeDatabase("checked pathless publication planning and staging", () => {
         [asset.assetId],
       )).rows[0]?.s3_object_key).toBe(`objects/${asset.assetId}`);
       await storage.query(
-        `SELECT stage_pathless_publication_artifact(
-           $1,'asset',$2,$3,NULL,NULL,NULL,$4,$5,NULL,NULL,$6,
+        `SELECT finalize_pathless_publication_artifact_claim(
+           $1,$2,'asset',$3,$4,NULL,NULL,NULL,$5,$6,NULL,NULL,$7,
            '{}'::uuid[],'{}'::uuid[],NULL
          )`,
         [
+          claim.claim_token,
           intentId,
           target.source_body_size_bytes,
           target.source_body_content_hash,

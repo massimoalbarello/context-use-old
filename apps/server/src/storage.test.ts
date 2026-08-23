@@ -14,7 +14,7 @@ import {
   UploadPartCommand,
 } from "@aws-sdk/client-s3";
 import { afterEach, describe, expect, test } from "bun:test";
-import { AssetIntegrityError, credentialsFromFile, FilesystemStorage, mayRenderInline, S3Storage, type StoredAsset } from "./storage.ts";
+import { AssetIntegrityError, credentialsFromFile, FilesystemStorage, mayRenderInline, ObjectAlreadyExistsError, S3Storage, type StoredAsset } from "./storage.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -52,6 +52,8 @@ class FakeS3Client {
   metadata: Record<string, string> | undefined;
   readonly auxiliaryObjects = new Map<string, Uint8Array>();
   aborted = false;
+  conditionalPut = false;
+  conditionalComplete = false;
 
   async send(command: unknown): Promise<Record<string, unknown>> {
     if (command instanceof PutObjectCommand) {
@@ -61,6 +63,10 @@ class FakeS3Client {
       if (command.input.Key?.endsWith(".json")) {
         this.auxiliaryObjects.set(command.input.Key, new Uint8Array(bytes));
         return {};
+      }
+      this.conditionalPut = command.input.IfNoneMatch === "*";
+      if (this.conditionalPut && this.object) {
+        throw Object.assign(new Error("already exists"), { name: "PreconditionFailed" });
       }
       this.object = new Uint8Array(bytes);
       this.metadata = command.input.Metadata;
@@ -78,6 +84,10 @@ class FakeS3Client {
       return { ETag: `etag-${command.input.PartNumber}` };
     }
     if (command instanceof CompleteMultipartUploadCommand) {
+      this.conditionalComplete = command.input.IfNoneMatch === "*";
+      if (this.conditionalComplete && this.object) {
+        throw Object.assign(new Error("already exists"), { name: "PreconditionFailed" });
+      }
       this.object = Buffer.concat(
         [...this.uploadedParts.entries()].sort(([left], [right]) => left - right).map(([, bytes]) => bytes),
       );
@@ -177,6 +187,34 @@ describe("application-routed asset storage", () => {
     expect(await Bun.file(join(root, asset.objectKey)).exists()).toBe(false);
   });
 
+  test("conditionally creates a filesystem object without replacing existing bytes", async () => {
+    const first = new TextEncoder().encode("first immutable value");
+    const second = new TextEncoder().encode("second immutable value");
+    const { root, asset, storage } = await fixture(first);
+
+    await storage.writeOnce(asset, new Blob([first]).stream());
+    await expect(storage.writeOnce({
+      ...asset,
+      sizeBytes: second.byteLength,
+      contentHash: createHash("sha256").update(second).digest("hex"),
+    }, new Blob([second]).stream())).rejects.toBeInstanceOf(ObjectAlreadyExistsError);
+
+    expect(await Bun.file(join(root, asset.objectKey)).bytes()).toEqual(first);
+  });
+
+  test("uses an S3 conditional request for single-part immutable objects", async () => {
+    const bytes = new TextEncoder().encode("conditional S3 body");
+    const { asset } = await fixture(bytes);
+    const client = new FakeS3Client();
+    const storage = new S3Storage(client as unknown as S3Client);
+
+    await storage.writeOnce(asset, new Blob([bytes]).stream());
+    expect(client.conditionalPut).toBe(true);
+    await expect(storage.writeOnce(asset, new Blob([bytes]).stream()))
+      .rejects.toBeInstanceOf(ObjectAlreadyExistsError);
+    expect(client.object).toEqual(bytes);
+  });
+
   test("commits generated filesystem objects only with a matching manifest", async () => {
     const bytes = generatedZipBytes(128);
     const { root, storage } = await fixture(bytes);
@@ -219,6 +257,21 @@ describe("application-routed asset storage", () => {
     expect(createHash("sha256").update(client.object!).digest("hex")).toBe(asset.contentHash);
     expect(client.metadata?.sha256).toBe(asset.contentHash);
     expect(await storage.verify(asset.objectKey, asset.sizeBytes, asset.contentHash)).toBe(true);
+  });
+
+  test("conditions multipart completion so a competing object cannot be replaced", async () => {
+    const bytes = new Uint8Array(8 * 1024 * 1024 + 97).fill(42);
+    const competing = new TextEncoder().encode("competing immutable object");
+    const { asset } = await fixture(bytes);
+    const client = new FakeS3Client();
+    const storage = new S3Storage(client as unknown as S3Client);
+    client.object = competing;
+
+    await expect(storage.writeOnce(asset, new Blob([bytes]).stream()))
+      .rejects.toBeInstanceOf(ObjectAlreadyExistsError);
+    expect(client.conditionalComplete).toBe(true);
+    expect(client.object).toEqual(competing);
+    expect(client.aborted).toBe(true);
   });
 
   test("writes the generated S3 manifest only after multipart completion", async () => {

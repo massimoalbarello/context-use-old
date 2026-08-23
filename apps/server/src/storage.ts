@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -43,6 +43,7 @@ export interface ObjectStorage {
 
 export interface ObjectStorageBackend extends ObjectStorage {
   exists(objectKey: string): Promise<boolean>;
+  writeOnce(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void>;
   writeGenerated(objectKey: string, body: ReadableStream<Uint8Array> | null): Promise<GeneratedObjectMetadata>;
   inspectGenerated(objectKey: string): Promise<GeneratedObjectMetadata | null>;
   deleteGenerated(objectKey: string): Promise<void>;
@@ -96,6 +97,13 @@ export class AssetNotFoundError extends Error {
   constructor(message = "Asset bytes are missing") {
     super(message);
     this.name = "AssetNotFoundError";
+  }
+}
+
+export class ObjectAlreadyExistsError extends Error {
+  constructor(message = "Immutable object already exists") {
+    super(message);
+    this.name = "ObjectAlreadyExistsError";
   }
 }
 
@@ -217,6 +225,18 @@ export class S3Storage implements ObjectStorageBackend {
   ) {}
 
   async write(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void> {
+    return this.writeVerified(asset, body, false);
+  }
+
+  async writeOnce(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void> {
+    return this.writeVerified(asset, body, true);
+  }
+
+  private async writeVerified(
+    asset: StoredAsset,
+    body: ReadableStream<Uint8Array> | null,
+    createOnly: boolean,
+  ): Promise<void> {
     const checksum = Buffer.from(asset.contentHash, "hex").toString("base64");
     try {
       if (asset.sizeBytes <= S3_MULTIPART_PART_SIZE) {
@@ -229,6 +249,7 @@ export class S3Storage implements ObjectStorageBackend {
           ContentType: asset.contentType,
           ContentLength: asset.sizeBytes,
           ChecksumSHA256: checksum,
+          ...(createOnly ? { IfNoneMatch: "*" } : {}),
           Metadata: { sha256: asset.contentHash },
           ServerSideEncryption: "aws:kms",
           SSEKMSKeyId: this.options.kmsKeyId,
@@ -278,6 +299,7 @@ export class S3Storage implements ObjectStorageBackend {
           Key: asset.objectKey,
           UploadId: uploadId,
           MultipartUpload: { Parts: parts },
+          ...(createOnly ? { IfNoneMatch: "*" } : {}),
         }));
         completed = true;
       } finally {
@@ -290,6 +312,13 @@ export class S3Storage implements ObjectStorageBackend {
         }
       }
     } catch (error) {
+      const status = (error as { $metadata?: { httpStatusCode?: number } } | null)
+        ?.$metadata?.httpStatusCode;
+      if (createOnly && error instanceof Error
+          && (["PreconditionFailed", "ConditionalRequestConflict"].includes(error.name)
+            || status === 409 || status === 412)) {
+        throw new ObjectAlreadyExistsError();
+      }
       if (error instanceof Error && error.name === "BadDigest") {
         throw new AssetIntegrityError("Asset checksum mismatch");
       }
@@ -487,6 +516,18 @@ export class FilesystemStorage implements ObjectStorageBackend {
   }
 
   async write(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void> {
+    return this.writeVerified(asset, body, false);
+  }
+
+  async writeOnce(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void> {
+    return this.writeVerified(asset, body, true);
+  }
+
+  private async writeVerified(
+    asset: StoredAsset,
+    body: ReadableStream<Uint8Array> | null,
+    createOnly: boolean,
+  ): Promise<void> {
     const path = this.path(asset.objectKey);
     const temporaryPath = `${path}.upload-${crypto.randomUUID()}`;
     await mkdir(resolve(path, ".."), { recursive: true });
@@ -500,11 +541,23 @@ export class FilesystemStorage implements ObjectStorageBackend {
           callback(null, chunk);
         },
       });
-      await pipeline(nodeStream(body), verifier, createWriteStream(temporaryPath, { flags: "wx" }));
+      await pipeline(nodeStream(body), verifier, createWriteStream(temporaryPath, { flags: "wx", mode: 0o600 }));
       if (size !== asset.sizeBytes || hash.digest("hex") !== asset.contentHash) {
         throw new AssetIntegrityError();
       }
-      await rename(temporaryPath, path);
+      if (createOnly) {
+        try {
+          await link(temporaryPath, path);
+        } catch (error) {
+          if (error instanceof Error && "code" in error && error.code === "EEXIST") {
+            throw new ObjectAlreadyExistsError();
+          }
+          throw error;
+        }
+        await unlink(temporaryPath);
+      } else {
+        await rename(temporaryPath, path);
+      }
     } catch (error) {
       await unlink(temporaryPath).catch(() => undefined);
       throw error;
