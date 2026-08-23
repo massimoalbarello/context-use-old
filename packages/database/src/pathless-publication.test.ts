@@ -212,6 +212,7 @@ describe("pathless publication storage boundary", () => {
       authorization: target,
     });
     expect(calls[0]!.sql).toContain("FROM claim_pathless_publication_artifact($1,$2)");
+    expect(calls[0]!.sql).toContain('body_size_bytes,body_content_hash,"authorization"');
     expect(calls[0]!.sql).not.toContain("representation_token");
     expect(calls[0]!.values).toEqual([intentId, claimToken]);
   });
@@ -425,6 +426,9 @@ describe("pathless publication adoption boundary", () => {
     expect(corpus.calls[2]!.sql).toContain("FROM seed_pathless_publication_entrypoint()");
     expect(storage.calls[0]!.sql).toContain(
       "FROM claim_pathless_publication_adoption_artifact($1,$2)",
+    );
+    expect(storage.calls[0]!.sql).toContain(
+      'body_size_bytes,body_content_hash,"authorization"',
     );
     expect(storage.calls[0]!.sql).not.toContain("representation_token");
     expect(storage.calls[1]!.values).toEqual([
