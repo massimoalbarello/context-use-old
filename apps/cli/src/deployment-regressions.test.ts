@@ -398,6 +398,17 @@ test("database initialization and CI provision the dedicated corpus role passwor
   expect(workflow).toContain("CORPUS_DATABASE_URL: postgres://context_use_corpus:test-corpus");
 });
 
+test("CI runs restore integration with PostgreSQL 17 dump and restore clients", async () => {
+  const workflow = await Bun.file(new URL("../../../.github/workflows/ci.yml", import.meta.url)).text();
+  expect(workflow).toContain('postgres:17-alpine pg_dump "$@"');
+  expect(workflow).toContain('postgres:17-alpine psql "$@"');
+  expect(workflow).toContain('pg_isready -h 127.0.0.1 -U postgres -d context_use_history');
+  expect(workflow).toContain('PATH="${client_bin}:${PATH}"');
+  expect(workflow.indexOf('PATH="${client_bin}:${PATH}"')).toBeLessThan(
+    workflow.indexOf("bun test packages/database/test/restore-ownership.integration.test.ts"),
+  );
+});
+
 test("restore verifies the backup, keeps traffic down on failure, migrates, and restarts on success", () => {
   const script = restoreCommands("backup-bucket", "postgres/2026-07-17T10-39-47Z.sql.gz").join("\n");
 
@@ -407,20 +418,23 @@ test("restore verifies the backup, keeps traffic down on failure, migrates, and 
   expect(script).toContain("--single-transaction");
   expect(script).toContain("backup fetch 'postgres/2026-07-17T10-39-47Z.sql.gz'");
   expect(script).not.toContain("aws s3 cp");
+  expect(script).toContain("stop backup");
   expect(script).toContain("stop caddy dashboard-edge app auth private-mcp");
   expect(script).toContain("trap restore_failed EXIT");
-  expect(script).toContain("up -d postgres aws-credential-broker backup");
-  expect(script).toContain("CREATE ROLE context_use_public_mcp NOLOGIN");
-  expect(script.match(/DROP ROLE IF EXISTS context_use_public_mcp/g)?.length).toBe(3);
-  expect(script).toContain("--profile migration run --rm migrate");
+  const failureHandler = script.slice(script.indexOf("restore_failed()"), script.indexOf("trap restore_failed EXIT"));
+  expect(failureHandler).toContain("up -d postgres aws-credential-broker");
+  expect(failureHandler).not.toContain("aws-credential-broker backup");
+  expect(script).toContain("CREATE ROLE context_use_public_mcp NOLOGIN NOSUPERUSER");
+  expect(script.match(/DROP ROLE IF EXISTS context_use_public_mcp/g)?.length).toBe(2);
+  expect(script).toContain("MIGRATOR_RECONCILE_RESTORE_OWNERSHIP=true");
   expect(script.indexOf("CREATE ROLE context_use_public_mcp NOLOGIN")).toBeLessThan(script.indexOf("backup fetch"));
-  expect(script.lastIndexOf("DROP ROLE IF EXISTS context_use_public_mcp")).toBeGreaterThan(script.indexOf("--profile migration run --rm migrate"));
+  expect(script.lastIndexOf("DROP ROLE IF EXISTS context_use_public_mcp")).toBeGreaterThan(script.indexOf("MIGRATOR_RECONCILE_RESTORE_OWNERSHIP=true"));
   const storage = "up -d --wait storage";
   const prepare = "--exit-code-from knowledge-prepare knowledge-prepare";
   const publicWeb = "up -d --wait public-web";
   const privateServices = "up -d --wait dashboard-edge app auth private-mcp confirmation";
   expect(script).toContain("--force-recreate --no-deps --abort-on-container-exit");
-  expect(script.indexOf("--profile migration run --rm migrate")).toBeLessThan(script.indexOf(storage));
+  expect(script.indexOf("MIGRATOR_RECONCILE_RESTORE_OWNERSHIP=true")).toBeLessThan(script.indexOf(storage));
   expect(script.indexOf(storage)).toBeLessThan(script.indexOf(prepare));
   expect(script.indexOf(prepare)).toBeLessThan(script.indexOf(publicWeb));
   expect(script.indexOf(publicWeb)).toBeLessThan(script.indexOf(privateServices));
@@ -608,13 +622,39 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   expect(deployScript).toContain("/data/context-use/.volume-id");
   expect(deployScript).not.toContain("AUTH_EDGE_TOKEN");
   expect(deployScript).not.toContain("PUBLIC_MCP");
-  expect(deployScript).toContain("CREATE ROLE context_use_public_mcp NOLOGIN");
+  expect(deployScript).toContain("CREATE ROLE context_use_public_mcp NOLOGIN NOSUPERUSER");
+  expect(deployScript).toContain("Existing context_use_public_mcp role is not an isolated NOLOGIN compatibility role");
+  expect(deployScript).toContain("dependency.dbid=(SELECT database.oid");
+  expect(deployScript.match(/dependency\.dbid=\(SELECT database\.oid/g)).toHaveLength(2);
+  expect(deployScript).toContain("DROP OWNED BY context_use_public_mcp; DROP ROLE IF EXISTS context_use_public_mcp");
+  expect(deployScript).not.toContain("DROP ROLE IF EXISTS context_use_public_mcp; CREATE ROLE");
   expect(deployScript).toContain("DROP ROLE IF EXISTS context_use_public_mcp");
   expect(deployScript).toContain("NANGO_PIPELINE_API_KEY=$(get_secret_if_present NANGO_PIPELINE_API_KEY)");
   expect(deployScript).toContain("DB_CORPUS_PASSWORD=$(get_secret DB_CORPUS_PASSWORD)");
   const finishServices = "up -d --remove-orphans \\\n  confirmation backup nango-backup";
   expect(deployScript.indexOf("CONTEXT_USE_RECOVERY_BACKUP_KEY")).toBeLessThan(deployScript.indexOf(finishServices));
-  expect(deployScript).toContain("psql --single-transaction -v ON_ERROR_STOP=1");
+  expect(deployScript).toContain("psql -X --single-transaction -v ON_ERROR_STOP=1");
+  expect(deployScript).toContain(
+    "DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION pg_database_owner",
+  );
+  expect(deployScript).toContain("GRANT USAGE ON SCHEMA public TO PUBLIC");
+  expect(deployScript).toContain("context_use_restore_guard_required");
+  expect(deployScript).toContain("restore_contract_fingerprint()");
+  expect(deployScript).toContain("reset_default_acls_for_restore()");
+  expect(deployScript).toContain("captured.fingerprint=context_use_deployment_internal.restore_contract_fingerprint()");
+  expect(deployScript).toContain("-f -");
+  const captureRestoreOwners = "-e MIGRATOR_PREPARE_RESTORE_OWNERSHIP=true migrate";
+  const restoreBackup = 'backup fetch "${CONTEXT_USE_RECOVERY_BACKUP_KEY}"';
+  const reconcileRestoreOwners = "-e MIGRATOR_RECONCILE_RESTORE_OWNERSHIP=true migrate";
+  expect(deployScript.indexOf(captureRestoreOwners)).toBeLessThan(deployScript.indexOf(restoreBackup));
+  expect(deployScript.indexOf(restoreBackup)).toBeLessThan(
+    deployScript.indexOf(reconcileRestoreOwners, deployScript.indexOf(restoreBackup)),
+  );
+  expect(backupScript).toContain("--exclude-schema=context_use_deployment_internal");
+  expect(backupScript).toContain("Refusing to back up a database with a pending restore ownership contract");
+  expect(backupScript).toContain("to_regnamespace('context_use_deployment_internal') IS NOT NULL");
+  expect(backupScript).toContain("reject_pending_restore=false");
+  expect(backupScript.indexOf("restore_pending=")).toBeLessThan(backupScript.indexOf("pg_dump --format=plain"));
   // Caddy serves the maintenance response for the whole window, so a release
   // stops its upstreams instead. Stopping Caddy would make the window a refused
   // connection again, and leaving the upstreams up would run the previous

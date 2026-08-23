@@ -10,11 +10,18 @@ case "${BACKUP_KIND:-context-use}" in
     backup_prefix=postgres
     backup_format=context-use-postgres-v1
     backup_basename=context-use
+    # A pending restore carries the release's exact privileged-object owners in
+    # this administrator-only schema. It must survive --clean restores and is
+    # deployment state rather than portable application data.
+    backup_exclusions=(--exclude-schema=context_use_deployment_internal)
+    reject_pending_restore=true
     ;;
   nango)
     backup_prefix=nango-postgres
     backup_format=context-use-nango-postgres-v1
     backup_basename=nango
+    backup_exclusions=()
+    reject_pending_restore=false
     ;;
   *)
     echo "Invalid backup kind" >&2
@@ -23,11 +30,19 @@ case "${BACKUP_KIND:-context-use}" in
 esac
 
 backup_once() {
+  if [ "${reject_pending_restore}" = true ]; then
+    restore_pending="$(psql -X -At -v ON_ERROR_STOP=1 \
+      -c "SELECT pg_catalog.to_regnamespace('context_use_deployment_internal') IS NOT NULL")"
+    if [ "${restore_pending}" != f ]; then
+      echo "Refusing to back up a database with a pending restore ownership contract" >&2
+      exit 1
+    fi
+  fi
   timestamp="$(date -u +%Y-%m-%dT%H-%M-%S-%NZ)"
   file="/tmp/${backup_basename}-${timestamp}.sql.gz"
   metadata="/tmp/${backup_basename}-${timestamp}.json"
   key="${backup_prefix}/${timestamp}.sql.gz"
-  pg_dump --format=plain --clean --if-exists --no-owner | gzip -9 > "${file}"
+  pg_dump --format=plain --clean --if-exists --no-owner "${backup_exclusions[@]}" | gzip -9 > "${file}"
   test -s "${file}"
   gzip -t "${file}"
   sha256="$(sha256sum "${file}" | cut -d ' ' -f 1)"

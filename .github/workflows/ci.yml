@@ -110,6 +110,39 @@ jobs:
           bun run db:initialize
           bun run db:test mark
           bun test apps packages
+          history_container=context-use-restore-history
+          trap 'docker rm -f "${history_container}" >/dev/null 2>&1 || true' EXIT
+          docker run --detach --name "${history_container}" \
+            -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=context_use_history \
+            -p 127.0.0.1:55433:5432 postgres:17-alpine
+          # Probe TCP so the entrypoint's temporary Unix-socket server cannot
+          # make us race the shutdown before the final postmaster starts.
+          for _ in $(seq 1 30); do
+            docker exec "${history_container}" pg_isready -h 127.0.0.1 -U postgres -d context_use_history >/dev/null 2>&1 && break
+            sleep 1
+          done
+          docker exec "${history_container}" pg_isready -h 127.0.0.1 -U postgres -d context_use_history >/dev/null
+          MIGRATOR_DATABASE_URL=postgres://postgres:postgres@localhost:55433/context_use_history \
+            MIGRATOR_MAX_VERSION=027_pathless_document_contract.sql \
+            bun packages/database/src/migrate.ts
+          # ubuntu-24.04 ships PostgreSQL 16 clients, which cannot dump the
+          # PostgreSQL 17 fixtures. Route only this integration's client calls
+          # through the already-pulled, major-version-matched container image.
+          client_bin="${RUNNER_TEMP}/context-use-postgres-17-client"
+          mkdir -p "${client_bin}"
+          printf '%s\n' '#!/usr/bin/env bash' \
+            'exec docker run --rm -i --network host postgres:17-alpine pg_dump "$@"' \
+            > "${client_bin}/pg_dump"
+          printf '%s\n' '#!/usr/bin/env bash' \
+            'exec docker run --rm -i --network host postgres:17-alpine psql "$@"' \
+            > "${client_bin}/psql"
+          chmod 0755 "${client_bin}/pg_dump" "${client_bin}/psql"
+          PATH="${client_bin}:${PATH}" \
+            TEST_RESTORE_OWNERSHIP_DATABASE_URL="${TEST_DATABASE_URL}" \
+            TEST_RESTORE_OWNERSHIP_HISTORICAL_DATABASE_URL=postgres://postgres:postgres@localhost:55433/context_use_history \
+            bun test packages/database/test/restore-ownership.integration.test.ts
+          docker rm -f "${history_container}"
+          trap - EXIT
       - run: bun --cwd apps/web build
       - name: Validate Terraform
         run: |
