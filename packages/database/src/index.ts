@@ -37,7 +37,9 @@ export {
   type KnowledgeRevisionContractProvenance,
 } from "./knowledge-documents.ts";
 export {
+  AssetArchiveConflictError,
   DocumentAssetRepository,
+  type AssetArchiveConflictReason,
   type DocumentAssetCreateResult,
   type DocumentAsset,
   type DocumentAssetStorageObject,
@@ -141,12 +143,6 @@ export {
   type KnowledgePageChangeBatch,
   type KnowledgePageChangeKind,
 } from "./pages.ts";
-export {
-  AssetArchiveConflictError,
-  AssetRepository,
-  type AssetArchiveConflictReason,
-  type NewAsset,
-} from "./assets.ts";
 export {
   KnowledgeExportRepository,
   type KnowledgeExportAsset,

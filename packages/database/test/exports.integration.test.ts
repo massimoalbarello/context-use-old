@@ -2,8 +2,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { Pool } from "pg";
 import {
-  AssetRepository,
   ConfirmationRepository,
+  DocumentAssetRepository,
   KnowledgeExportRepository,
   PageRepository,
 } from "../src/index.ts";
@@ -17,12 +17,13 @@ describeDatabase("passkey-bound current knowledge exports", () => {
   const pool = new Pool({ connectionString: databaseUrl, max: 1 });
   const bodies = new MemoryMarkdownStore();
   const pages = new PageRepository(pool, bodies);
-  const assets = new AssetRepository(pool);
+  const assets = new DocumentAssetRepository(pool);
   const exports = new KnowledgeExportRepository(pool, bodies);
   const confirmations = new ConfirmationRepository(pool);
   const actor = { kind: "dashboard" as const, subject: "knowledge-export-test" };
   let fixtureRoot = "";
   const fixtureIntentIds: string[] = [];
+  const fixtureAssetIds: string[] = [];
   let createdOwner = false;
 
   beforeAll(async () => {
@@ -75,6 +76,14 @@ describeDatabase("passkey-bound current knowledge exports", () => {
         await pool.query("DELETE FROM assets WHERE current_path LIKE $1", [`${fixtureRoot}/%`]);
         await pool.query("DELETE FROM knowledge_directories WHERE current_path=$1", [fixtureRoot]);
       }
+      if (fixtureAssetIds.length) {
+        await pool.query("DELETE FROM assets WHERE id=ANY($1::uuid[])", [fixtureAssetIds]);
+        await pool.query("DELETE FROM hypermedia_documents WHERE id=ANY($1::uuid[])", [fixtureAssetIds]);
+        await pool.query(
+          "DELETE FROM publication_target_generations WHERE target_document_id=ANY($1::uuid[])",
+          [fixtureAssetIds],
+        );
+      }
       await pool.query("DELETE FROM passkey WHERE id='export-test-passkey'");
       if (createdOwner) await pool.query("DELETE FROM \"user\" WHERE id='context-use-owner'");
       await pool.query("COMMIT");
@@ -115,12 +124,12 @@ describeDatabase("passkey-bound current knowledge exports", () => {
       commit_message: "Archive export fixture",
     }, actor);
     const asset = await assets.create({
-      currentPath: `${fixtureRoot}/asset`,
       filename: "friendly.pdf",
-      contentType: "application/pdf",
-      sizeBytes: 123,
-      contentHash: "a".repeat(64),
+      content_type: "application/pdf",
+      size_bytes: 123,
+      sha256: "a".repeat(64),
     });
+    fixtureAssetIds.push(asset.document.document_id);
 
     const principal = { ownerUserId: "context-use-owner", sessionId: `session-${suffix}` };
     const intent = await exports.createIntent(principal);
@@ -153,9 +162,8 @@ describeDatabase("passkey-bound current knowledge exports", () => {
     expect(snapshot.pages.find(({ document_id }) => document_id === active.id)?.summary)
       .toBe("The active page included in an export.");
     expect(snapshot.pages.some(({ document_id }) => document_id === archived.id)).toBe(false);
-    // The stored name follows the path leaf, so the export carries asset.pdf, not friendly.pdf.
-    expect(snapshot.assets.find(({ document_id }) => document_id === asset.id)).toMatchObject({
-      filename: "asset.pdf",
+    expect(snapshot.assets.find(({ document_id }) => document_id === asset.document.document_id)).toMatchObject({
+      filename: "friendly.pdf",
     });
     expect(snapshot.links.every((link) => !Object.hasOwn(link, "path"))).toBe(true);
     expect(await exports.getIntent(intent.id)).toMatchObject({ download_started_at: expect.any(Date) });

@@ -4,7 +4,17 @@ import type {
   ArchiveDocumentAssetInput,
   CreateDocumentAssetInput,
 } from "@context-use/shared";
-import { AssetArchiveConflictError } from "./assets.ts";
+
+export type AssetArchiveConflictReason = "published" | "referenced";
+
+export class AssetArchiveConflictError extends Error {
+  constructor(readonly reason: AssetArchiveConflictReason) {
+    super(reason === "published"
+      ? "Published assets must be explicitly unpublished before they can be archived"
+      : "Assets referenced by an active page cannot be archived");
+    this.name = "AssetArchiveConflictError";
+  }
+}
 
 export type DocumentAsset = {
   document_id: string;
