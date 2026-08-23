@@ -127,6 +127,11 @@ export type PathlessPublicationAdoptionCandidate = {
   adoption_id: string | null;
 };
 
+export type HypermediaCutoverBlocker = {
+  blocker_code: string;
+  affected_count: number;
+};
+
 type PathlessPublicationAdoptionBase = {
   id: string;
   source_document_id: string;
@@ -482,6 +487,24 @@ export class PathlessPublicationAdoptionRepository {
     );
     const row = requireRow(result.rows[0], "Seeded pathless publication entrypoint");
     return { public_id: row.public_id, configured: row.configured, active: row.active };
+  }
+
+  async cutoverBlockers(): Promise<HypermediaCutoverBlocker[]> {
+    const result = await this.corpusPool.query<{
+      blocker_code: string;
+      affected_count: number | string;
+    }>(
+      `SELECT blocker_code,affected_count
+       FROM list_hypermedia_cutover_blockers()`,
+    );
+    return result.rows.map((row) => ({
+      blocker_code: row.blocker_code,
+      affected_count: Number(row.affected_count),
+    }));
+  }
+
+  async assertCutoverReady(): Promise<void> {
+    await this.corpusPool.query("SELECT assert_hypermedia_cutover_ready()");
   }
 }
 
