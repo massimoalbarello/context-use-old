@@ -53,16 +53,22 @@ export type McpContext = {
   sessionId: string;
 };
 
-const SERVER_INSTRUCTIONS = "Use Context Use proactively when the user states a concrete "
+const BASE_SERVER_INSTRUCTIONS = "Use Context Use proactively when the user states a concrete "
   + "durable fact, decision, correction, relationship, plan, or completed activity about "
   + "their life or work, even if they do not explicitly say “remember.” Before the first "
   + "knowledge mutation in an authenticated session, call begin_knowledge_session, read its "
-  + "configured global guide, and reuse its receipt across every target in that session. "
+  + "configured global guide, and reuse its receipt across every target in that session. ";
+
+const PATHLESS_SERVER_INSTRUCTIONS = BASE_SERVER_INSTRUCTIONS
+  + "Use the stable-ID document tools (search_documents, read_document, create_document, "
+  + "update_document, archive_document, create_document_asset_upload, archive_document_asset). "
+  + "Navigate knowledge through search results and document hyperlinks, never filesystem paths.";
+
+const LEGACY_SERVER_INSTRUCTIONS = BASE_SERVER_INSTRUCTIONS
   + "prepare_change remains a transitional alias for deployed workflows, but it loads the same "
   + "single global guide and does not apply path-scoped instructions. Prefer the stable-ID "
-  + "document tools (search_documents, read_document, create_document, update_document, "
-  + "archive_document, create_document_asset_upload, archive_document_asset). Filesystem "
-  + "page, asset and directory tools are transitional compatibility surfaces.";
+  + "document tools when available; filesystem page, asset and directory tools are retained "
+  + "only for callers without the pathless capability.";
 
 const MCP_BACKLINK_LIMIT = 100;
 
@@ -387,7 +393,7 @@ export async function createMcpServer(
     : "Available reusable skills: none.";
   const server = new McpServer(
     { name: "context-use", version: "0.1.79" },
-    { instructions: SERVER_INSTRUCTIONS },
+    { instructions: pathless ? PATHLESS_SERVER_INSTRUCTIONS : LEGACY_SERVER_INSTRUCTIONS },
   );
   const actor = { kind: "mcp" as const, subject: context.clientId };
 
@@ -726,7 +732,8 @@ export async function createMcpServer(
     });
   }
 
-  server.registerTool("read_directory", {
+  if (!pathless) {
+    server.registerTool("read_directory", {
     description: "Read one directory's metadata and generated index of immediate child directories and active pages, plus the assets whose own paths sit directly inside it. Use browse_directory for a recursive subtree. The empty path reads the root.",
     inputSchema: z.object({
       path: DirectoryPath.optional(),
@@ -830,7 +837,7 @@ export async function createMcpServer(
     }
   });
 
-  server.registerTool("read_page", {
+    server.registerTool("read_page", {
     description: "Read one current active knowledge page by semantic path or stable document UUID. Use search_pages when the target is not yet known. The hypermedia block exposes indexed outbound document IDs and bounded live backlinks. links_indexed false means this current body still needs indexing; backlinks_has_more only reports pagination; backlinks_complete false means an active current page or record revision remains unindexed, so undiscovered backlinks may still exist. The publication block reports whether the owner published this page, at which public path and version, and whether later private revisions are waiting behind that publication.",
     inputSchema: z.object({
       page_id: z.string().uuid().optional(),
@@ -841,13 +848,14 @@ export async function createMcpServer(
       }
     }),
     annotations: { readOnlyHint: true },
-  }, async ({ page_id, path }) => {
+    }, async ({ page_id, path }) => {
     const page = page_id ? await pages.get(page_id) : await pages.getByPath(path!);
     return jsonContent(page ? {
       ...withPublication(page),
       hypermedia: await hypermedia(page.id, page.current_version_id),
     } : null);
-  });
+    });
+  }
 
   server.registerTool("begin_knowledge_session", {
     description: "Call once before the first knowledge mutation in each authenticated MCP session. Read the exact configured global hypermedia-maintenance guide returned here, then reuse its knowledge_session_receipt across stateless calls and every target. Path-scoped AGENTS.md pages are ordinary knowledge and do not add instructions. Call again only after context loss, a new authenticated session, or a stale-receipt response. Never store receipts in knowledge.",
@@ -883,7 +891,7 @@ export async function createMcpServer(
     });
   });
 
-  server.registerTool("prepare_change", {
+  if (!pathless) server.registerTool("prepare_change", {
     description: "Transitional alias retained for deployed workflows. It ignores target scope, loads only the exact configured global guide by document and current revision, and returns a session-bound guidance_receipt valid across targets until that guide changes. With cached_guidance_receipt, an unchanged global guide says to reuse its body from the previous prepare_change in this authenticated session; omit it to reload the guide after context loss or compaction. Never store receipts in knowledge.",
     inputSchema: z.object({
       target_path: DirectoryPath,
@@ -927,10 +935,20 @@ export async function createMcpServer(
   }, async ({ name }) => {
     if (name === "agents") return jsonContent(null);
     const skill = await pages.getByPath(`skills/${name}`);
-    return jsonContent(skill?.title === "SKILL.md" ? skill : null);
+    if (skill?.title !== "SKILL.md") return jsonContent(null);
+    return jsonContent({
+      document_id: skill.id,
+      current_revision_id: skill.current_version_id,
+      revision_number: skill.version_number,
+      title: skill.title,
+      summary: skill.summary,
+      body_markdown: skill.body_markdown,
+      reference: `context-use://document/${skill.id}`,
+    });
   });
 
-  server.registerTool("search_pages", {
+  if (!pathless) {
+    server.registerTool("search_pages", {
     description: "Search current knowledge pages by full text. Returns ranked metadata only; use read_page to load a selected body.",
     inputSchema: z.object({ query: z.string().min(1).max(500), limit: z.number().int().min(1).max(100).default(30) }).strict(),
     annotations: { readOnlyHint: true },
@@ -1185,7 +1203,7 @@ export async function createMcpServer(
     });
   });
 
-  server.registerTool("archive_asset", {
+    server.registerTool("archive_asset", {
     description: "Archive one private asset while retaining its immutable stored bytes. Read it first with read_asset. Published assets and assets referenced by an active page are rejected. Requires a current knowledge_session_receipt from begin_knowledge_session; transitional guidance_receipt is also accepted.",
     inputSchema: archiveAssetSchema.extend(mutationReceiptSchemas).strict(),
     annotations: { destructiveHint: true },
@@ -1200,7 +1218,8 @@ export async function createMcpServer(
       return guidanceRequired(asset.current_path, "archive_asset");
     }
     return jsonContent(await assets.archive(asset_id));
-  });
+    });
+  }
 
   return server;
 }

@@ -165,10 +165,9 @@ describe("MCP knowledge tools", () => {
         + "in an authenticated session, call begin_knowledge_session, read its configured global "
         + "guide, and reuse its receipt across every target in that session. prepare_change remains "
         + "a transitional alias for deployed workflows, but it loads the same single global guide "
-        + "and does not apply path-scoped instructions. Prefer the stable-ID document tools "
-        + "(search_documents, read_document, create_document, update_document, archive_document, "
-        + "create_document_asset_upload, archive_document_asset). Filesystem page, asset and "
-        + "directory tools are transitional compatibility surfaces.",
+        + "and does not apply path-scoped instructions. Prefer the stable-ID document tools when "
+        + "available; filesystem page, asset and directory tools are retained only for callers "
+        + "without the pathless capability.",
     );
 
     const listed = await mcpRequest(serverWith(), {
@@ -2010,7 +2009,9 @@ describe("MCP knowledge tools", () => {
       async getByPath(path: string) {
         expect(path).toBe("skills/job-search-review");
         return {
+          id: "00000000-0000-4000-8000-000000000001",
           current_path: path,
+          current_version_id: "00000000-0000-4000-8000-000000000002",
           version_number: 2,
           title: "SKILL.md",
           summary: "Evaluate roles against the owner's job-search criteria.",
@@ -2036,9 +2037,10 @@ describe("MCP knowledge tools", () => {
       params: { name: "read_skill", arguments: { name: "job-search-review" } },
     });
     expect(JSON.parse(loaded.result?.content?.[0]?.text ?? "null")).toMatchObject({
-      current_path: "skills/job-search-review",
+      document_id: "00000000-0000-4000-8000-000000000001",
       title: "SKILL.md",
     });
+    expect(loaded.result?.content?.[0]?.text).not.toContain("skills/job-search-review");
   });
 
   test("exposes stable-ID document discovery and mutation without path inputs", async () => {
@@ -2109,6 +2111,27 @@ describe("MCP knowledge tools", () => {
       "archive_document",
       "create_document_asset_upload",
       "archive_document_asset",
+    ]));
+    expect(names).not.toEqual(expect.arrayContaining([
+      "read_directory",
+      "browse_directory",
+      "create_directory",
+      "update_directory",
+      "delete_directory",
+      "read_page",
+      "search_pages",
+      "list_page_changes",
+      "compare_page_versions",
+      "list_page_versions",
+      "read_page_version",
+      "create_page",
+      "update_page",
+      "archive_page",
+      "list_assets",
+      "read_asset",
+      "create_asset_upload",
+      "archive_asset",
+      "prepare_change",
     ]));
     for (const name of ["create_document", "update_document", "create_document_asset_upload"]) {
       expect(tools.result?.tools?.find((tool) => tool.name === name)?.inputSchema?.properties)
