@@ -6,6 +6,7 @@ import {
   isolatedCorpusDatabaseUrl,
 } from "./corpus-migration-command.ts";
 import { CorpusMigrationBlockedError } from "./corpus-migration.ts";
+import { PathlessPublicationAdoptionError } from "./pathless-publication-adoption.ts";
 
 describe("knowledge preparation command", () => {
   test("root bootstrap uses the isolated preparation entrypoint", async () => {
@@ -74,6 +75,26 @@ describe("knowledge preparation command", () => {
         item_id: "11111111-1111-4111-8111-111111111111",
         detail: "Required operational document conflicts with the default contract",
       }],
+    });
+  });
+
+  test("reports an exact adoption checkpoint without leaking storage evidence", () => {
+    const sourceDocumentId = "11111111-1111-4111-8111-111111111111";
+    const adoptionId = "22222222-2222-4222-8222-222222222222";
+    const cause = Object.assign(new Error("object key must not escape"), { code: "55000" });
+    expect(knowledgePreparationFailure(new PathlessPublicationAdoptionError({
+      operation: "materialize",
+      adoptionKind: "directory_hub",
+      sourceDocumentId,
+      adoptionId,
+      cause,
+    }))).toEqual({
+      event: "pathless_publication_adoption_failed",
+      operation: "materialize",
+      adoption_kind: "directory_hub",
+      source_document_id: sourceDocumentId,
+      adoption_id: adoptionId,
+      database_code: "55000",
     });
   });
 });

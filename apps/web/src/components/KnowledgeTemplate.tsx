@@ -16,6 +16,11 @@ function actionSymbol(action: TemplateAction): string {
   return "~";
 }
 
+function actionDetail(action: TemplateAction): string {
+  return action.detail.replace(/\bdirector(?:y|ies)\b/gi, (value) =>
+    value.toLowerCase() === "directories" ? "collections" : "collection");
+}
+
 export function TemplatePlan({ result }: { result: TemplateResult }) {
   const summary = summarizeTemplateResult(result);
   const visibleActions = result.actions.filter(({ action }) => action !== "unchanged");
@@ -33,7 +38,7 @@ export function TemplatePlan({ result }: { result: TemplateResult }) {
     <ul className="template-actions">
       {visibleActions.map((action, index) => <li className={action.action === "conflict" ? "conflict" : action.replaces_local ? "replacement" : ""} key={`${action.action}:${action.path}:${index}`}>
         <span className="template-action-symbol" aria-hidden="true">{actionSymbol(action)}</span>
-        <div><code>{action.path || "/"}</code><span>{action.detail}</span></div>
+        <div><span>{actionDetail(action)}</span></div>
       </li>)}
     </ul>
   </div>;
@@ -146,7 +151,7 @@ export function KnowledgeTemplateSettings({
       <KnowledgePreparationScopeNotice scope={plan.preparation_scope} />
       {(summary!.conflicts > 0 || forceTemplate) && <label className="template-force-option">
         <input type="checkbox" checked={forceTemplate} disabled={checking || applying} onChange={(event) => void changeForceTemplate(event.currentTarget.checked)} />
-        <span><strong>Replace eligible template-owned customizations</strong><small>Preview and overwrite eligible template-owned directory metadata and managed pages. Owner-authored guides and control documents, published or archived content, and create-only state remain protected.</small></span>
+        <span><strong>Replace eligible template-owned customizations</strong><small>Preview and overwrite eligible template-owned collection metadata and managed pages. Owner-authored guides and control documents, published or archived content, and create-only state remain protected.</small></span>
       </label>}
       <div className="template-controls">
         {canApplyTemplateChanges(summary!, forceTemplate) && <button className={forceTemplate ? "danger" : "primary"} disabled={checking || applying || !planMatchesChoice} onClick={() => { setApplyError(""); setConfirming(true); }}>

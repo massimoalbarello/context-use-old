@@ -1,19 +1,3 @@
-export type Page = {
-  id: string;
-  current_path: string;
-  current_version_id: string;
-  published_version_id: string | null;
-  public_path: string | null;
-  archived_at: string | null;
-  version_number: number;
-  title: string;
-  summary: string;
-  body_markdown: string;
-  created_at: string;
-  updated_at: string;
-  rendered_html?: string;
-};
-
 export type KnowledgeDocumentPage = {
   id: string;
   current_version_id: string;
@@ -32,19 +16,6 @@ export type KnowledgeDocumentPage = {
   created_at: string;
   updated_at: string;
 };
-
-export type PageMetadata = Pick<
-  Page,
-  | "id"
-  | "current_path"
-  | "current_version_id"
-  | "published_version_id"
-  | "archived_at"
-  | "version_number"
-  | "title"
-  | "summary"
-  | "updated_at"
->;
 
 export type Version = {
   id: string;
@@ -103,40 +74,8 @@ export type KnowledgePageChangeBatch = {
   has_more: boolean;
 };
 
-export type Directory = {
-  id: string;
-  current_path: string;
-  version_number: number;
-  title: string;
-  summary: string;
-  created_at: string;
-  updated_at: string;
-};
-
-export type DirectoryIndexEntry = {
-  kind: "directory" | "page";
-  id: string;
-  path: string;
-  title: string;
-  summary: string;
-  default_page_id: string | null;
-};
-
-export type DirectoryIndex = Directory & {
-  guide: {
-    id: string;
-    path: string;
-    version_number: number;
-    title: string;
-    summary: string;
-  } | null;
-  children: DirectoryIndexEntry[];
-};
-
 export type Asset = {
   id: string;
-  current_path: string;
-  public_path: string | null;
   public_id: string | null;
   pathless_published: boolean;
   filename: string;

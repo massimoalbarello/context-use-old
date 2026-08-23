@@ -1189,48 +1189,6 @@ button:disabled {
 .catalog-document-card dd { margin: 5px 0 0; font-size: 12px; }
 .catalog-document-card > p { color: var(--muted); font-size: 12px; }
 
-.directory-edit-grid { min-height: calc(100vh - 170px); }
-
-.directory-index {
-  width: min(780px, 100%);
-  margin: 0 auto;
-  padding: 12px 42px 90px;
-  color: #36332f;
-  font: 17px/1.72 ui-serif, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
-}
-
-.directory-index ol {
-  margin: 0;
-  padding-left: 2.25rem;
-}
-
-.directory-index li { padding-left: .25rem; }
-
-.directory-index button {
-  min-height: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: #777168;
-  font: italic 1em/1.72 ui-serif, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
-  text-decoration: underline dotted #aaa59c;
-  text-underline-offset: 4px;
-}
-
-.directory-index button:hover {
-  border-color: transparent;
-  background: transparent;
-  color: var(--accent-hover);
-}
-
-.directory-index li > span { margin-left: .35em; }
-
-.directory-empty {
-  color: var(--muted);
-  font-style: italic;
-}
-
 .history-list {
   width: min(930px, 100%);
   margin: 0 auto;
@@ -3219,7 +3177,6 @@ button:disabled {
   .markdown-editor,
   .save-bar,
   .rendered,
-  .directory-index,
   .history-list {
     padding-left: 22px;
     padding-right: 22px;
@@ -3309,7 +3266,6 @@ button:disabled {
   .markdown-editor,
   .save-bar,
   .rendered,
-  .directory-index,
   .history-list {
     padding-left: 18px;
     padding-right: 18px;

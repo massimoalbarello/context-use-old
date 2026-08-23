@@ -121,6 +121,12 @@ export type PathlessPublicationAdoptionKind =
 
 export type PathlessPublicationAdoptionPhase = "planned" | "applied" | "superseded";
 
+export type PathlessPublicationAdoptionCandidate = {
+  adoption_kind: PathlessPublicationAdoptionKind;
+  source_document_id: string;
+  adoption_id: string | null;
+};
+
 type PathlessPublicationAdoptionBase = {
   id: string;
   source_document_id: string;
@@ -433,6 +439,18 @@ export class PathlessPublicationRepository {
 
 export class PathlessPublicationAdoptionRepository {
   constructor(private readonly corpusPool: Pool) {}
+
+  async candidates(): Promise<PathlessPublicationAdoptionCandidate[]> {
+    const result = await this.corpusPool.query<PathlessPublicationAdoptionCandidate>(
+      `SELECT adoption_kind,source_document_id,adoption_id
+       FROM list_pathless_publication_adoption_candidates()`,
+    );
+    return result.rows.map((row) => ({
+      adoption_kind: row.adoption_kind,
+      source_document_id: row.source_document_id,
+      adoption_id: row.adoption_id,
+    }));
+  }
 
   /** Reuse `adoptionId` after a lost response to replay the same immutable plan. */
   async begin(

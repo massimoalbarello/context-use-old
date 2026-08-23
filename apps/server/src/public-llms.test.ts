@@ -43,7 +43,7 @@ describe("public LLM context", () => {
       "",
       "## Discovery",
       "",
-      "- [Human-readable knowledge index](https://massimo.example/p/): Browse every published branch.",
+      "- [Public entrypoint](https://massimo.example/p/): Open the configured starting document.",
       "- [XML sitemap](https://massimo.example/sitemap.xml): Canonical HTML URLs for every published page.",
       "",
       "## Complete public context",
@@ -68,7 +68,7 @@ describe("public LLM context", () => {
       "",
       "- Canonical URL: [https://massimo.example/p/about/intro](https://massimo.example/p/about/intro)",
       "- Site index: [https://massimo.example/llms.txt](https://massimo.example/llms.txt)",
-      "- Knowledge index: [https://massimo.example/p/](https://massimo.example/p/)",
+      "- Public entrypoint: [https://massimo.example/p/](https://massimo.example/p/)",
       "- Last edited: 2026-07-27T10:30:00.000Z",
       "",
     ].join("\n"));
@@ -87,6 +87,8 @@ describe("public LLM context", () => {
     expect(content).toContain("[the index](https://massimo.example/p/about/)");
     expect(content).toContain("![Public photo](https://assets.massimo.example/a/about/photo){size=small}");
     expect(content).toContain("[External](https://example.com/story)");
+    expect(content).toContain("- Public ID: `about/intro`");
+    expect(content).not.toContain("Public path:");
     expect(content).not.toContain("\r");
     expect(content.endsWith("\n")).toBe(true);
   });
