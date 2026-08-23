@@ -369,6 +369,32 @@ test("data-volume policy initializes only a first-install volume and fails close
   expect(await dataVolumePolicyAction("ext4", true, false)).toBe("reject-filesystem");
 });
 
+test("development compose confines the corpus credential to the audited one-shot", async () => {
+  const source = await Bun.file(new URL("../../../compose.dev.yml", import.meta.url)).text();
+  const parsed = Bun.YAML.parse(source) as {
+    services: Record<string, { environment?: Record<string, string> }>;
+  };
+  expect(parsed.services.migrate?.environment?.DB_CORPUS_PASSWORD).toBe("development-only");
+  expect(parsed.services["knowledge-prepare"]?.environment?.CORPUS_DATABASE_URL)
+    .toContain("context_use_corpus");
+  for (const [name, service] of Object.entries(parsed.services)) {
+    if (name === "knowledge-prepare") continue;
+    expect(service.environment?.CORPUS_DATABASE_URL).toBeUndefined();
+  }
+});
+
+test("database initialization and CI provision the dedicated corpus role password", async () => {
+  const [migrator, testDatabase, workflow] = await Promise.all([
+    Bun.file(new URL("../../../packages/database/src/migrate.ts", import.meta.url)).text(),
+    Bun.file(new URL("../../../scripts/test-database.ts", import.meta.url)).text(),
+    Bun.file(new URL("../../../.github/workflows/ci.yml", import.meta.url)).text(),
+  ]);
+  expect(migrator).toContain("context_use_corpus: process.env.DB_CORPUS_PASSWORD");
+  expect(testDatabase).toContain('DB_CORPUS_PASSWORD: "test-only"');
+  expect(workflow).toContain("DB_CORPUS_PASSWORD: test-corpus");
+  expect(workflow).toContain("CORPUS_DATABASE_URL: postgres://context_use_corpus:test-corpus");
+});
+
 test("restore verifies the backup, keeps traffic down on failure, migrates, and restarts on success", () => {
   const script = restoreCommands("backup-bucket", "postgres/2026-07-17T10-39-47Z.sql.gz").join("\n");
 
@@ -386,7 +412,20 @@ test("restore verifies the backup, keeps traffic down on failure, migrates, and 
   expect(script).toContain("--profile migration run --rm migrate");
   expect(script.indexOf("CREATE ROLE context_use_public_mcp NOLOGIN")).toBeLessThan(script.indexOf("backup fetch"));
   expect(script.lastIndexOf("DROP ROLE IF EXISTS context_use_public_mcp")).toBeGreaterThan(script.indexOf("--profile migration run --rm migrate"));
-  expect(script).toContain("up -d --remove-orphans");
+  const storage = "up -d --wait storage";
+  const prepare = "--exit-code-from knowledge-prepare knowledge-prepare";
+  const publicWeb = "up -d --wait public-web";
+  const privateServices = "up -d --wait dashboard-edge app auth private-mcp confirmation";
+  expect(script).toContain("--force-recreate --no-deps --abort-on-container-exit");
+  expect(script.indexOf("--profile migration run --rm migrate")).toBeLessThan(script.indexOf(storage));
+  expect(script.indexOf(storage)).toBeLessThan(script.indexOf(prepare));
+  expect(script.indexOf(prepare)).toBeLessThan(script.indexOf(publicWeb));
+  expect(script.indexOf(publicWeb)).toBeLessThan(script.indexOf(privateServices));
+  const finalServices = "up -d --remove-orphans caddy backup";
+  expect(script).toContain(finalServices);
+  expect(script.indexOf(privateServices)).toBeLessThan(script.indexOf(finalServices));
+  expect(script.match(/knowledge-prepare/g)?.length).toBe(2);
+  expect(script).not.toContain("up -d --remove-orphans\n");
   expect(script).not.toContain("export POSTGRES_PASSWORD");
 });
 
@@ -569,7 +608,9 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   expect(deployScript).toContain("CREATE ROLE context_use_public_mcp NOLOGIN");
   expect(deployScript).toContain("DROP ROLE IF EXISTS context_use_public_mcp");
   expect(deployScript).toContain("NANGO_PIPELINE_API_KEY=$(get_secret_if_present NANGO_PIPELINE_API_KEY)");
-  expect(deployScript.indexOf("CONTEXT_USE_RECOVERY_BACKUP_KEY")).toBeLessThan(deployScript.indexOf("up -d --remove-orphans"));
+  expect(deployScript).toContain("DB_CORPUS_PASSWORD=$(get_secret DB_CORPUS_PASSWORD)");
+  const finishServices = "up -d --remove-orphans \\\n  confirmation backup nango-backup";
+  expect(deployScript.indexOf("CONTEXT_USE_RECOVERY_BACKUP_KEY")).toBeLessThan(deployScript.indexOf(finishServices));
   expect(deployScript).toContain("psql --single-transaction -v ON_ERROR_STOP=1");
   // Caddy serves the maintenance response for the whole window, so a release
   // stops its upstreams instead. Stopping Caddy would make the window a refused
@@ -577,10 +618,14 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   // release's code against a migrating schema.
   expect(deployScript).not.toContain("stop caddy");
   const stopClients = "stop \\\n  dashboard-edge app auth private-mcp public-web confirmation storage backup";
-  const restorePublic = "up -d --wait \\\n  storage public-web";
+  const restoreStorage = "up -d --wait storage";
+  const prepareKnowledge = "--exit-code-from knowledge-prepare knowledge-prepare";
+  const restorePublic = "up -d --wait public-web";
   const restoreDashboard = "up -d --wait \\\n  dashboard-edge app auth private-mcp";
   expect(deployScript.indexOf(stopClients)).toBeLessThan(deployScript.indexOf("--profile migration run --rm migrate"));
-  expect(deployScript.indexOf("--profile migration run --rm migrate")).toBeLessThan(deployScript.indexOf(restorePublic));
+  expect(deployScript.indexOf("--profile migration run --rm migrate")).toBeLessThan(deployScript.indexOf(restoreStorage));
+  expect(deployScript.indexOf(restoreStorage)).toBeLessThan(deployScript.indexOf(prepareKnowledge));
+  expect(deployScript.indexOf(prepareKnowledge)).toBeLessThan(deployScript.indexOf(restorePublic));
   // The public pages are the availability priority: their path comes back
   // before the dashboard, MCP, and auth services compete for the same cores,
   // and the whole primary edge finishes before Nango is touched at all.
@@ -590,7 +635,9 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   // applied by recreating the container. Comparing the release against the
   // running mount keeps releases that do not touch a Caddyfile interruption-free.
   expect(deployScript).toContain("sha256sum /etc/caddy/Caddyfile");
-  expect(deployScript.indexOf("up -d --remove-orphans")).toBeLessThan(deployScript.indexOf("recreate_changed_gateway caddy Caddyfile"));
+  expect(deployScript.indexOf(finishServices)).toBeLessThan(deployScript.indexOf("recreate_changed_gateway caddy Caddyfile"));
+  expect(deployScript).not.toContain("up -d --remove-orphans\n");
+  expect(deployScript.match(/--exit-code-from knowledge-prepare/g)?.length).toBe(1);
   for (const gateway of [
     "recreate_changed_gateway nango-public-gateway Caddyfile.nango-public",
     "recreate_changed_gateway nango-auth-gateway Caddyfile.nango-auth",
@@ -745,22 +792,46 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   expect(deployCompose).not.toContain("PUBLIC_MCP");
   expect(deployCompose).not.toContain("public_mcp_data");
   expect(deployCompose).not.toContain("context_use_public_mcp:");
-  const templateInstallService = deployCompose.slice(
-    deployCompose.indexOf("\n  template-install:\n"),
+  const knowledgePrepareService = deployCompose.slice(
+    deployCompose.indexOf("\n  knowledge-prepare:\n"),
     deployCompose.indexOf("\n  nango-db-init:\n"),
   );
-  expect(templateInstallService).toContain("DATABASE_URL: postgres://context_use_dashboard");
-  expect(templateInstallService).toContain("STORAGE_DASHBOARD_TOKEN");
-  expect(templateInstallService).toContain("storage-socket:/run/context-use-storage:ro");
-  expect(templateInstallService).toContain("storage: { condition: service_healthy }");
-  expect(templateInstallService).not.toContain("AWS_REGION:");
-  expect(templateInstallService).not.toContain("STORAGE_MCP_TOKEN");
-  expect(templateInstallService).not.toContain("STORAGE_PUBLIC_TOKEN");
+  expect(knowledgePrepareService).toContain("CORPUS_DATABASE_URL: postgres://context_use_corpus");
+  expect(knowledgePrepareService).not.toContain("DATABASE_URL: postgres://context_use_dashboard");
+  expect(knowledgePrepareService).toContain("NODE_ENV: production");
+  expect(knowledgePrepareService).toContain("STORAGE_DASHBOARD_TOKEN");
+  expect(knowledgePrepareService).toContain("storage-socket:/run/context-use-storage:ro");
+  expect(knowledgePrepareService).toContain("storage: { condition: service_healthy }");
+  expect(knowledgePrepareService).not.toContain("template-command.ts");
+  expect(knowledgePrepareService).not.toContain("--force-template");
+  expect(knowledgePrepareService).toContain("corpus-migration-command.ts");
+  expect(knowledgePrepareService).not.toContain("AWS_REGION:");
+  expect(knowledgePrepareService).not.toContain("STORAGE_MCP_TOKEN");
+  expect(knowledgePrepareService).not.toContain("STORAGE_PUBLIC_TOKEN");
+  expect(deployCompose.replace(knowledgePrepareService, "")).not.toContain("CORPUS_DATABASE_URL");
+  const migrateService = deployCompose.slice(
+    deployCompose.indexOf("\n  migrate:\n"),
+    deployCompose.indexOf("\n  knowledge-prepare:\n"),
+  );
+  expect(migrateService).toContain("DB_CORPUS_PASSWORD: ${DB_CORPUS_PASSWORD}");
+  expect(deployCompose.replace(migrateService, "").replace(knowledgePrepareService, ""))
+    .not.toContain("DB_CORPUS_PASSWORD");
+  const storageStart = 'up -d --wait storage';
+  const prepareRun = [
+    "up \\",
+    "--force-recreate --no-deps --abort-on-container-exit \\",
+    "--exit-code-from knowledge-prepare knowledge-prepare",
+  ].join("\n  ");
+  const publicStart = "up -d --wait public-web";
+  expect(deployScript).toContain(prepareRun);
+  expect(deployScript.indexOf(storageStart)).toBeLessThan(deployScript.indexOf(prepareRun));
+  expect(deployScript.indexOf(prepareRun)).toBeLessThan(deployScript.indexOf(publicStart));
   const appService = deployCompose.slice(
     deployCompose.indexOf("\n  app:\n"),
     deployCompose.indexOf("\n  auth:\n"),
   );
   expect(appService).toContain("DATABASE_URL: postgres://context_use_dashboard");
+  expect(appService).not.toContain("CORPUS_DATABASE_URL");
   expect(appService).toContain('MCP_RESOURCE: https://${APP_HOSTNAME}/mcp');
   expect(appService).not.toContain("AUTH_DATABASE_URL");
   expect(appService).not.toContain("MCP_DATABASE_URL");
@@ -770,7 +841,7 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   expect(appService).toContain("STORAGE_DASHBOARD_TOKEN");
   expect(appService).toContain("AUTH_DASHBOARD_TOKEN");
   expect(appService).toContain("CONFIRMATION_DASHBOARD_TOKEN");
-  expect(appService).toContain("template-install: { condition: service_completed_successfully }");
+  expect(appService).toContain("knowledge-prepare: { condition: service_completed_successfully }");
   expect(appService).not.toContain("AUTH_MCP_TOKEN");
   expect(appService).not.toContain("CONFIRMATION_GATEWAY_TOKEN");
   expect(appService).toContain("storage-socket:/run/context-use-storage:ro");
@@ -975,6 +1046,7 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   expect(setup).toContain("NANGO_OAUTH_CLIENT_SECRET");
   expect(setup).toContain("NANGO_AUTH_COOKIE_SECRET");
   expect(setup).toContain("AUTH_NANGO_TOKEN");
+  expect(setup).toContain("DB_CORPUS_PASSWORD");
   expect(setup).not.toContain("Nango dashboard credentials:");
   expect(resize.indexOf("retainedDataVolumeExists(config")).toBeLessThan(resize.indexOf("await saveConfig(resizedConfig)"));
   expect(resize.indexOf("await saveConfig(resizedConfig)")).toBeLessThan(resize.indexOf("await applyCompute(root, resizedConfig, data)"));

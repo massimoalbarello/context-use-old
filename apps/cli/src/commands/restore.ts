@@ -26,7 +26,11 @@ export function restoreCommands(bucket: string, key: string): string[] {
     `${compose} run --rm -T -e BACKUP_BUCKET='${bucket}' backup fetch '${key}' | gunzip | ${database} --single-transaction`,
     `${compose} --profile migration run --rm migrate`,
     `${database} -c 'DROP ROLE IF EXISTS ${compatibilityRole}'`,
-    `${compose} up -d --remove-orphans`,
+    `${compose} up -d --wait storage`,
+    `${compose} up --force-recreate --no-deps --abort-on-container-exit --exit-code-from knowledge-prepare knowledge-prepare`,
+    `${compose} up -d --wait public-web`,
+    `${compose} up -d --wait dashboard-edge app auth private-mcp confirmation`,
+    `${compose} up -d --remove-orphans caddy backup`,
     "trap - EXIT",
   ];
 }

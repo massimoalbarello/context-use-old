@@ -26,6 +26,7 @@ const schema = z.object({
   APP_ORIGIN: z.string().url().default("http://localhost:3000"),
   ASSET_ORIGIN: z.string().url().default("http://localhost:3000"),
   DATABASE_URL: z.string().min(1).default("postgres://context_use_dashboard:development-only@localhost:5432/context_use"),
+  CORPUS_DATABASE_URL: z.string().min(1).default("postgres://context_use_corpus:development-only@localhost:5432/context_use"),
   AUTH_DATABASE_URL: z.string().min(1).default("postgres://context_use_auth:development-only@localhost:5432/context_use"),
   MCP_DATABASE_URL: z.string().min(1).default("postgres://context_use_mcp:development-only@localhost:5432/context_use"),
   PUBLIC_DATABASE_URL: z.string().min(1).default("postgres://context_use_public:development-only@localhost:5432/context_use"),
@@ -162,6 +163,7 @@ if (production) {
   }
   const databaseRoles = new Map([
     ["DATABASE_URL", [config.DATABASE_URL, "context_use_dashboard"]],
+    ["CORPUS_DATABASE_URL", [config.CORPUS_DATABASE_URL, "context_use_corpus"]],
     ["AUTH_DATABASE_URL", [config.AUTH_DATABASE_URL, "context_use_auth"]],
     ["MCP_DATABASE_URL", [config.MCP_DATABASE_URL, "context_use_mcp"]],
     ["PUBLIC_DATABASE_URL", [config.PUBLIC_DATABASE_URL, "context_use_public"]],
@@ -186,7 +188,10 @@ if (production) {
     }
     try {
       const parsed = new URL(connection!);
-      if (!parsed.protocol.startsWith("postgres") || decodeURIComponent(parsed.username) !== role) insecure.push(`${name} must use only ${role}`);
+      if (!["postgres:", "postgresql:"].includes(parsed.protocol)
+          || decodeURIComponent(parsed.username) !== role) {
+        insecure.push(`${name} must use only ${role}`);
+      }
     } catch {
       insecure.push(`${name} must be a valid PostgreSQL URL`);
     }
@@ -208,6 +213,7 @@ if (production) {
     PGPASSWORD: [],
     DB_AUTH_PASSWORD: [],
     DB_DASHBOARD_PASSWORD: [],
+    DB_CORPUS_PASSWORD: [],
     DB_MCP_PASSWORD: [],
     DB_PUBLIC_PASSWORD: [],
     DB_CONFIRMATION_PASSWORD: [],

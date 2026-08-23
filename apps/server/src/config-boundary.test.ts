@@ -163,12 +163,14 @@ describe("production process credential boundaries", () => {
   test("dashboard edge rejects every private credential", () => {
     const privateCredentials = {
       DATABASE_URL: "postgres://context_use_dashboard:secret@postgres:5432/context_use",
+      CORPUS_DATABASE_URL: "postgres://context_use_corpus:secret@postgres:5432/context_use",
       AUTH_DATABASE_URL: "postgres://context_use_auth:secret@postgres:5432/context_use",
       MCP_DATABASE_URL: "postgres://context_use_mcp:secret@postgres:5432/context_use",
       PUBLIC_DATABASE_URL: "postgres://context_use_public:secret@postgres:5432/context_use",
       CONFIRMATION_DATABASE_URL: "postgres://context_use_confirmation:secret@postgres:5432/context_use",
       STORAGE_DATABASE_URL: "postgres://context_use_storage:secret@postgres:5432/context_use",
       MIGRATOR_DATABASE_URL: "postgres://postgres:secret@postgres:5432/context_use",
+      DB_CORPUS_PASSWORD: "leaked-corpus-password",
       BETTER_AUTH_SECRET: "leaked-authentication-secret-that-is-long",
       AUTH_DASHBOARD_TOKEN: "leaked-dashboard-auth-token-that-is-long",
       AUTH_MCP_TOKEN: "leaked-private-mcp-auth-token-that-is-long",
@@ -192,6 +194,15 @@ describe("production process credential boundaries", () => {
     });
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr.toString()).toContain("DATABASE_URL must use only context_use_dashboard");
+  });
+
+  test("long-lived services reject the one-shot corpus credential", () => {
+    const credential = {
+      CORPUS_DATABASE_URL: "postgres://context_use_corpus:secret@postgres:5432/context_use",
+    };
+    for (const service of Object.keys(validByService)) {
+      expect(load(service, credential).exitCode).not.toBe(0);
+    }
   });
 
   test("auth requires an exact Nango subdomain and pairwise Nango credentials", () => {

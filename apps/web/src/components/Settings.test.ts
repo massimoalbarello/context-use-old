@@ -6,6 +6,7 @@ import {
   formatExportBytes,
   KnowledgeExportPreparationStatus,
   Settings,
+  knowledgeResetCompletionMessage,
   storedExportJob,
   type KnowledgeExportJob,
 } from "./Settings.tsx";
@@ -90,6 +91,17 @@ describe("knowledge base reset settings", () => {
     sizeBytes: 5_000_000_000,
     reset: true,
   };
+
+  test("reports the isolated preparation step after a successful clear", () => {
+    const message = knowledgeResetCompletionMessage({
+      template_error: null,
+      preparation_required: true,
+      preparation_action: "run_deployment_knowledge_prepare",
+    });
+    expect(message).toContain("Full knowledge preparation is still pending");
+    expect(message).toContain("context-use knowledge-template apply");
+    expect(message).not.toContain("preparation completed");
+  });
 
   test("resumes an authorized reset after Settings is remounted, unlocking nothing", () => {
     const intentId = "22222222-2222-4222-8222-222222222222";

@@ -184,6 +184,21 @@ export type TemplateResult = {
   actions: TemplateAction[];
 };
 
+export const KNOWLEDGE_PREPARATION_SCOPE = {
+  managed_operational_documents: "deployment_one_shot",
+  hypermedia_corpus: "deployment_one_shot",
+} as const;
+
+export type KnowledgePreparationScope = typeof KNOWLEDGE_PREPARATION_SCOPE;
+
+export const KNOWLEDGE_PREPARATION_ACTION = "run_deployment_knowledge_prepare" as const;
+
+export type KnowledgePreparationResponse = TemplateResult & {
+  preparation_scope: KnowledgePreparationScope;
+  preparation_required: true;
+  preparation_action: typeof KNOWLEDGE_PREPARATION_ACTION;
+};
+
 export type TemplateSummary = {
   changes: number;
   conflicts: number;

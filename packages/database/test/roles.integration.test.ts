@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { Client, type Pool } from "pg";
+import { Client, Pool } from "pg";
 import { randomBytes, randomUUID } from "node:crypto";
-import { PublicRepository } from "../src/index.ts";
+import { PageRepository, PublicRepository } from "../src/index.ts";
 import { disposableDatabaseUrl } from "../src/disposable-database.ts";
+import { MemoryMarkdownStore } from "./memory-markdown-store.ts";
 
 const adminUrl = await disposableDatabaseUrl();
 const describeDatabase = adminUrl ? describe : describe.skip;
@@ -109,6 +110,42 @@ describeDatabase("PostgreSQL security roles", () => {
         [role],
       );
       expect(path.rows[0]?.allowed).toBe(false);
+    }
+  });
+
+  test("the MCP role can update and archive ordinary knowledge through the checked writer", async () => {
+    const mcpPool = new Pool({ connectionString: adminUrl, max: 1 });
+    try {
+      await mcpPool.query("SET ROLE context_use_mcp");
+      const pages = new PageRepository(mcpPool, new MemoryMarkdownStore());
+      const path = `tests/mcp-operational-lock-${randomUUID()}`;
+      const actor = { kind: "mcp" as const, subject: "role-test" };
+      const created = await pages.create({
+        path,
+        title: "MCP checked writer",
+        summary: "Exercises the operational-document lock as the real MCP role.",
+        body_markdown: "Initial body.",
+        commit_message: "Create MCP role fixture",
+      }, actor);
+
+      const updated = await pages.update(created.id, {
+        path,
+        title: "MCP checked writer",
+        summary: "Exercises the operational-document lock as the real MCP role.",
+        body_markdown: "Updated body.",
+        commit_message: "Update through MCP role",
+        expected_version_number: 1,
+      }, actor);
+      expect(updated?.version_number).toBe(2);
+
+      const archived = await pages.archive(created.id, {
+        commit_message: "Archive through MCP role",
+        expected_version_number: 2,
+      }, actor);
+      expect(archived?.version_number).toBe(3);
+      expect(archived?.archived_at).not.toBeNull();
+    } finally {
+      await mcpPool.end();
     }
   });
 

@@ -1,9 +1,11 @@
 import { resolve } from "node:path";
 import {
   AssetRepository,
+  AutomationRegistryRepository,
   DirectoryRepository,
   KnowledgeExportRepository,
   KnowledgeResetRepository,
+  KnowledgeSettingsRepository,
   type KnowledgeExportAsset,
   type KnowledgeExportSnapshot,
   PageRepository,
@@ -15,10 +17,13 @@ import {
   extractDirectoryLinks,
   extractWikiLinks,
   knowledgeTemplateBaseline,
+  knowledgeTemplateMigrationContract,
   reconcileKnowledgeTemplate,
   wikiLinkCandidatePaths,
 } from "@context-use/database";
 import {
+  KNOWLEDGE_PREPARATION_ACTION,
+  KNOWLEDGE_PREPARATION_SCOPE,
   assetUploadSchema,
   archivePageSchema,
   createDirectorySchema,
@@ -54,6 +59,12 @@ import { AssetIntegrityError, type GeneratedObjectMetadata } from "./storage.ts"
 import { BrokeredStorage } from "./storage-client.ts";
 import { BrokeredMarkdownObjectStore } from "./markdown-object-store.ts";
 import { streamKnowledgeExport } from "./knowledge-export.ts";
+import {
+  knowledgePreparationApplyResponse,
+  knowledgePreparationPlanResponse,
+  protectedOperationalTemplatePaths,
+} from "./knowledge-prepare.ts";
+import { operationalTemplateSkipPaths } from "./operational-document-prepare.ts";
 import { MAX_KNOWLEDGE_ARCHIVE_BYTES } from "./knowledge-zip.ts";
 import { disableStreamingRequestIdleTimeout } from "./streaming-timeout.ts";
 
@@ -66,6 +77,8 @@ const markdownObjects = new BrokeredMarkdownObjectStore(storage);
 
 const dashboardPages = new PageRepository(dashboardPool, markdownObjects);
 const dashboardDirectories = new DirectoryRepository(dashboardPool);
+const dashboardKnowledgeSettings = new KnowledgeSettingsRepository(dashboardPool);
+const dashboardAutomationRegistry = new AutomationRegistryRepository(dashboardPool);
 const pageDeletions = new PageDeletionRepository(dashboardPool);
 const dashboardAssets = new AssetRepository(dashboardPool);
 const dashboardRecords = new SourceRecordRepository(dashboardPool, markdownObjects);
@@ -73,6 +86,29 @@ const publications = new PublicationRepository(dashboardPool);
 const publicEntrypoint = new PublicEntrypointRepository(dashboardPool);
 const knowledgeExports = new KnowledgeExportRepository(dashboardPool, markdownObjects);
 const knowledgeResets = new KnowledgeResetRepository(dashboardPool, markdownObjects);
+
+async function reconcileDashboardKnowledgeTemplate(input: {
+  templateName: string;
+  install: boolean;
+  force: boolean;
+}) {
+  const contract = await knowledgeTemplateMigrationContract(input.templateName);
+  const skipOperationalPaths = await operationalTemplateSkipPaths({
+    repositories: {
+      settings: dashboardKnowledgeSettings,
+      pages: dashboardPages,
+      registry: dashboardAutomationRegistry,
+    },
+    template: contract,
+  });
+  return reconcileKnowledgeTemplate({
+    directories: dashboardDirectories,
+    pages: dashboardPages,
+  }, input.templateName, input.install, input.force, undefined, {
+    preserveLocallyModifiedPaths: protectedOperationalTemplatePaths(contract),
+    skipOperationalPaths,
+  });
+}
 
 class KnowledgeExportBuildError extends Error {
   constructor(
@@ -407,18 +443,22 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     const forceTemplate = query.force_template === undefined
       ? false
       : z.enum(["true", "false"]).transform((value) => value === "true").parse(query.force_template);
-    return json(await reconcileKnowledgeTemplate({
-      directories: dashboardDirectories,
-      pages: dashboardPages,
-    }, "default", false, forceTemplate));
+    const template = await reconcileDashboardKnowledgeTemplate({
+      templateName: "default",
+      install: false,
+      force: forceTemplate,
+    });
+    return json(knowledgePreparationPlanResponse(template));
   })
   .post("/api/dashboard/knowledge-template/apply", async ({ request }) => {
     await ownerRequest(request, true);
     const input = templateApplySchema.parse(await bodyJson(request));
-    return json(await reconcileKnowledgeTemplate({
-      directories: dashboardDirectories,
-      pages: dashboardPages,
-    }, "default", true, input.force_template));
+    const template = await reconcileDashboardKnowledgeTemplate({
+      templateName: "default",
+      install: true,
+      force: input.force_template,
+    });
+    return json(knowledgePreparationApplyResponse(template));
   })
 
   .get("/app", async () => {
@@ -538,19 +578,33 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     // The deletion has already committed, so a template failure must not be
     // reported as a failed clear. Surface it as the recoverable step it is.
     try {
-      const template = await reconcileKnowledgeTemplate({
-        directories: dashboardDirectories,
-        pages: dashboardPages,
-      }, baseline.template, true, true);
-      return json({ cleared, template, template_error: null });
+      const template = await reconcileDashboardKnowledgeTemplate({
+        templateName: baseline.template,
+        install: true,
+        force: true,
+      });
+      const preparation = knowledgePreparationApplyResponse(template);
+      return json({
+        cleared,
+        template,
+        corpus: null,
+        preparation_scope: preparation.preparation_scope,
+        preparation_required: preparation.preparation_required,
+        preparation_action: preparation.preparation_action,
+        template_error: null,
+      });
     } catch (error) {
-      console.error("knowledge_reset_template_failed", error instanceof Error
-        ? { intentId, name: error.name, message: error.message }
+      console.error("knowledge_reset_prepare_failed", error instanceof Error
+        ? { intentId, name: error.name }
         : { intentId, type: typeof error });
       return json({
         cleared,
         template: null,
-        template_error: "The knowledge base was cleared, but the default template could not be applied. Apply it again from the knowledge template settings.",
+        corpus: null,
+        preparation_required: true,
+        preparation_scope: KNOWLEDGE_PREPARATION_SCOPE,
+        preparation_action: KNOWLEDGE_PREPARATION_ACTION,
+        template_error: "The knowledge base was cleared, but template reconciliation did not complete. Redeploy to run the isolated knowledge-prepare one-shot before using the knowledge services.",
       });
     }
   })

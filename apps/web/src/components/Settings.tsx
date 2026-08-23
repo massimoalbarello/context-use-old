@@ -1,4 +1,5 @@
 import { startAuthentication } from "@simplewebauthn/browser";
+import { KNOWLEDGE_PREPARATION_ACTION } from "@context-use/shared";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api.ts";
 import { ActionDialog } from "./ActionDialog.tsx";
@@ -75,8 +76,24 @@ export type KnowledgeExportJob = {
   archiveDownloaded: boolean;
 };
 
+export type KnowledgeResetClearResponse = {
+  template_error: string | null;
+  preparation_required: boolean;
+  preparation_action: typeof KNOWLEDGE_PREPARATION_ACTION;
+};
+
 const exportJobStorageKey = "context-use.knowledge-export-job";
 export const CLEAR_KNOWLEDGE_PHRASE = "CLEAR EVERYTHING";
+
+export function knowledgeResetCompletionMessage(
+  result: KnowledgeResetClearResponse,
+): string {
+  if (result.template_error) return result.template_error;
+  if (result.preparation_required) {
+    return "The knowledge base was cleared and the default template was restored. Full knowledge preparation is still pending; run `context-use knowledge-template apply` or redeploy before using the knowledge services.";
+  }
+  return "The knowledge base was cleared and the default template was restored.";
+}
 
 export function storedExportJob(storage?: Pick<Storage, "getItem"> | null): KnowledgeExportJob | null {
   try {
@@ -481,14 +498,13 @@ export function Settings({
     setClearWorking(true);
     setClearError("");
     try {
-      const result = await api<{ template_error: string | null }>(
+      const result = await api<KnowledgeResetClearResponse>(
         `/api/dashboard/knowledge-resets/${encodeURIComponent(exportJob.intentId)}/clear`,
         { method: "POST", body: "{}" },
       );
       setClearPrompted(false);
       setExportJob(null);
-      setMessage(result.template_error
-        ?? "The knowledge base was cleared and rebuilt from the default template.");
+      setMessage(knowledgeResetCompletionMessage(result));
       await onKnowledgeChanged();
     } catch (error) {
       setClearError(error instanceof Error ? error.message : "The knowledge base could not be cleared");

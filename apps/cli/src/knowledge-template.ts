@@ -10,10 +10,17 @@ export function knowledgeTemplateCommands(
 ): string[] {
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(templateName)) throw new Error(`Invalid template name: ${templateName}`);
   const compose = "docker compose --env-file /data/context-use/secrets/runtime.env";
+  if (action === "apply") {
+    return [
+      "set -euo pipefail",
+      "cd /opt/context-use/deploy",
+      `CONTEXT_USE_TEMPLATE_INSTALL=${templateName} CONTEXT_USE_FORCE_TEMPLATE=${forceTemplate ? "true" : "false"} ${compose} up --force-recreate --no-deps --abort-on-container-exit --exit-code-from knowledge-prepare knowledge-prepare`,
+    ];
+  }
   return [
     "set -euo pipefail",
     "cd /opt/context-use/deploy",
-    `${compose} exec -T app bun apps/server/src/template-command.ts ${action} ${templateName}${forceTemplate ? " --force-template" : ""}`,
+    `${compose} exec -T app bun apps/server/src/template-command.ts plan ${templateName}${forceTemplate ? " --force-template" : ""}`,
   ];
 }
 

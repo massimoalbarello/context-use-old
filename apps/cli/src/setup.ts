@@ -69,6 +69,7 @@ export async function ensureRuntimeParameters(config: DeploymentConfig, data: Da
     POSTGRES_PASSWORD: 36,
     DB_AUTH_PASSWORD: 36,
     DB_DASHBOARD_PASSWORD: 36,
+    DB_CORPUS_PASSWORD: 36,
     DB_MCP_PASSWORD: 36,
     DB_PUBLIC_PASSWORD: 36,
     DB_CONFIRMATION_PASSWORD: 36,

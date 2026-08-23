@@ -152,6 +152,7 @@ BETTER_AUTH_SECRET=$(get_secret BETTER_AUTH_SECRET)
 POSTGRES_PASSWORD=$(get_secret POSTGRES_PASSWORD)
 DB_AUTH_PASSWORD=$(get_secret DB_AUTH_PASSWORD)
 DB_DASHBOARD_PASSWORD=$(get_secret DB_DASHBOARD_PASSWORD)
+DB_CORPUS_PASSWORD=$(get_secret DB_CORPUS_PASSWORD)
 DB_MCP_PASSWORD=$(get_secret DB_MCP_PASSWORD)
 DB_PUBLIC_PASSWORD=$(get_secret DB_PUBLIC_PASSWORD)
 DB_CONFIRMATION_PASSWORD=$(get_secret DB_CONFIRMATION_PASSWORD)
@@ -273,12 +274,18 @@ fi
 # dashboard, MCP endpoint, or public pages offline. Waiting here ends the
 # maintenance response for these hostnames before Nango is touched at all.
 #
-# The public pages are the availability priority, and they need only postgres,
-# storage, and public-web. Restore exactly that path first and wait for it, so
-# it is serving again before the dashboard, MCP, and auth services start
-# competing for the same two cores.
-docker compose --env-file "${secrets}/runtime.env" up -d --wait \
-  storage public-web
+# Storage must be the only knowledge service running while the object-first
+# corpus preparation completes. The one-shot command is deliberately rerun on
+# every deploy and blocks every private and public knowledge surface on an
+# exact, current completion audit.
+docker compose --env-file "${secrets}/runtime.env" up -d --wait storage
+docker compose --env-file "${secrets}/runtime.env" up \
+  --force-recreate --no-deps --abort-on-container-exit \
+  --exit-code-from knowledge-prepare knowledge-prepare
+# Public pages are the availability priority once preparation succeeds. Bring
+# them back before the dashboard, MCP, and auth services start competing for
+# the same two cores.
+docker compose --env-file "${secrets}/runtime.env" up -d --wait public-web
 docker compose --env-file "${secrets}/runtime.env" up -d --wait \
   dashboard-edge app auth private-mcp
 # A running Caddy was never stopped and stays untouched; a first install starts
@@ -309,7 +316,10 @@ docker compose --env-file "${secrets}/runtime.env" up -d --wait \
 # Reconcile the read-only backup grants after Nango has applied every upstream
 # migration, and set default grants for relations created between releases.
 docker compose --env-file "${secrets}/runtime.env" --profile nango-init run --rm nango-db-init
-docker compose --env-file "${secrets}/runtime.env" up -d --remove-orphans
+# Start only the remaining long-lived services. A bare `compose up` would also
+# restart the completed knowledge-prepare one-shot without observing its exit.
+docker compose --env-file "${secrets}/runtime.env" up -d --remove-orphans \
+  confirmation backup nango-backup
 # Compose does not recreate a service when only bind-mounted file contents
 # change, and every gateway runs with `admin off`, so there is no reload
 # endpoint either: a changed Caddyfile needs a recreate. Compare the release

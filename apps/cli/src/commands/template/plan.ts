@@ -8,7 +8,7 @@ export const command = defineCommand("template plan", {
   options: {
     "force-template": {
       schema: z.boolean().optional(),
-      description: "Preview replacement of eligible local directory metadata, guides, and managed pages.",
+      description: "Preview replacement of eligible template-owned directory metadata and managed pages; owner-authored guides and control documents remain protected.",
     },
   },
   handler: async ({ options }) => {
