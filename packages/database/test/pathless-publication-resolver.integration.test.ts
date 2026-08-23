@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { createHash, randomUUID } from "node:crypto";
 import { Client } from "pg";
 import { disposableDatabaseUrl } from "../src/disposable-database.ts";
@@ -320,17 +320,9 @@ async function cleanupPageFixtures(
 }
 
 describeDatabase("pathless public entrypoint and resolvers", () => {
-  const client = new Client({ connectionString: databaseUrl });
-
-  beforeAll(async () => {
-    await client.connect();
-  });
-
-  afterAll(async () => {
-    await client.end().catch(() => undefined);
-  });
-
   test("resolves exact active routes without exposing private namespace misses", async () => {
+    const client = new Client({ connectionString: databaseUrl });
+    await client.connect();
     await client.query("BEGIN");
     try {
       const page = await seedActivePage(client);
@@ -535,11 +527,14 @@ describeDatabase("pathless public entrypoint and resolvers", () => {
       expect(inactiveAlias.state).toBe("inactive");
       expectRedacted(inactiveAlias);
     } finally {
-      await client.query("ROLLBACK");
+      await client.query("ROLLBACK").catch(() => undefined);
+      await client.end().catch(() => undefined);
     }
-  });
+  }, 15_000);
 
   test("storage resolves only the exact current pin and keeps raw tables closed", async () => {
+    const client = new Client({ connectionString: databaseUrl });
+    await client.connect();
     await client.query("BEGIN");
     try {
       const asset = await seedActiveAsset(client);
@@ -647,11 +642,14 @@ describeDatabase("pathless public entrypoint and resolvers", () => {
         ),
       )).toBe("22023");
     } finally {
-      await client.query("ROLLBACK");
+      await client.query("ROLLBACK").catch(() => undefined);
+      await client.end().catch(() => undefined);
     }
-  });
+  }, 15_000);
 
   test("seeds and sets the three-state entrypoint with exact replay semantics", async () => {
+    const client = new Client({ connectionString: databaseUrl });
+    await client.connect();
     await client.query("BEGIN");
     try {
       const ordinary = await seedActivePage(client, "legacy_adoption");
@@ -841,15 +839,22 @@ describeDatabase("pathless public entrypoint and resolvers", () => {
         "SELECT updated_at FROM pathless_publication_settings WHERE singleton",
       )).rows[0]!.updated_at.toISOString()).toBe(seededAt.toISOString());
     } finally {
-      await client.query("ROLLBACK");
+      await client.query("ROLLBACK").catch(() => undefined);
+      await client.end().catch(() => undefined);
     }
-  });
+  }, 15_000);
 
   test("orders entrypoint target locks before settings and rejects a raced replay", async () => {
+    const client = new Client({ connectionString: databaseUrl });
     const contender = new Client({ connectionString: databaseUrl });
     const pages: PageFixture[] = [];
-    await contender.connect();
+    let clientConnected = false;
+    let contenderConnected = false;
     try {
+      await client.connect();
+      clientConnected = true;
+      await contender.connect();
+      contenderConnected = true;
       await client.query("BEGIN");
       pages.push(await seedActivePage(client), await seedActivePage(client));
       await client.query(
@@ -934,10 +939,16 @@ describeDatabase("pathless public entrypoint and resolvers", () => {
       expect(await replay).toBe("40001");
       await contender.query("RESET ROLE");
     } finally {
-      await client.query("ROLLBACK").catch(() => undefined);
-      await contender.query("RESET ROLE").catch(() => undefined);
-      await contender.end().catch(() => undefined);
-      if (pages.length > 0) await cleanupPageFixtures(client, pages);
+      if (clientConnected) await client.query("ROLLBACK").catch(() => undefined);
+      if (contenderConnected) {
+        await contender.query("RESET ROLE").catch(() => undefined);
+        await contender.end().catch(() => undefined);
+      }
+      try {
+        if (clientConnected && pages.length > 0) await cleanupPageFixtures(client, pages);
+      } finally {
+        if (clientConnected) await client.end().catch(() => undefined);
+      }
     }
   }, 15_000);
 });

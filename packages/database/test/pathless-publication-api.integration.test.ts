@@ -10,6 +10,7 @@ const hash = (value: string): string => value.repeat(64).slice(0, 64);
 const fixtureDocumentIds = new Set<string>();
 const fixtureCredentialIds = new Set<string>();
 const fixtureExtraIntentIds = new Set<string>();
+const fixtureUserIds = new Set<string>();
 
 type PageFixture = { pageId: string; revisionId: string };
 type AssetFixture = { assetId: string };
@@ -194,17 +195,23 @@ async function seedActiveAssetPublication(
   return publicId;
 }
 
+async function ensureFixtureOwner(client: Client): Promise<void> {
+  const insertedOwner = await client.query<{ id: string }>(
+    `INSERT INTO "user"(id,name,email,"emailVerified")
+     VALUES ('context-use-owner','Pathless owner',$1,true)
+     ON CONFLICT (id) DO NOTHING
+     RETURNING id`,
+    [`pathless-${randomUUID()}@example.test`],
+  );
+  for (const { id } of insertedOwner.rows) fixtureUserIds.add(id);
+}
+
 async function seedOwnerPasskey(
   client: Client,
   counter = 0,
 ): Promise<string> {
   const credentialId = `credential-${randomUUID()}`;
-  await client.query(
-    `INSERT INTO "user"(id,name,email,"emailVerified")
-     VALUES ('context-use-owner','Pathless owner',$1,true)
-     ON CONFLICT (id) DO NOTHING`,
-    [`pathless-${randomUUID()}@example.test`],
-  );
+  await ensureFixtureOwner(client);
   await client.query(
     `INSERT INTO passkey(
        id,"publicKey","userId","credentialID",counter,"deviceType","backedUp"
@@ -327,6 +334,7 @@ describeDatabase("checked pathless publication planning and staging", () => {
       await cleanupPathlessPublicationFixtures(client, fixtureDocumentIds, {
         extraIntentIds: fixtureExtraIntentIds,
         credentialIds: fixtureCredentialIds,
+        userIds: fixtureUserIds,
       });
     } finally {
       await client.end().catch(() => undefined);
@@ -970,12 +978,7 @@ describeDatabase("checked pathless publication planning and staging", () => {
     const exportIntentId = randomUUID();
     const exportSessionId = `export-role-${randomUUID()}`;
     const credentialId = `credential-${randomUUID()}`;
-    await client.query(
-      `INSERT INTO "user"(id,name,email,"emailVerified")
-       VALUES ('context-use-owner','Pathless owner',$1,true)
-       ON CONFLICT (id) DO NOTHING`,
-      [`pathless-${randomUUID()}@example.test`],
-    );
+    await ensureFixtureOwner(client);
     await client.query(
       `INSERT INTO passkey(
          id,"publicKey","userId","credentialID",counter,"deviceType","backedUp"
@@ -1031,12 +1034,7 @@ describeDatabase("checked pathless publication planning and staging", () => {
     const deletionIntentId = randomUUID();
     const sessionId = `delete-race-${randomUUID()}`;
     const credentialId = `credential-${randomUUID()}`;
-    await client.query(
-      `INSERT INTO "user"(id,name,email,"emailVerified")
-       VALUES ('context-use-owner','Pathless owner',$1,true)
-       ON CONFLICT (id) DO NOTHING`,
-      [`pathless-${randomUUID()}@example.test`],
-    );
+    await ensureFixtureOwner(client);
     await client.query(
       `INSERT INTO passkey(
          id,"publicKey","userId","credentialID",counter,"deviceType","backedUp"

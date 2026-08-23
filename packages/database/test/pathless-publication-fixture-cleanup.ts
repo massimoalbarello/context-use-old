@@ -24,12 +24,19 @@ export async function cleanupPathlessPublicationFixtures(
   options: {
     extraIntentIds?: Iterable<string>;
     credentialIds?: Iterable<string>;
+    userIds?: Iterable<string>;
   } = {},
 ): Promise<void> {
   const documentIds = unique(sourceDocumentIds);
   const extraIntentIds = unique(options.extraIntentIds ?? []);
   const credentialIds = unique(options.credentialIds ?? []);
-  if (documentIds.length === 0 && extraIntentIds.length === 0 && credentialIds.length === 0) return;
+  const userIds = unique(options.userIds ?? []);
+  if (
+    documentIds.length === 0
+    && extraIntentIds.length === 0
+    && credentialIds.length === 0
+    && userIds.length === 0
+  ) return;
 
   const publicIds = unique(await selectIds(
     client,
@@ -232,6 +239,9 @@ export async function cleanupPathlessPublicationFixtures(
         `DELETE FROM passkey WHERE "credentialID"=ANY($1::text[])`,
         [credentialIds],
       );
+    }
+    if (userIds.length > 0) {
+      await client.query(`DELETE FROM "user" WHERE id=ANY($1::text[])`, [userIds]);
     }
     await client.query("COMMIT");
   } catch (error) {
