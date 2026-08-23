@@ -81,36 +81,31 @@ pinned 277 MB dataset once into the gitignored `.eval-data/` cache and verifies 
 
 See [`eval/README.md`](../eval/README.md) for details.
 
-## Knowledge template
+## Bootstrap knowledge
 
-New installations receive the Git-versioned default knowledge template. Template changes are
-intentionally separate from software updates: use the dashboard's **Settings → Knowledge
-template** panel or `context-use template plan` to preview missing directories and pages, safe
-updates, and local conflicts, then apply the reviewed plan from the dashboard or with
-`context-use template apply`.
+New installations receive the Git-versioned default corpus during the isolated deployment
+preparation step. That source is installation bootstrap data, not a runtime filesystem or a
+template-management API. Once hypermedia cutover is finalized, redeployments skip preparation
+and every retained guide, instruction, state document, and owner document is managed through the
+same stable document identities, revisions, links, and search APIs.
 
-Existing directories are never removed, local directory-presentation drift and locally edited
-guides and managed pages are preserved, and create-only state pages are structurally checked but
-never overwritten. A page explicitly listed in the template's `retired.json` is archived only
-while it remains unpublished and template-owned; published or locally modified pages are
-preserved for review. The dashboard can preview and confirm an eligible local-customization
-replacement; from the CLI, add `--force-template` to both `context-use template plan` and
-`context-use template apply` for the same behavior.
+To validate changes to the shipped bootstrap corpus, use its focused database/template tests and
+the local corpus evaluation workflow. Do not add a dashboard or CLI path that reapplies the
+bootstrap tree to an already-finalized knowledge base.
 
 ## Knowledge automations
 
-Context Use stores automation instructions and supporting assets as ordinary private knowledge.
-An external harness such as OpenClaw can schedule a job that reads a known instruction page with
-`read_page` — for example, `automations/daily-fabric/instructions` — and then uses the ordinary
-knowledge and asset tools. Scheduling, retries, and run history stay in the harness. An
-incremental automation may keep exactly one non-secret opaque checkpoint on its stable `state`
-page.
+Context Use stores automation instructions and supporting assets as ordinary private hypermedia
+documents. An external harness such as OpenClaw can schedule a job that finds the instruction by
+title or stable document identity, reads it with the document tools, then follows its links and
+uses the ordinary knowledge and asset tools. Scheduling, retries, and run history stay in the
+harness. An incremental automation may keep exactly one non-secret opaque checkpoint in its
+stable state document.
 
-The default template installs managed instruction pages for activity distillation, diary
-composition, and guideline consistency review, with checkpoint state where required. Apply
-template updates with `context-use template apply`, then schedule an external harness to open and
-execute the relevant instruction page. Those pages are the canonical operating contracts and are
-deliberately not duplicated here.
+The bootstrap corpus includes instruction documents for activity distillation, diary composition,
+and guideline consistency review, with checkpoint state where required. Schedule an external
+harness to search for and execute the relevant instruction document. Those documents are the
+canonical operating contracts and are deliberately not duplicated here.
 
 The dashboard's **History** section shows the same durable page ledger, including creates,
 updates, archives, and deletion tombstones without page bodies or diffs.

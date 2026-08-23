@@ -21,9 +21,10 @@ those links, and so do your agents.
 
 ## Agents keep it organized
 
-A versioned knowledge template tells agents where each kind of page belongs, how it's
-summarized, and when to create a new page instead of extending an old one. That's what keeps a
-knowledge base this size usable rather than a pile of notes.
+Versioned instruction documents tell agents how to summarize, connect, and maintain durable
+knowledge. Agents find those instructions through search and stable links, just like every other
+hypermedia document. That's what keeps a knowledge base this size usable rather than a pile of
+notes.
 
 ## Private by default
 
@@ -78,7 +79,7 @@ knowledge base. See [`docs/nango.md`](docs/nango.md).
 
 ## Documentation
 
-- [Development](docs/development.md) — running locally, tests, and knowledge template updates.
+- [Development](docs/development.md) — running locally, tests, and bootstrap-corpus maintenance.
 - [Data ingestion](docs/nango.md) — Nango setup, integrations, and operations.
 - [Evals](eval/README.md) — knowledge quality evaluation.
 - [Security](SECURITY.md)
