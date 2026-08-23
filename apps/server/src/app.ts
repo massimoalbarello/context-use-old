@@ -403,7 +403,7 @@ function pathlessPreviewTargets(
   };
 }
 
-async function unavailableExportAssets(assets: Array<Pick<KnowledgeExportAsset, "s3_object_key" | "size_bytes" | "content_hash" | "current_path">>): Promise<string[]> {
+async function unavailableExportAssets(assets: Array<Pick<KnowledgeExportAsset, "document_id" | "filename" | "s3_object_key" | "size_bytes" | "content_hash">>): Promise<string[]> {
   const missing: string[] = [];
   const concurrency = 8;
   for (let index = 0; index < assets.length; index += concurrency) {
@@ -414,24 +414,22 @@ async function unavailableExportAssets(assets: Array<Pick<KnowledgeExportAsset, 
       asset.content_hash,
     )));
     verified.forEach((available, offset) => {
-      if (!available) missing.push(batch[offset]!.current_path);
+      if (!available) {
+        const asset = batch[offset]!;
+        missing.push(`${asset.filename} (${asset.document_id})`);
+      }
     });
   }
   return missing;
 }
 
 function exportSize(snapshot: KnowledgeExportSnapshot): number {
-  return snapshot.directories.reduce((total, directory) => (
+  return snapshot.pages.reduce((total, page) => (
     total
-    + Buffer.byteLength(directory.title)
-    + Buffer.byteLength(directory.summary)
+    + Buffer.byteLength(page.title)
+    + Buffer.byteLength(page.summary)
+    + Buffer.byteLength(page.body_markdown)
   ), 0)
-    + snapshot.pages.reduce((total, page) => (
-      total
-      + Buffer.byteLength(page.title)
-      + Buffer.byteLength(page.summary)
-      + Buffer.byteLength(page.body_markdown)
-    ), 0)
     + snapshot.assets.reduce((total, asset) => total + Number(asset.size_bytes), 0);
 }
 
@@ -450,7 +448,7 @@ function exportFilename(): string {
 
 type KnowledgeExportSource = {
   sizeBytes: number;
-  assets: Array<Pick<KnowledgeExportAsset, "s3_object_key" | "size_bytes" | "content_hash" | "current_path">>;
+  assets: Array<Pick<KnowledgeExportAsset, "document_id" | "filename" | "s3_object_key" | "size_bytes" | "content_hash">>;
   stream: ReadableStream<Uint8Array>;
 };
 

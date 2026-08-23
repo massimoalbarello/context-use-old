@@ -7,7 +7,8 @@ const ZIP_DATE = new Date("1980-01-01T00:00:00.000Z");
 export type KnowledgeZipWriter = ZipWriter<unknown>;
 
 type StoredKnowledgeAsset = {
-  current_path: string;
+  document_id: string;
+  filename: string;
   s3_object_key: string;
   size_bytes: number | string;
 };
@@ -48,7 +49,9 @@ export async function addStoredKnowledgeAsset(
   signal: AbortSignal,
 ): Promise<void> {
   const content = new Response(await storage.read(asset.s3_object_key)).body;
-  if (!content) throw new Error(`Asset content is missing for ${asset.current_path}`);
+  if (!content) {
+    throw new Error(`Asset content is missing for ${asset.filename} (${asset.document_id})`);
+  }
   // Supplying the known size avoids unnecessary Zip64 entries, which macOS
   // Archive Utility rejects for otherwise ordinary archives.
   await zip.add(entryPath, {

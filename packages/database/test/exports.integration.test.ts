@@ -148,18 +148,16 @@ describeDatabase("passkey-bound current knowledge exports", () => {
 
     await confirmations.claimExport(intent.id, principal);
     const snapshot = await exports.currentSnapshot();
-    expect(snapshot.pages.find(({ id }) => id === active.id)?.body_markdown).toBe("Current body at download");
-    expect(snapshot.pages.find(({ id }) => id === active.id)?.summary).toBe("The active page included in an export.");
-    expect(snapshot.pages.some(({ id }) => id === archived.id)).toBe(false);
-    expect(snapshot.directories.find(({ current_path }) => current_path === fixtureRoot)).toMatchObject({
-      title: "Export fixture",
-      summary: "Knowledge used to test exports.",
-    });
+    expect(snapshot.pages.find(({ document_id }) => document_id === active.id)?.body_markdown)
+      .toBe("Current body at download");
+    expect(snapshot.pages.find(({ document_id }) => document_id === active.id)?.summary)
+      .toBe("The active page included in an export.");
+    expect(snapshot.pages.some(({ document_id }) => document_id === archived.id)).toBe(false);
     // The stored name follows the path leaf, so the export carries asset.pdf, not friendly.pdf.
-    expect(snapshot.assets.find(({ id }) => id === asset.id)).toMatchObject({
+    expect(snapshot.assets.find(({ document_id }) => document_id === asset.id)).toMatchObject({
       filename: "asset.pdf",
-      current_path: `${fixtureRoot}/asset`,
     });
+    expect(snapshot.links.every((link) => !Object.hasOwn(link, "path"))).toBe(true);
     expect(await exports.getIntent(intent.id)).toMatchObject({ download_started_at: expect.any(Date) });
     const confirmedIntent = await exports.getIntent(intent.id);
     expect(new Date(confirmedIntent!.expires_at).getTime()).toBeGreaterThan(Date.now() + 23 * 60 * 60 * 1_000);
