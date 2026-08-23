@@ -175,6 +175,7 @@ export {
   type PathlessAssetPublicationAdoptionArtifactReceipt,
   type PathlessAssetPublicationAdoptionWriteAuthorization,
   type PathlessAssetPublicationWriteAuthorization,
+  type PathlessDashboardPublicationStatus,
   type PathlessPagePublicationAdoptionArtifactReceipt,
   type PathlessPagePublicationAdoptionWriteAuthorization,
   type PathlessPagePublicationWriteAuthorization,

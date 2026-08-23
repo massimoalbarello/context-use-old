@@ -18,10 +18,12 @@ import {
   PublicEntrypointRepository,
   SourceRecordRepository,
   createPool,
+  extractDocumentLinks,
   extractDirectoryLinks,
   extractWikiLinks,
   knowledgeTemplateBaseline,
   knowledgeTemplateMigrationContract,
+  mapConcurrently,
   reconcileKnowledgeTemplate,
   wikiLinkCandidatePaths,
 } from "@context-use/database";
@@ -65,6 +67,7 @@ import {
   dashboardKnowledgeDocument,
   dashboardKnowledgeRevision,
   dashboardKnowledgeRevisionDelta,
+  dashboardPathlessRepublicationReview,
 } from "./dashboard-knowledge-documents.ts";
 import { bodyJson, json, problem, routeError } from "./http.ts";
 import { publicationWarnings, renderMarkdown } from "./markdown.ts";
@@ -111,6 +114,17 @@ const pathlessPublicEntrypoint = new PathlessPublicEntrypointRepository(dashboar
 const knowledgeExports = new KnowledgeExportRepository(dashboardPool, markdownObjects);
 const knowledgeResets = new KnowledgeResetRepository(dashboardPool, markdownObjects);
 const dashboardDocumentCatalog = new PrivateDocumentCatalogRepository(dashboardPool);
+
+async function dashboardAssetPublication<T extends { id: string; public_path: string | null }>(
+  asset: T,
+) {
+  const status = await pathlessPublications.status("asset", asset.id);
+  return {
+    ...asset,
+    public_id: status.public_id,
+    pathless_published: status.active,
+  };
+}
 
 async function reconcileDashboardKnowledgeTemplate(input: {
   templateName: string;
@@ -186,16 +200,11 @@ function privatePageResolvers(sourcePath: string) {
       const page = await dashboardPages.metadata(id);
       return page ? { available: true as const, href: `/app/documents/${id}` } : { available: false as const };
     },
-    directory: async (id: string) => {
-      const directory = await dashboardDirectories.get(id);
-      return directory ? { available: true as const, href: `/app/directories/${id}` } : { available: false as const };
-    },
+    directory: async () => ({ available: false as const }),
     pagePath: async (path: string) => {
       for (const candidate of wikiLinkCandidatePaths(path, sourcePath)) {
         const page = await dashboardPages.metadataByPath(candidate);
         if (page) return { available: true as const, href: `/app/documents/${page.id}` };
-        const directory = await dashboardDirectories.getByPath(candidate);
-        if (directory) return { available: true as const, href: `/app/directories/${directory.id}` };
       }
       return { available: false as const };
     },
@@ -209,9 +218,10 @@ function privatePageResolvers(sourcePath: string) {
 }
 
 async function dashboardKnowledgeDocumentResponse(documentId: string) {
-  const [document, compatibility] = await Promise.all([
+  const [document, compatibility, pathlessStatus] = await Promise.all([
     dashboardKnowledgeDocuments.get(documentId),
     dashboardPages.metadata(documentId),
+    pathlessPublications.status("page", documentId),
   ]);
   if (!document || !compatibility) return null;
   const renderedHtml = await renderMarkdown(
@@ -219,10 +229,17 @@ async function dashboardKnowledgeDocumentResponse(documentId: string) {
     privatePageResolvers(compatibility.current_path),
   );
   return dashboardKnowledgeDocument(document, renderedHtml, {
-    // A pathless-created compatibility label is deliberately not a public
-    // route. The later pathless-publication cutover gives these documents an
-    // opaque representation token instead.
-    legacy_publication_eligible: !compatibility.current_path.startsWith("pathless-page-"),
+    pathless_published_revision_id: pathlessStatus.active
+      ? pathlessStatus.published_revision_id
+      : null,
+    pathless_published_revision_number: pathlessStatus.active
+      ? pathlessStatus.published_revision_number
+      : null,
+    public_url: pathlessStatus.active && pathlessStatus.public_id
+      ? `${config.APP_ORIGIN}/p/${pathlessStatus.public_id}`
+      : compatibility.public_path
+        ? `${config.APP_ORIGIN}/p/${compatibility.public_path}`
+        : null,
   });
 }
 
@@ -280,6 +297,108 @@ function publishedPreviewResolvers(pageId: string, sourcePath: string) {
             contentType: asset.content_type,
           }
         : { available: false as const };
+    },
+  };
+}
+
+type PathlessPreviewTarget = {
+  kind: "page" | "asset" | "record" | "document";
+  id: string;
+  label: string;
+  public: boolean;
+  href: string | null;
+  contentType: string | null;
+};
+
+function pathlessPreviewTargets(
+  publishingPage: { id: string; title: string },
+) {
+  const cache = new Map<string, Promise<PathlessPreviewTarget>>();
+  const resolveTarget = (id: string): Promise<PathlessPreviewTarget> => {
+    const cached = cache.get(id);
+    if (cached) return cached;
+    const pending = (async (): Promise<PathlessPreviewTarget> => {
+      if (id === publishingPage.id) {
+        return {
+          kind: "page",
+          id,
+          label: publishingPage.title,
+          public: true,
+          // The permanent public UUID is allocated when the owner starts the
+          // publication intent, after this read-only preview.
+          href: "#",
+          contentType: null,
+        };
+      }
+      const document = await dashboardDocumentCatalog.get(id);
+      if (!document || document.lifecycle !== "active") {
+        return {
+          kind: "document",
+          id,
+          label: "Missing document",
+          public: false,
+          href: null,
+          contentType: null,
+        };
+      }
+      if (document.document_kind === "asset") {
+        const status = await pathlessPublications.status("asset", id);
+        return {
+          kind: "asset",
+          id,
+          label: document.filename ?? "Asset",
+          public: status.active,
+          href: status.active && status.public_id
+            ? `${config.ASSET_ORIGIN}/a/${status.public_id}`
+            : null,
+          contentType: document.content_type,
+        };
+      }
+      if (document.document_kind === "knowledge") {
+        const status = await pathlessPublications.status("page", id);
+        return {
+          kind: "page",
+          id,
+          label: document.title ?? "Knowledge document",
+          public: status.active,
+          href: status.active && status.public_id
+            ? `/p/${status.public_id}`
+            : null,
+          contentType: null,
+        };
+      }
+      return {
+        kind: "record",
+        id,
+        label: document.title ?? "Source record",
+        public: false,
+        href: null,
+        contentType: null,
+      };
+    })();
+    cache.set(id, pending);
+    return pending;
+  };
+  return {
+    resolveTarget,
+    markdownResolvers: {
+      document: async (id: string) => {
+        const target = await resolveTarget(id);
+        return target.public && target.href
+          ? target.kind === "asset"
+            ? {
+                available: true as const,
+                representation: "asset" as const,
+                href: target.href,
+                contentType: target.contentType ?? "application/octet-stream",
+              }
+            : { available: true as const, representation: "page" as const, href: target.href }
+          : { available: false as const };
+      },
+      page: async () => ({ available: false as const }),
+      directory: async () => ({ available: false as const }),
+      pagePath: async () => ({ available: false as const }),
+      asset: async () => ({ available: false as const }),
     },
   };
 }
@@ -782,6 +901,61 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     const document = await dashboardKnowledgeDocumentResponse(z.string().uuid().parse(params.id));
     return document ? json(document) : problem("Knowledge document not found", 404, "not_found");
   })
+  .get("/api/dashboard/knowledge-documents/:id/publication-preview", async ({ request, params }) => {
+    await ownerRequest(request);
+    const documentId = z.string().uuid().parse(params.id);
+    const [document, status] = await Promise.all([
+      dashboardKnowledgeDocuments.get(documentId),
+      pathlessPublications.status("page", documentId),
+    ]);
+    if (!document || document.archived_at) {
+      return problem("Active knowledge document not found", 404, "not_found");
+    }
+    const preview = pathlessPreviewTargets({ id: documentId, title: document.title });
+    const renderedHtml = await renderMarkdown(
+      document.body_markdown,
+      preview.markdownResolvers,
+    );
+    const references = await Promise.all(
+      extractDocumentLinks(document.body_markdown).map(preview.resolveTarget),
+    );
+    let republication = null;
+    if (status.active && status.published_revision_number !== null) {
+      const [published, candidate, history] = await Promise.all([
+        dashboardKnowledgeDocuments.revision(documentId, status.published_revision_number),
+        dashboardKnowledgeDocuments.revision(documentId, document.revision_number),
+        dashboardKnowledgeDocuments.history(documentId, { limit: 100 }),
+      ]);
+      if (!published || !candidate) {
+        return problem("Published revision evidence is unavailable", 409, "publication_state_invalid");
+      }
+      republication = await dashboardPathlessRepublicationReview(
+        published,
+        candidate,
+        history.revisions,
+      );
+    }
+    return json({
+      page_id: document.document_id,
+      version_id: document.current_revision_id,
+      version_number: document.revision_number,
+      title: document.title,
+      summary: document.summary,
+      rendered_html: renderedHtml,
+      current_public_url: status.active && status.public_id
+        ? `${config.APP_ORIGIN}/p/${status.public_id}`
+        : null,
+      warnings: publicationWarnings(
+        document.body_markdown,
+        [document.title, document.summary],
+      ),
+      references: references.map(({ contentType: _contentType, href: publicUrl, ...reference }) => ({
+        ...reference,
+        public_url: publicUrl === "#" ? null : publicUrl,
+      })),
+      republication,
+    });
+  })
   .put("/api/dashboard/knowledge-documents/:id", async ({ request, params }) => {
     const principal = await ownerRequest(request, true);
     const documentId = z.string().uuid().parse(params.id);
@@ -1073,7 +1247,11 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
 
   .get("/api/dashboard/assets", async ({ request }) => {
     await ownerRequest(request);
-    return json(await dashboardAssets.list());
+    return json(await mapConcurrently(
+      await dashboardAssets.list(),
+      8,
+      dashboardAssetPublication,
+    ));
   })
   .post("/api/dashboard/assets/upload-intent", async ({ request }) => {
     await ownerRequest(request, true);
@@ -1089,7 +1267,9 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
       ...(input.duration_seconds !== undefined ? { durationSeconds: input.duration_seconds } : {}),
     });
     const { objectKey: _hidden, ...asset } = created;
-    return json({ asset }, 201);
+    return json({
+      asset: { ...asset, public_id: null, pathless_published: false },
+    }, 201);
   })
   // Keep large dashboard recovery uploads on the raw streaming path too.
   .put("/api/dashboard/assets/:id/content", async ({ request, params }) => {
@@ -1126,13 +1306,19 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     await ownerRequest(request);
     const asset = await dashboardAssets.get(z.string().uuid().parse(params.id), true);
     if (!asset) return problem("Asset not found", 404, "not_found");
+    const pathlessStatus = await pathlessPublications.status("asset", asset.id);
     return json({
       content_available: await storage.verify(
         asset.s3_object_key,
         Number(asset.size_bytes),
         asset.content_hash,
       ),
-      public_url: `${config.ASSET_ORIGIN}/a/${asset.public_path ?? asset.current_path}`,
+      public_url: pathlessStatus.active && pathlessStatus.public_id
+        ? `${config.ASSET_ORIGIN}/a/${pathlessStatus.public_id}`
+        : asset.public_path
+          ? `${config.ASSET_ORIGIN}/a/${asset.public_path}`
+          : null,
+      pathless_published: pathlessStatus.active,
     });
   })
   .get("/api/dashboard/assets/:id/content", async ({ request, params }) => {
@@ -1212,7 +1398,12 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
   })
   .get("/api/dashboard/pathless-publication-entrypoint/candidates", async ({ request }) => {
     await ownerRequest(request);
-    return json({ candidates: await pathlessPublicEntrypoint.candidates() });
+    return json({
+      candidates: (await pathlessPublicEntrypoint.candidates()).map(({
+        representation_token: _representationToken,
+        ...candidate
+      }) => candidate),
+    });
   })
   .put("/api/dashboard/pathless-publication-entrypoint", async ({ request }) => {
     await ownerRequest(request, true);

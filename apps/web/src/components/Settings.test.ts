@@ -7,6 +7,7 @@ import {
   KnowledgeExportPreparationStatus,
   Settings,
   knowledgeResetCompletionMessage,
+  publicEntrypointOptionLabel,
   storedExportJob,
   type KnowledgeExportJob,
 } from "./Settings.tsx";
@@ -20,6 +21,15 @@ const processing: KnowledgeExportJob = {
 };
 
 const noop = () => undefined;
+
+test("public entrypoint candidates are identified by title and summary, not a path", () => {
+  expect(publicEntrypointOptionLabel({
+    public_id: "11111111-1111-4111-8111-111111111111",
+    public_title: "Investment thesis",
+    public_summary: "Why the portfolio favors durable compounders.",
+    public_last_edited_at: "2026-08-23T12:00:00.000Z",
+  })).toBe("Investment thesis — Why the portfolio favors durable compounders.");
+});
 
 describe("knowledge export settings", () => {
   test("formats the current export size for passkey review", () => {

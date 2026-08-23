@@ -86,6 +86,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       ["/api/dashboard/pathless-publication-entrypoint", "GET"],
       ["/api/dashboard/pathless-publication-entrypoint/candidates", "GET"],
       ["/api/dashboard/pathless-publication-entrypoint", "PUT"],
+      ["/api/dashboard/knowledge-documents/11111111-1111-4111-8111-111111111111/publication-preview", "GET"],
     ] as const) {
       const pathless = await application!.handle(new Request(`http://localhost:3000${path}`, {
         method,

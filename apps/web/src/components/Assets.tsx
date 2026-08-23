@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { startAuthentication } from "@simplewebauthn/browser";
 import { api, uploadAssetContent } from "../api.ts";
+import { confirmPublicationChange } from "../publication-auth.ts";
 import type { Asset, AssetStatus } from "../types.ts";
 import { ActionDialog } from "./ActionDialog.tsx";
 
@@ -40,11 +40,12 @@ export function AssetDetails({
   const [previewFailed, setPreviewFailed] = useState(false);
   const [pendingAction, setPendingAction] = useState<"publish" | "unpublish" | "delete" | null>(null);
   const [actionError, setActionError] = useState("");
+  const isPublic = asset.pathless_published || Boolean(asset.public_path);
 
   const refreshStatus = async () => {
     const status = await api<AssetStatus>(`/api/dashboard/assets/${asset.id}/status`);
     setContentState(status.content_available ? "available" : "missing");
-    setPublicUrl(status.public_url);
+    setPublicUrl(status.public_url ?? "");
     setPreviewFailed(false);
   };
 
@@ -63,12 +64,12 @@ export function AssetDetails({
     setMessage("");
     setActionError("");
     try {
-      const created = await api<{ intent: { id: string }; authentication_options: Parameters<typeof startAuthentication>[0]["optionsJSON"] }>("/api/dashboard/publication-intents", {
-        method: "POST",
-        body: JSON.stringify({ action, target_kind: "asset", target_id: asset.id }),
+      await confirmPublicationChange({
+        action,
+        targetKind: "asset",
+        targetId: asset.id,
+        versionId: null,
       });
-      const response = await startAuthentication({ optionsJSON: created.authentication_options });
-      await api("/api/dashboard/publications/confirm", { method: "POST", body: JSON.stringify({ intent_id: created.intent.id, response }) });
       setMessage(action === "publish" ? "Published. The public URL below is now live." : "The asset is now private.");
       await onChanged();
       setPendingAction(null);
@@ -126,27 +127,27 @@ export function AssetDetails({
     setPendingAction(action);
   };
 
-  return <main className="content-page asset-details"><header><div><span className="path">{asset.current_path}</span><h1>{asset.filename}</h1></div><span className={asset.public_path ? "status public" : "status"}>{asset.public_path ? "Public" : "Private"}</span></header>
+  return <main className="content-page asset-details"><header><div><span className="document-kicker">Document asset</span><h1>{asset.filename}</h1></div><span className={isPublic ? "status public" : "status"}>{isPublic ? "Public" : "Private"}</span></header>
     {message && <p className="asset-message" role="status">{message}</p>}
     <section className="asset-card">
       {contentState === "checking" && <div className="asset-preview-state">Checking asset content…</div>}
       {contentState === "missing" && <div className="asset-preview-state error"><strong>Content upload incomplete</strong><span>The asset record exists, but its original bytes are missing or do not match. Choose the exact original file to finish the upload.</span><label className="button asset-upload-button">{busy === "upload" ? "Uploading…" : "Choose original file"}<input type="file" accept={asset.content_type} disabled={busy !== null} onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void finishUpload(file); }} /></label></div>}
       {contentState === "available" && !previewFailed && <AssetPreview asset={asset} onPreviewError={() => setPreviewFailed(true)} />}
       {contentState === "available" && previewFailed && <div className="asset-preview-state"><strong>Preview unavailable</strong><span>The content is stored correctly, but this browser could not display the format. You can still open the original file.</span></div>}
-      <dl><div><dt>Path</dt><dd>{asset.current_path}</dd></div><div><dt>Type</dt><dd>{asset.content_type}</dd></div><div><dt>Size</dt><dd>{(asset.size_bytes / 1024).toFixed(1)} KB</dd></div><div><dt>{contentState === "available" ? "Uploaded" : "Record created"}</dt><dd>{new Date(asset.created_at).toLocaleString()}</dd></div></dl>
+      <dl><div><dt>Type</dt><dd>{asset.content_type}</dd></div><div><dt>Size</dt><dd>{(asset.size_bytes / 1024).toFixed(1)} KB</dd></div><div><dt>{contentState === "available" ? "Uploaded" : "Record created"}</dt><dd>{new Date(asset.created_at).toLocaleString()}</dd></div></dl>
       <div className="asset-reference"><span>Private reference</span><code>context-use://document/{asset.id}</code></div>
-      {asset.public_path && publicUrl && <div className="asset-reference public"><span>Public URL</span><div><code>{publicUrl}</code><button onClick={copyPublicUrl}>Copy</button></div></div>}
+      {isPublic && publicUrl && <div className="asset-reference public"><span>Public URL</span><div><code>{publicUrl}</code><button onClick={copyPublicUrl}>Copy</button></div></div>}
       <div className="button-row">
         {contentState === "available" && <a className="button" href={`/api/dashboard/assets/${asset.id}/content`} target="_blank" rel="noreferrer">Open original</a>}
-        {asset.public_path && publicUrl && <a className="button primary" href={publicUrl} target="_blank" rel="noreferrer">Open public link</a>}
-        <button disabled={busy !== null || (!asset.public_path && contentState !== "available")} title={!asset.public_path && contentState === "missing" ? "Finish the content upload before publishing" : undefined} onClick={() => openAction(asset.public_path ? "unpublish" : "publish")}>{asset.public_path ? "Unpublish" : "Publish with passkey"}</button>
-        {!asset.public_path && <button className="danger" disabled={busy !== null} onClick={() => openAction("delete")}>Delete</button>}
+        {isPublic && publicUrl && <a className="button primary" href={publicUrl} target="_blank" rel="noreferrer">Open public link</a>}
+        <button disabled={busy !== null || (!isPublic && contentState !== "available")} title={!isPublic && contentState === "missing" ? "Finish the content upload before publishing" : undefined} onClick={() => openAction(isPublic ? "unpublish" : "publish")}>{isPublic ? "Unpublish" : "Publish with passkey"}</button>
+        {!isPublic && <button className="danger" disabled={busy !== null} onClick={() => openAction("delete")}>Delete</button>}
       </div>
     </section>
     {pendingAction === "publish" && <ActionDialog
       eyebrow="Public asset"
       title={`Publish ${asset.filename}?`}
-      description={<>The exact original file will become public at <code>/a/{asset.current_path}</code>. Any embedded EXIF, author, location, or document metadata will remain in the file.</>}
+      description="The exact original file will become public at a permanent opaque URL. Any embedded EXIF, author, location, or document metadata will remain in the file."
       confirmLabel="Publish with passkey"
       workingLabel="Waiting for passkey…"
       working={busy === "publish"}

@@ -165,7 +165,7 @@ export function Editor({
   if (!page) return <main className="editor-empty">{message || "Loading page…"}</main>;
 
   const publishedVersion = history.find((version) => version.id === page.published_version_id);
-  const publishedVersionNumber = publishedVersion?.version_number;
+  const publishedVersionNumber = page.published_version_number ?? publishedVersion?.version_number;
   const currentVersion = history.find((version) => version.id === page.current_version_id);
   const lastEditedAt = currentVersion?.created_at ?? page.updated_at;
   const hasUnpublishedChanges = isPublishedPageOutdated(page);
@@ -266,14 +266,12 @@ export function Editor({
         <span className={page.published_version_id ? "status public" : "status"}>{page.archived_at ? "Archived" : page.published_version_id ? `Public${publishedVersionNumber ? ` v${publishedVersionNumber}` : ""}` : "Private"}</span>
         {!page.archived_at && !page.published_version_id && <button onClick={() => { setArchiveCommit(""); setArchiveError(""); setArchiveOpen(true); }}>Archive</button>}
         {page.archived_at && <button className="danger" onClick={() => { setDeletionError(""); setDeletionOpen(true); }}>Delete permanently</button>}
-        {!page.archived_at && !page.published_version_id && page.legacy_publication_eligible && <button className="primary" onClick={() => setPublishingVersion(page.version_number)}>Publish</button>}
+        {!page.archived_at && !page.published_version_id && <button className="primary" onClick={() => setPublishingVersion(page.version_number)}>Publish</button>}
         {!page.archived_at && page.published_version_id && <button className="danger" disabled={unpublishWorking} onClick={() => void unpublish()}>{unpublishWorking ? "Waiting for passkey…" : "Unpublish"}</button>}
-        {!page.archived_at && page.published_version_id && hasUnpublishedChanges && <button className="primary" onClick={() => setPublishingVersion(page.version_number)}>Publish latest</button>}
+        {!page.archived_at && page.published_version_id && (!page.pathless_published || hasUnpublishedChanges) && <button className="primary" onClick={() => setPublishingVersion(page.version_number)}>{page.pathless_published ? "Publish latest" : "Publish at permanent URL"}</button>}
       </div>
     </header>
-    {!page.archived_at && !page.published_version_id && !page.legacy_publication_eligible && <div className="publication-notice" role="status">
-      <div><strong>Private document</strong><span>Pathless publication will be enabled in the publication cutover.</span></div>
-    </div>}
+    {page.public_url && <div className="publication-notice" role="status"><div><strong>{page.pathless_published ? "Permanent public URL" : "Current public URL"}</strong><a href={page.public_url} target="_blank" rel="noreferrer">{page.public_url}</a></div></div>}
     {hasUnpublishedChanges && <div className="publication-notice pending publication-alert" role="status">
       <div>
         <strong>Published page is not up to date</strong>
@@ -322,7 +320,9 @@ export function Editor({
             {!page.archived_at && <div className="version-actions">
               {isPublished
                 ? <button className="danger" disabled={unpublishWorking} onClick={() => void unpublish()}>{unpublishWorking ? "Waiting for passkey…" : "Unpublish"}</button>
-                : <button className={isLatest ? "primary" : ""} onClick={() => setPublishingVersion(version.version_number)}>Publish this version</button>}
+                : isLatest
+                  ? <button className="primary" onClick={() => setPublishingVersion(version.version_number)}>Publish latest</button>
+                  : null}
             </div>}
           </div>
           {canCompare && <VersionComparison pageId={page.id} versionNumber={version.version_number} previousVersionNumber={previousVersionNumber} />}
@@ -333,7 +333,7 @@ export function Editor({
     {archiveOpen && <ActionDialog
       eyebrow="Immutable version"
       title={`Archive ${page.title}?`}
-      description="Archiving creates one final immutable version and removes this page from the active knowledge tree."
+      description="Archiving creates one final immutable version and removes this page from active search and navigation."
       confirmLabel="Archive page"
       workingLabel="Archiving…"
       working={archiveWorking}

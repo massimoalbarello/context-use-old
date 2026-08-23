@@ -91,11 +91,10 @@ export function PublicationDialog({ page, versionNumber, publishedVersionNumber,
     setPreview(null);
     setConfirmed(false);
     setError("");
-    api<PublicationPreview>(`/api/dashboard/pages/${page.id}/publication-preview?version=${versionNumber}`).then(setPreview).catch((cause: Error) => setError(cause.message));
+    api<PublicationPreview>(`/api/dashboard/knowledge-documents/${page.id}/publication-preview`).then(setPreview).catch((cause: Error) => setError(cause.message));
   }, [page.id, versionNumber]);
 
-  const targetIsLatest = page.version_number === versionNumber;
-  const canPublish = Boolean(preview);
+  const canPublish = Boolean(preview && preview.version_number === page.version_number);
 
   const changeVisibility = async () => {
     if (!preview) return;
@@ -117,7 +116,7 @@ export function PublicationDialog({ page, versionNumber, publishedVersionNumber,
     }
   };
 
-  const title = page.published_version_id
+  const title = page.pathless_published
     ? `Publish version v${versionNumber} instead`
     : `Publish version v${versionNumber}`;
 
@@ -126,20 +125,23 @@ export function PublicationDialog({ page, versionNumber, publishedVersionNumber,
     <span className="eyebrow">Exact, immutable snapshot</span>
     <h2 id="publication-title">{title}</h2>
     {preview && <p className="publication-explanation">
-      {page.published_version_id
+      {page.pathless_published
         ? `This will replace public v${publishedVersionNumber ?? "?"} with v${preview.version_number}.`
         : `This will make v${preview.version_number} public.`}
-      {!targetIsLatest && " Your latest editable version will not change."}
     </p>}
-    <p className="public-url">Public URL: {location.origin}/p/{preview?.path ?? "…"}</p>
+    <p className="public-url">{preview?.current_public_url
+      ? <>Public URL: <a href={preview.current_public_url} target="_blank" rel="noreferrer">{preview.current_public_url}</a></>
+      : "A permanent opaque public URL will be assigned after passkey confirmation."}</p>
     {preview && <section className="publication-metadata"><strong>{preview.title}</strong><p>{preview.summary}</p></section>}
-    {preview && <p className="publication-index-note">The framework will also expose the generated root and parent indexes needed to reach this page. Those indexes show folder titles, optional folder summaries, and explicitly published pages; private pages, instructions, and folder introductions remain hidden.</p>}
+    {preview && <p className="publication-index-note">This publishes only this exact document snapshot. Linked documents keep their own independent visibility and permanent URLs.</p>}
     {preview?.republication && <RepublicationReview
       review={preview.republication}
       candidateVersionNumber={preview.version_number}
     />}
     {preview?.warnings.map((warning) => <div className="warning" key={warning}>{warning}</div>)}
-    {preview?.references.length ? <section className="reference-review"><strong>Linked content has independent visibility</strong>{preview.references.map((reference) => <div key={`${reference.kind}-${reference.id}`}><span>{reference.kind} · {reference.label}{reference.path ? ` · ${reference.path}` : ""}</span><i className={reference.public ? "visible" : "private"}>{reference.public ? "Public" : "Private / missing"}</i></div>)}</section> : null}
+    {preview?.references.length ? <section className="reference-review"><strong>Linked content has independent visibility</strong>{preview.references.map((reference) => <div key={`${reference.kind}-${reference.id}`}><span>{reference.kind} · {reference.label}</span>{reference.public_url
+      ? <a href={reference.public_url} target="_blank" rel="noreferrer">Public</a>
+      : <i className="private">Private / missing</i>}</div>)}</section> : null}
     <div className="publication-preview" dangerouslySetInnerHTML={{ __html: preview?.rendered_html ?? "Loading preview…" }} />
     {canPublish && <label className="check"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />
       {preview?.republication && republicationChanged(preview.republication)

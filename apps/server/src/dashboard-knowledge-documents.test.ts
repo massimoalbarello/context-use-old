@@ -4,6 +4,7 @@ import {
   dashboardKnowledgeDocument,
   dashboardKnowledgeRevision,
   dashboardKnowledgeRevisionDelta,
+  dashboardPathlessRepublicationReview,
 } from "./dashboard-knowledge-documents.ts";
 
 const revision: KnowledgeDocumentRevision = {
@@ -41,14 +42,18 @@ describe("pathless dashboard knowledge responses", () => {
       body_markdown: revision.body_markdown,
     };
     const projected = dashboardKnowledgeDocument(document, "<p>Related</p>", {
-      legacy_publication_eligible: false,
+      pathless_published_revision_id: revision.revision_id,
+      pathless_published_revision_number: revision.revision_number,
+      public_url: `https://example.test/p/${revision.document_id}`,
     });
     expect(projected).toMatchObject({
       id: document.document_id,
       current_version_id: document.current_revision_id,
       version_number: 2,
       rendered_html: "<p>Related</p>",
-      legacy_publication_eligible: false,
+      published_version_number: 2,
+      pathless_published: true,
+      public_url: `https://example.test/p/${revision.document_id}`,
     });
     expect(projected).not.toHaveProperty("path");
     expect(projected).not.toHaveProperty("current_path");
@@ -78,5 +83,27 @@ describe("pathless dashboard knowledge responses", () => {
     }, revision);
     expect(delta.metadata_changes.map(({ field }) => field)).toEqual(["title", "summary"]);
     expect(delta.markdown_changes).toEqual([{ before: "Old body", after: revision.body_markdown }]);
+  });
+
+  test("reviews every retained edit queued behind an exact public revision", async () => {
+    const published = {
+      ...revision,
+      revision_id: "44444444-4444-4444-8444-444444444444",
+      revision_number: 1,
+      title: "Filesystem navigation",
+      summary: "Navigation follows folders.",
+      body_markdown: "Old body",
+    };
+    const review = await dashboardPathlessRepublicationReview(
+      published,
+      revision,
+      [revision],
+    );
+    expect(review).toMatchObject({
+      published_version_number: 1,
+      queued_versions_complete: true,
+      queued_versions: [{ version_number: 2, commit_message: revision.commit_message }],
+    });
+    expect(review.metadata_changes.map(({ field }) => field)).toEqual(["title", "summary"]);
   });
 });

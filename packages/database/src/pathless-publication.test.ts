@@ -144,6 +144,23 @@ describe("pathless publication dashboard boundary", () => {
     expect(calls.map(({ values }) => values?.[0])).toEqual([intentId, intentId]);
     expect(calls[0]!.values).toEqual(calls[1]!.values);
   });
+
+  test("reads publication status through one exact dashboard-safe boundary", async () => {
+    const status = {
+      public_id: publicId,
+      published_revision_id: revisionId,
+      published_revision_number: 4,
+      active: true,
+    };
+    const dashboard = recordingPool([status]);
+    const publications = new PathlessPublicationRepository(dashboard.pool);
+
+    expect(await publications.status("page", documentId)).toEqual(status);
+    expect(dashboard.calls.at(-1)).toEqual({
+      sql: expect.stringContaining("FROM get_pathless_dashboard_publication_status($1,$2)"),
+      values: ["page", documentId],
+    });
+  });
 });
 
 describe("pathless publication storage boundary", () => {
