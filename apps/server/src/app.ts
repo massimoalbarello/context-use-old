@@ -1,29 +1,19 @@
 import { resolve } from "node:path";
 import {
-  AutomationRegistryRepository,
   DocumentAssetRepository,
-  DirectoryRepository,
   KnowledgeDocumentRepository,
   KnowledgeExportRepository,
-  KnowledgeResetRepository,
-  KnowledgeSettingsRepository,
   PrivateDocumentCatalogRepository,
   type KnowledgeExportAsset,
   type KnowledgeExportSnapshot,
-  PageRepository,
   PageDeletionRepository,
   PathlessPublicationRepository,
   PathlessPublicEntrypointRepository,
   createPool,
   extractDocumentLinks,
-  knowledgeTemplateBaseline,
-  knowledgeTemplateMigrationContract,
   mapConcurrently,
-  reconcileKnowledgeTemplate,
 } from "@context-use/database";
 import {
-  KNOWLEDGE_PREPARATION_ACTION,
-  KNOWLEDGE_PREPARATION_SCOPE,
   archiveKnowledgeDocumentSchema,
   createKnowledgeDocumentSchema,
   pathlessPublicationEntrypointSchema,
@@ -38,7 +28,6 @@ import { assetContentResponse } from "./asset-content.ts";
 import { config, production } from "./config.ts";
 import {
   claimConfirmedExport,
-  completeConfirmedExportDownload,
   issueConfirmationOptions,
 } from "./confirmation-client.ts";
 import { dashboardServices } from "./dashboard-services.ts";
@@ -66,12 +55,6 @@ import { AssetIntegrityError, type GeneratedObjectMetadata } from "./storage.ts"
 import { BrokeredStorage } from "./storage-client.ts";
 import { BrokeredMarkdownObjectStore } from "./markdown-object-store.ts";
 import { streamKnowledgeExport } from "./knowledge-export.ts";
-import {
-  knowledgePreparationApplyResponse,
-  knowledgePreparationPlanResponse,
-  protectedOperationalTemplatePaths,
-} from "./knowledge-prepare.ts";
-import { operationalTemplateSkipPaths } from "./operational-document-prepare.ts";
 import { MAX_KNOWLEDGE_ARCHIVE_BYTES } from "./knowledge-zip.ts";
 import { disableStreamingRequestIdleTimeout } from "./streaming-timeout.ts";
 
@@ -82,17 +65,12 @@ const storage = new BrokeredStorage({
 });
 const markdownObjects = new BrokeredMarkdownObjectStore(storage);
 
-const dashboardPages = new PageRepository(dashboardPool, markdownObjects);
 const dashboardKnowledgeDocuments = new KnowledgeDocumentRepository(dashboardPool, markdownObjects);
-const dashboardDirectories = new DirectoryRepository(dashboardPool);
-const dashboardKnowledgeSettings = new KnowledgeSettingsRepository(dashboardPool);
-const dashboardAutomationRegistry = new AutomationRegistryRepository(dashboardPool);
 const pageDeletions = new PageDeletionRepository(dashboardPool);
 const dashboardAssets = new DocumentAssetRepository(dashboardPool);
 const pathlessPublications = new PathlessPublicationRepository(dashboardPool);
 const pathlessPublicEntrypoint = new PathlessPublicEntrypointRepository(dashboardPool);
 const knowledgeExports = new KnowledgeExportRepository(dashboardPool, markdownObjects);
-const knowledgeResets = new KnowledgeResetRepository(dashboardPool, markdownObjects);
 const dashboardDocumentCatalog = new PrivateDocumentCatalogRepository(dashboardPool);
 
 async function dashboardAssetPublication(asset: {
@@ -114,29 +92,6 @@ async function dashboardAssetPublication(asset: {
     public_id: status.public_id,
     pathless_published: status.active,
   };
-}
-
-async function reconcileDashboardKnowledgeTemplate(input: {
-  templateName: string;
-  install: boolean;
-  force: boolean;
-}) {
-  const contract = await knowledgeTemplateMigrationContract(input.templateName);
-  const skipOperationalPaths = await operationalTemplateSkipPaths({
-    repositories: {
-      settings: dashboardKnowledgeSettings,
-      pages: dashboardPages,
-      registry: dashboardAutomationRegistry,
-    },
-    template: contract,
-  });
-  return reconcileKnowledgeTemplate({
-    directories: dashboardDirectories,
-    pages: dashboardPages,
-  }, input.templateName, input.install, input.force, undefined, {
-    preserveLocallyModifiedPaths: protectedOperationalTemplatePaths(contract),
-    skipOperationalPaths,
-  });
 }
 
 class KnowledgeExportBuildError extends Error {
@@ -469,41 +424,7 @@ function readyExportBody(
   };
 }
 
-// One intent, one status: a pending reset reports its gate alongside the
-// preparation state the dashboard already polls, instead of a second endpoint.
-function exportResetState(intent: {
-  reset_requested: boolean;
-  download_completed_at: Date | null;
-  reset_completed_at: Date | null;
-}) {
-  if (!intent.reset_requested) return {};
-  return {
-    reset: {
-      archive_downloaded: Boolean(intent.download_completed_at),
-      cleared: Boolean(intent.reset_completed_at),
-    },
-  };
-}
-
-// The archive stream is wrapped rather than assumed delivered: a reset may only
-// proceed once the whole body has flushed to the owner's browser.
-function trackedExportDownload(response: Response, onDelivered: () => void): Response {
-  if (response.status !== 200 || !response.body) return response;
-  const delivered = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
-    flush() { onDelivered(); },
-  }));
-  return new Response(delivered, { status: response.status, headers: response.headers });
-}
-
 const emptyObjectSchema = z.object({}).strict();
-// Clearing knowledge is an export mode rather than a separate operation. Its
-// one passkey confirmation authorizes the portable snapshot and the deletion.
-const exportIntentSchema = z.object({
-  reset: z.boolean().default(false),
-}).strict();
-const templateApplySchema = z.object({
-  force_template: z.boolean(),
-}).strict();
 
 const webRoot = resolve(config.WEB_DIST);
 function webFile(path: string): Bun.BunFile | null {
@@ -540,29 +461,6 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     await ownerRequest(request);
     return json({ services: dashboardServices(config) });
   })
-  .get("/api/dashboard/knowledge-template/plan", async ({ request, query }) => {
-    await ownerRequest(request);
-    const forceTemplate = query.force_template === undefined
-      ? false
-      : z.enum(["true", "false"]).transform((value) => value === "true").parse(query.force_template);
-    const template = await reconcileDashboardKnowledgeTemplate({
-      templateName: "default",
-      install: false,
-      force: forceTemplate,
-    });
-    return json(knowledgePreparationPlanResponse(template));
-  })
-  .post("/api/dashboard/knowledge-template/apply", async ({ request }) => {
-    await ownerRequest(request, true);
-    const input = templateApplySchema.parse(await bodyJson(request));
-    const template = await reconcileDashboardKnowledgeTemplate({
-      templateName: "default",
-      install: true,
-      force: input.force_template,
-    });
-    return json(knowledgePreparationApplyResponse(template));
-  })
-
   .get("/app", async () => {
     const file = webFile("index.html");
     return file && await file.exists() ? new Response(file, { headers: { ...securityHeaders, "content-type": "text/html; charset=utf-8" } }) : problem("Dashboard build not found", 503);
@@ -580,12 +478,9 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
 
   .post("/api/dashboard/knowledge-export-intents", async ({ request }) => {
     const principal = await ownerRequest(request, true);
-    const { reset } = exportIntentSchema.parse(await bodyJson(request));
-    // Read what a reset would destroy before the intent exists, so the warning
-    // the owner confirms describes the knowledge the archive is about to cover.
-    const knowledge = reset ? await knowledgeResets.summary() : null;
+    emptyObjectSchema.parse(await bodyJson(request));
     const exportPrincipal = { ownerUserId: principal.userId, sessionId: principal.sessionId };
-    const intent = await knowledgeExports.createIntent(exportPrincipal, reset);
+    const intent = await knowledgeExports.createIntent(exportPrincipal, false);
     await Promise.allSettled(intent.discarded_export_ids.map((id) => {
       exportPreparations.delete(id);
       return storage.deleteGenerated(stagedExportKey(id));
@@ -625,12 +520,10 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     return json({
       intent: { id: intent.id, expires_at: intent.expires_at },
       summary: {
-        reset: intent.reset_requested,
         page_count: intent.page_count,
         asset_count: intent.asset_count,
         total_bytes: intent.total_bytes,
       },
-      knowledge,
       authentication_options: authenticationOptions,
     }, 201);
   })
@@ -643,73 +536,6 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     });
     return json({ cancelled: true });
   })
-  .post("/api/dashboard/knowledge-resets/:id/clear", async ({ request, params }) => {
-    const principal = await ownerRequest(request, true);
-    emptyObjectSchema.parse(await bodyJson(request));
-    const intentId = z.string().uuid().parse(params.id);
-    const intent = await knowledgeExports.getIntent(intentId);
-    if (!intent || !intent.reset_requested
-        || intent.owner_user_id !== principal.userId || intent.session_id !== principal.sessionId) {
-      return problem("Knowledge reset intent not found", 404, "not_found");
-    }
-    if (!intent.confirmed_at || new Date(intent.expires_at).getTime() <= Date.now()) {
-      return problem("A fresh passkey confirmation is required", 403, "passkey_required");
-    }
-    if (intent.reset_completed_at) {
-      return problem("This knowledge reset has already run", 409, "reset_consumed");
-    }
-    if (!intent.download_completed_at) {
-      return problem(
-        "Download the portable snapshot before the knowledge base can be cleared",
-        409,
-        "archive_not_downloaded",
-      );
-    }
-    const baseline = await knowledgeTemplateBaseline("default");
-    const objectKeys = await knowledgeResets.assetObjectKeys();
-    const cleared = await knowledgeResets.clear(intentId, {
-      ownerUserId: principal.userId,
-      sessionId: principal.sessionId,
-    }, baseline);
-    // Storage bytes outlive their rows deliberately: a failure here leaves
-    // unreferenced objects, never a page pointing at a missing file.
-    const removals = await Promise.allSettled(objectKeys.map((key) => storage.delete(key)));
-    if (removals.some((removal) => removal.status === "rejected")) {
-      console.warn("knowledge_reset_asset_cleanup_incomplete", { intentId });
-    }
-    // The deletion has already committed, so a template failure must not be
-    // reported as a failed clear. Surface it as the recoverable step it is.
-    try {
-      const template = await reconcileDashboardKnowledgeTemplate({
-        templateName: baseline.template,
-        install: true,
-        force: true,
-      });
-      const preparation = knowledgePreparationApplyResponse(template);
-      return json({
-        cleared,
-        template,
-        corpus: null,
-        preparation_scope: preparation.preparation_scope,
-        preparation_required: preparation.preparation_required,
-        preparation_action: preparation.preparation_action,
-        template_error: null,
-      });
-    } catch (error) {
-      console.error("knowledge_reset_prepare_failed", error instanceof Error
-        ? { intentId, name: error.name }
-        : { intentId, type: typeof error });
-      return json({
-        cleared,
-        template: null,
-        corpus: null,
-        preparation_required: true,
-        preparation_scope: KNOWLEDGE_PREPARATION_SCOPE,
-        preparation_action: KNOWLEDGE_PREPARATION_ACTION,
-        template_error: "The knowledge base was cleared, but template reconciliation did not complete. Redeploy to run the isolated knowledge-prepare one-shot before using the knowledge services.",
-      });
-    }
-  })
   .get("/api/dashboard/knowledge-exports/:id/status", async ({ request, params }) => {
     const principal = await ownerRequest(request);
     const intentId = z.string().uuid().parse(params.id);
@@ -720,23 +546,21 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     if (!intent.confirmed_at || new Date(intent.expires_at).getTime() <= Date.now()) {
       return problem("A fresh passkey confirmation is required", 403, "passkey_required");
     }
-    const reset = exportResetState(intent);
     const preparation = await ensureKnowledgeExport(
       intentId,
       () => claimConfirmedExport(intentId, principal),
     );
     if (preparation.status === "ready") {
-      return json({ ...readyExportBody(intentId, preparation.staged), ...reset });
+      return json(readyExportBody(intentId, preparation.staged));
     }
     if (preparation.status === "failed") {
       return json({
         status: "failed",
         message: preparation.message,
         code: preparation.code,
-        ...reset,
       });
     }
-    return json({ status: "processing", status_url: exportStatusUrl(intentId), ...reset }, 202);
+    return json({ status: "processing", status_url: exportStatusUrl(intentId) }, 202);
   })
   .get("/api/dashboard/knowledge-exports/:id/download", async ({ request, params, server }) => {
     disableStreamingRequestIdleTimeout(server, request);
@@ -767,14 +591,7 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
       size_bytes: preparation.staged.sizeBytes,
       content_hash: preparation.staged.contentHash,
     }, storage, false, objectKey);
-    if (!intent.reset_requested || intent.download_completed_at) return response;
-    return trackedExportDownload(response, () => {
-      void completeConfirmedExportDownload(intentId, principal).catch((error: unknown) => {
-        console.error("knowledge_export_download_completion_failed", error instanceof Error
-          ? { intentId, name: error.name, message: error.message }
-          : { intentId, type: typeof error });
-      });
-    });
+    return response;
   })
   .get("/api/dashboard/documents", async ({ request, query }) => {
     await ownerRequest(request);

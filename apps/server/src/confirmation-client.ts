@@ -26,10 +26,9 @@ export async function issueConfirmationOptions(
 async function exportDownloadMark(
   intentId: string,
   principal: DashboardPrincipal,
-  path: "claim" | "complete-download",
 ): Promise<void> {
   const endpoint = config.CONFIRMATION_INTERNAL_URL;
-  const internalRequest = new Request(`${endpoint}/internal/knowledge-exports/${encodeURIComponent(intentId)}/${path}`, {
+  const internalRequest = new Request(`${endpoint}/internal/knowledge-exports/${encodeURIComponent(intentId)}/claim`, {
     method: "POST",
     headers: {
       authorization: `Bearer ${config.CONFIRMATION_DASHBOARD_TOKEN}`,
@@ -45,11 +44,5 @@ async function exportDownloadMark(
 }
 
 export async function claimConfirmedExport(intentId: string, principal: DashboardPrincipal): Promise<void> {
-  await exportDownloadMark(intentId, principal, "claim");
-}
-
-// Recorded only once the archive bytes have actually left the server, because a
-// pending knowledge reset is gated on the owner holding a complete archive.
-export async function completeConfirmedExportDownload(intentId: string, principal: DashboardPrincipal): Promise<void> {
-  await exportDownloadMark(intentId, principal, "complete-download");
+  await exportDownloadMark(intentId, principal);
 }
