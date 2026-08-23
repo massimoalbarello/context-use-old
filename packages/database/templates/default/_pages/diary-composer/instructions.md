@@ -28,7 +28,7 @@ opaque value exactly.
 
 ### 2. Freeze the change window
 
-Call `list_page_changes` with that cursor and no `limit`. When `has_more` is true, call it
+Call `list_document_changes` with that cursor and no `limit`. When `has_more` is true, call it
 again with `next_page_token` as `page_token` and no cursor. Continue until `has_more` is false.
 
 The first call fixes the window. Changes committed during this run remain after the returned
@@ -41,24 +41,24 @@ whose subject is itself an existing diary note, companion or diary hub as new li
 such a page may still be read later as diary context. Automation maintenance is not an event
 in the owner's life.
 
-For every other non-deleted row, call `compare_page_versions` once with its exact `page_id`,
-`previous_version_number` and `version_number`. Use the returned metadata changes and exact
+For every other non-deleted row, call `compare_document_revisions` once with its exact
+`document_id`, `previous_revision_number` and `revision_number`. Use the returned metadata changes and exact
 `before` and `after` Markdown fragments as the complete new evidence. Do not calculate
 another diff.
 
-- A null `previous_version_number` presents the page as newly available baseline evidence;
+- A null `previous_revision_number` presents the document as newly available baseline evidence;
   activity dates still come only from its content.
 - When `comparison.complete` is false, use the returned comparison from
   `actual_from_version` through `to_version` and do not infer pruned changes.
-- On `PAGE_DELTA_UNAVAILABLE`, record the error and do not reconstruct the delta from the
-  current page.
+- On `DOCUMENT_DELTA_UNAVAILABLE`, record the error and do not reconstruct the delta from the
+  current document.
 - Compare an archived row as above, but treat archival itself only as withdrawal of a current
   page. For a deleted row, use its tombstone without inventing a missing delta. In either case,
   locate existing diary passages that linked the removed page and reconcile one only when
   retained evidence shows exactly what support was withdrawn. Withdrawal proves no opposite
   claim.
 
-Call `read_page` only when a changed fragment needs current context to identify its subject,
+Call `read_document` only when a changed fragment needs current context to identify its subject,
 relationship, activity date or useful document link. Unchanged current prose is context,
 never new activity evidence.
 
@@ -96,7 +96,7 @@ For each affected date:
   a diary hub links a day, follow that route; do not infer a missing day from a path.
 - **b.** Follow links from the day to any companion notes. A companion is ordinary knowledge
   whose material is independently useful, never a required view.
-- **c.** Use `list_page_versions` only as far as needed to distinguish composer-owned passages
+- **c.** Use `list_document_revisions` only as far as needed to distinguish composer-owned passages
   from owner additions. Treat uncertain authorship as the owner's.
 - **d.** Read a changed knowledge page only when its delta does not provide enough context to
   understand the relationship or choose the destination link. Do not mine unchanged facts

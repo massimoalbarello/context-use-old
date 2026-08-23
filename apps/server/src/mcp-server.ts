@@ -947,6 +947,140 @@ export async function createMcpServer(
     });
   });
 
+  if (pathless) {
+    server.registerTool("list_document_changes", {
+      description: "List authored knowledge-document changes after an opaque cursor. Rows identify stable documents and revisions without filesystem paths or bodies. Paginate one fixed window with next_page_token, then persist next_cursor only after the complete window succeeds.",
+      inputSchema: z.object({
+        cursor: z.string().regex(/^cu-page-changes-v1\.[0-9a-z]+$/).optional(),
+        page_token: z.string().regex(/^cu-page-scan-v1\.[0-9a-z]+\.[0-9a-z]+\.[0-9a-z]+$/).optional(),
+        limit: z.number().int().min(1).max(500).default(200),
+      }).strict().superRefine((value, context) => {
+        if (value.cursor && value.page_token) {
+          context.addIssue({ code: "custom", message: "Provide a cursor or page_token, not both" });
+        }
+      }),
+      annotations: { readOnlyHint: true },
+    }, async ({ cursor, page_token, limit }) => {
+      const batch = await pages.changesSince({
+        ...(cursor ? { cursor } : {}),
+        ...(page_token ? { pageToken: page_token } : {}),
+        limit,
+      });
+      return jsonObjectContent({
+        ...batch,
+        changes: batch.changes.map((change) => {
+          const {
+            page_id,
+            version_id,
+            version_number,
+            previous_version_number,
+            path: _path,
+            ...metadata
+          } = change;
+          return {
+            ...metadata,
+            document_id: page_id,
+            revision_id: version_id,
+            revision_number: version_number,
+            previous_revision_number: previous_version_number ?? null,
+          };
+        }),
+      });
+    });
+
+    server.registerTool("compare_document_revisions", {
+      description: "Compare two immutable authored-document revisions from a list_document_changes row. Returns title/summary changes and compact Markdown fragments without compatibility-path metadata.",
+      inputSchema: z.object({
+        document_id: z.string().uuid(),
+        previous_revision_number: z.number().int().positive().nullable(),
+        revision_number: z.number().int().positive(),
+      }).strict().superRefine((value, context) => {
+        if (value.previous_revision_number !== null
+          && value.previous_revision_number >= value.revision_number) {
+          context.addIssue({
+            code: "custom",
+            message: "previous_revision_number must be less than revision_number",
+          });
+        }
+      }),
+      annotations: { readOnlyHint: true },
+    }, async ({ document_id, previous_revision_number, revision_number }) => {
+      const [requestedPrevious, current] = await Promise.all([
+        previous_revision_number === null
+          ? Promise.resolve(null)
+          : pages.version(document_id, previous_revision_number),
+        pages.version(document_id, revision_number),
+      ]);
+      if (!current) {
+        return textContent([
+          "DOCUMENT_DELTA_UNAVAILABLE",
+          `Document ${document_id} revision ${revision_number} is not retained; no safe comparison was produced.`,
+        ].join("\n\n"), true);
+      }
+      const retainedPrevious = previous_revision_number !== null && !requestedPrevious
+        ? await pages.oldestRetainedVersionAfter(
+          document_id,
+          previous_revision_number,
+          revision_number,
+        ) ?? current
+        : null;
+      const previous = requestedPrevious ?? retainedPrevious;
+      const actualFromRevision = previous_revision_number === null
+        ? null
+        : requestedPrevious
+          ? previous_revision_number
+          : retainedPrevious!.version_number;
+      const delta = await pageDelta(previous, current);
+      return jsonObjectContent({
+        document_id,
+        comparison: {
+          requested_from_revision: previous_revision_number,
+          actual_from_revision: actualFromRevision,
+          to_revision: revision_number,
+          complete: actualFromRevision === previous_revision_number,
+        },
+        metadata_changes: delta.metadata_changes.filter(({ field }) => field !== "path"),
+        markdown_changes: delta.markdown_changes,
+      });
+    });
+
+    server.registerTool("list_document_revisions", {
+      description: "List one authored document's immutable revision metadata and commit attribution by stable UUID.",
+      inputSchema: z.object({ document_id: z.string().uuid() }).strict(),
+      annotations: { readOnlyHint: true },
+    }, async ({ document_id }) => {
+      const history = await pages.history(document_id);
+      return jsonContent(history.map((revision) => {
+        const { id, page_id: _pageId, path: _path, version_number, ...metadata } = revision;
+        return {
+          ...metadata,
+          revision_id: id,
+          revision_number: version_number,
+        };
+      }));
+    });
+
+    server.registerTool("read_document_revision", {
+      description: "Read one exact immutable authored-document revision by stable document UUID and revision number.",
+      inputSchema: z.object({
+        document_id: z.string().uuid(),
+        revision_number: z.number().int().positive(),
+      }).strict(),
+      annotations: { readOnlyHint: true },
+    }, async ({ document_id, revision_number }) => {
+      const revision = await pages.version(document_id, revision_number);
+      if (!revision) return jsonContent(null);
+      const { id, page_id: _pageId, path: _path, version_number, ...metadata } = revision;
+      return jsonContent({
+        ...metadata,
+        document_id,
+        revision_id: id,
+        revision_number: version_number,
+        reference: `context-use://document/${document_id}`,
+      });
+    });
+  }
+
   if (!pathless) {
     server.registerTool("search_pages", {
     description: "Search current knowledge pages by full text. Returns ranked metadata only; use read_page to load a selected body.",

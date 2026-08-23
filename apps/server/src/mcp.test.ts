@@ -2090,8 +2090,30 @@ describe("MCP knowledge tools", () => {
         },
       } as unknown as PrivateDocumentCatalogRepository,
     } satisfies PathlessMcpRepositories;
+    const pathlessPages = pagesWithGuidance({
+      async changesSince() {
+        return {
+          changes: [{
+            cursor: "cu-page-changes-v1.1",
+            page_id: documentId,
+            version_id: revisionId,
+            version_number: 1,
+            previous_version_number: null,
+            change_kind: "created",
+            path: "retained/compatibility/path",
+            title: document.title,
+            commit_message: "Create stable document",
+            actor_kind: "mcp",
+            actor_subject: "mcp-client",
+            changed_at: document.updated_at,
+          }],
+          next_cursor: "cu-page-changes-v1.1",
+          has_more: false,
+        };
+      },
+    });
     const tools = await mcpRequest(serverWith(
-      pagesWithGuidance(),
+      pathlessPages,
       {} as AssetRepository,
       {} as DirectoryRepository,
       undefined,
@@ -2111,6 +2133,10 @@ describe("MCP knowledge tools", () => {
       "archive_document",
       "create_document_asset_upload",
       "archive_document_asset",
+      "list_document_changes",
+      "compare_document_revisions",
+      "list_document_revisions",
+      "read_document_revision",
     ]));
     expect(names).not.toEqual(expect.arrayContaining([
       "read_directory",
@@ -2138,8 +2164,8 @@ describe("MCP knowledge tools", () => {
         .not.toHaveProperty("path");
     }
 
-    const searched = await mcpRequest(serverWith(
-      pagesWithGuidance(),
+    const changes = await mcpRequest(serverWith(
+      pathlessPages,
       {} as AssetRepository,
       {} as DirectoryRepository,
       undefined,
@@ -2147,6 +2173,28 @@ describe("MCP knowledge tools", () => {
     ), {
       jsonrpc: "2.0",
       id: 2,
+      method: "tools/call",
+      params: { name: "list_document_changes", arguments: {} },
+    });
+    expect(changes.result?.structuredContent).toMatchObject({
+      changes: [{
+        document_id: documentId,
+        revision_id: revisionId,
+        revision_number: 1,
+        previous_revision_number: null,
+      }],
+    });
+    expect(changes.result?.content?.[0]?.text).not.toContain("retained/compatibility/path");
+
+    const searched = await mcpRequest(serverWith(
+      pathlessPages,
+      {} as AssetRepository,
+      {} as DirectoryRepository,
+      undefined,
+      { pathless },
+    ), {
+      jsonrpc: "2.0",
+      id: 3,
       method: "tools/call",
       params: { name: "search_documents", arguments: { query: "stable" } },
     });
@@ -2160,14 +2208,14 @@ describe("MCP knowledge tools", () => {
     expect(searchResult.documents[0]).not.toHaveProperty("current_path");
 
     const created = await mcpRequest(serverWith(
-      pagesWithGuidance(),
+      pathlessPages,
       {} as AssetRepository,
       {} as DirectoryRepository,
       undefined,
       { pathless },
     ), {
       jsonrpc: "2.0",
-      id: 3,
+      id: 4,
       method: "tools/call",
       params: {
         name: "create_document",

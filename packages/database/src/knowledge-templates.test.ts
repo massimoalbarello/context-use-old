@@ -1028,12 +1028,12 @@ describe("knowledge templates", () => {
     }
 
     for (const detail of [
-      "list_page_changes",
+      "list_document_changes",
       "next_page_token",
       "the first call fixes the window",
-      "compare_page_versions once",
+      "compare_document_revisions once",
       "comparison.complete is false",
-      "page_delta_unavailable",
+      "document_delta_unavailable",
       "do not calculate another diff",
       "compare an archived row as above",
       "for a deleted row, use its tombstone",
@@ -1046,7 +1046,7 @@ describe("knowledge templates", () => {
       "mark both the formerly supported day and the corrected day as affected",
       "search page titles, summaries and bodies for the exact date",
       "outbound links and its backlinks",
-      "list_page_versions",
+      "list_document_revisions",
       "treat uncertain authorship as the owner's",
       "a changed page is a candidate, not a quota",
       "one ordinary atomic page",
