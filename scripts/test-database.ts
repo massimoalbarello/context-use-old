@@ -15,6 +15,7 @@ export const TEST_DATABASE = {
 const ROLE_PASSWORDS = {
   DB_AUTH_PASSWORD: "test-only",
   DB_DASHBOARD_PASSWORD: "test-only",
+  DB_CORPUS_PASSWORD: "test-only",
   DB_MCP_PASSWORD: "test-only",
   DB_PUBLIC_PASSWORD: "test-only",
   DB_CONFIRMATION_PASSWORD: "test-only",

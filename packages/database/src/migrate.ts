@@ -73,6 +73,7 @@ try {
   const passwordVariables: Record<string, string | undefined> = {
     context_use_auth: process.env.DB_AUTH_PASSWORD,
     context_use_dashboard: process.env.DB_DASHBOARD_PASSWORD,
+    context_use_corpus: process.env.DB_CORPUS_PASSWORD,
     context_use_mcp: process.env.DB_MCP_PASSWORD,
     context_use_public: process.env.DB_PUBLIC_PASSWORD,
     context_use_confirmation: process.env.DB_CONFIRMATION_PASSWORD,

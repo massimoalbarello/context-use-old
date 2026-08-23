@@ -96,6 +96,9 @@ export class AssetRepository {
 
   async archive(id: string) {
     return transaction(this.pool, async (client) => {
+      await client.query(
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
+      );
       const target = await client.query<{ public_path: string | null }>(
         `SELECT public_path
          FROM assets

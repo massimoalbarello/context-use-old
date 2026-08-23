@@ -136,7 +136,7 @@ describeDatabase("path-independent document substrate", () => {
     )).rejects.toThrow("document authority and representation are immutable");
   });
 
-  test("revision link indexing distinguishes zero links and cascades derived backlinks", async () => {
+  test("source revision link indexing authoritatively remains empty", async () => {
     const sourceDocumentId = randomUUID();
     const sourceRevisionId = randomUUID();
     const targetDocumentId = randomUUID();
@@ -175,7 +175,7 @@ describeDatabase("path-independent document substrate", () => {
       `SELECT 1 FROM document_links
        WHERE source_revision_id=$1 AND target_document_id=$2`,
       [sourceRevisionId, targetDocumentId],
-    )).rowCount).toBe(1);
+    )).rowCount).toBe(0);
 
     await admin.query("DELETE FROM hypermedia_documents WHERE id=$1", [targetDocumentId]);
     expect((await admin.query(
@@ -296,10 +296,10 @@ describeDatabase("path-independent document substrate", () => {
     );
     await links.replaceRevisionTargets(recordRevisionId, [target.pageId]);
     const complete = await links.backlinks(target.pageId);
-    expect(new Set(complete.backlinks.map((link) => link.source_revision_id)))
-      .toEqual(new Set([secondRevisionId, recordRevisionId]));
+    expect(complete.backlinks.map((link) => link.source_revision_id))
+      .toEqual([secondRevisionId]);
     expect(complete.has_more).toBe(false);
-    expect(await links.backlinks(target.pageId, 1)).toMatchObject({ has_more: true });
+    expect(await links.backlinks(target.pageId, 1)).toMatchObject({ has_more: false });
 
     await admin.query(
       "UPDATE source_records SET deleted_at=now() WHERE document_id=$1",
@@ -423,7 +423,7 @@ describeDatabase("path-independent document substrate", () => {
          SET global_guide_document_id=$1,updated_at=now()
          WHERE singleton`,
         [asset.id],
-      )).rejects.toThrow("global guide must be an active knowledge document");
+      )).rejects.toThrow("global guide must be active, private knowledge Markdown");
     } finally {
       await admin.query(
         `UPDATE knowledge_settings
@@ -483,7 +483,9 @@ describeDatabase("path-independent document substrate", () => {
       expect(blocked).toBe(true);
 
       await archiver.query("COMMIT");
-      await expect(configuring).rejects.toThrow("global guide must be an active knowledge document");
+      await expect(configuring).rejects.toThrow(
+        "global guide must be active, private knowledge Markdown",
+      );
       expect((await admin.query(
         `SELECT 1 FROM knowledge_settings
          WHERE singleton AND global_guide_document_id=$1`,

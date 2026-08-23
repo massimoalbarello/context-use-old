@@ -2,7 +2,6 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { Pool } from "pg";
 import {
   DocumentLinkRepository,
-  MAX_DOCUMENT_LINKS_PER_REVISION,
   markdownObjectMetadata,
   SourceRecordRepository,
   type MarkdownObjectMetadata,
@@ -347,25 +346,30 @@ describeDatabase("object-backed source records", () => {
     }
   });
 
-  test("persists raw records whose derived document-link set exceeds the index cap", async () => {
-    const connectionId = `link-heavy-connection-${crypto.randomUUID()}`;
+  test("treats internal-URI text in raw evidence as an authoritative empty outbound set", async () => {
+    const connectionId = `inert-link-connection-${crypto.randomUUID()}`;
     const store = new MemoryMarkdownStore();
     const records = new SourceRecordRepository(pool, store);
     const links = new DocumentLinkRepository(pool);
-    const markdown = Array.from(
-      { length: MAX_DOCUMENT_LINKS_PER_REVISION + 1 },
-      (_, index) => {
-        const suffix = index.toString(16).padStart(12, "0");
-        return `[Reference ${index}](context-use://document/00000000-0000-4000-8000-${suffix})`;
-      },
-    ).join("\n");
     try {
+      const target = await records.write({
+        integration: "agent-conversations",
+        connectionInstanceId: 303,
+        connectionId,
+        model: "AgentConversation",
+        sourceRecordId: "evidence-target",
+        action: "added",
+        sourceCreatedAt: "2026-08-20T08:00:00.000Z",
+        sourceUpdatedAt: "2026-08-20T09:00:00.000Z",
+        markdown: "# Evidence target\n",
+      });
+      const markdown = `[Incidental raw URI](context-use://document/${target.document_id})`;
       const written = await records.write({
         integration: "agent-conversations",
         connectionInstanceId: 303,
         connectionId,
         model: "AgentConversation",
-        sourceRecordId: "link-heavy-record",
+        sourceRecordId: "evidence-with-uri-text",
         action: "added",
         sourceCreatedAt: "2026-08-20T08:00:00.000Z",
         sourceUpdatedAt: "2026-08-20T09:00:00.000Z",
@@ -375,10 +379,13 @@ describeDatabase("object-backed source records", () => {
       expect((await records.get(written.document_id))?.body_markdown).toBe(markdown);
       expect(await links.revisionIndex(written.current_revision_id!)).toMatchObject({
         source_revision_id: written.current_revision_id,
-        links_indexed_at: null,
+        links_indexed_at: expect.anything(),
         target_document_ids: [],
       });
-      expect(await links.backlinksComplete()).toBe(false);
+      expect(await links.backlinks(target.document_id)).toEqual({
+        backlinks: [],
+        has_more: false,
+      });
     } finally {
       await pool.query(
         `DELETE FROM hypermedia_documents

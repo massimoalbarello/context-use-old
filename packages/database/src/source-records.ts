@@ -7,10 +7,6 @@ import {
   type MarkdownObjectMetadata,
   type MarkdownObjectStore,
 } from "./documents.ts";
-import {
-  extractDocumentLinks,
-  MAX_DOCUMENT_LINKS_PER_REVISION,
-} from "./links.ts";
 
 export type SourceRecordWrite = {
   integration: string;
@@ -329,18 +325,14 @@ export class SourceRecordRepository implements SourceRecordWriter {
     }
 
     let stored: MarkdownObjectMetadata | null = null;
-    let extractedLinks: string[] | null = null;
-    const currentDocumentLinks = (): string[] => {
-      if (record.markdown === null) return [];
-      extractedLinks ??= extractDocumentLinks(record.markdown);
-      return extractedLinks;
-    };
     if (candidate && initial.rows[0]?.body_content_hash !== candidate.body_content_hash) {
       stored = await this.bodies.write(revisionId, record.markdown!);
-      currentDocumentLinks();
     }
 
     return transaction(this.pool, async (client) => {
+      await client.query(
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
+      );
       await client.query(
         "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
         [lockIdentity(record)],
@@ -391,13 +383,13 @@ export class SourceRecordRepository implements SourceRecordWriter {
           [revisionId, documentId, next.rows[0]!.revision_number,
             stored.body_object_key, stored.body_size_bytes, stored.body_content_hash],
         );
-        const targetDocumentIds = currentDocumentLinks();
-        if (targetDocumentIds.length <= MAX_DOCUMENT_LINKS_PER_REVISION) {
-          await client.query(
-            "SELECT replace_document_links($1,$2::uuid[])",
-            [revisionId, targetDocumentIds],
-          );
-        }
+        // Connector Markdown is immutable evidence, not authored knowledge.
+        // URI-like text in a raw payload is therefore inert: knowledge pages
+        // may link to this record, but the record never asserts graph edges.
+        await client.query(
+          "SELECT replace_document_links($1,$2::uuid[])",
+          [revisionId, []],
+        );
         currentRevisionId = revisionId;
       }
 

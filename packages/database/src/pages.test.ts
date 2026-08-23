@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Pool } from "pg";
+import { markdownObjectMetadata, type MarkdownObjectStore } from "./documents.ts";
 import { PageRepository } from "./pages.ts";
 
 function row(sequence: string, pageId: string, path: string, previousVersionNumber?: number | null) {
@@ -105,6 +106,95 @@ describe("retained page versions", () => {
       3,
       10,
     ]);
+  });
+});
+
+describe("page mutation lock ordering", () => {
+  const pageId = "11111111-1111-4111-8111-111111111111";
+  const currentRevisionId = "22222222-2222-4222-8222-222222222222";
+  const currentBody = "Current body";
+  const currentObject = markdownObjectMetadata(currentRevisionId, currentBody);
+  const store: MarkdownObjectStore = {
+    async write(revisionId, markdown) {
+      return markdownObjectMetadata(revisionId, markdown);
+    },
+    async read() {
+      return currentBody;
+    },
+  };
+
+  function repository() {
+    const transactionCalls: string[] = [];
+    const query = async (sql: string) => {
+      transactionCalls.push(sql);
+      if (sql.includes("FOR UPDATE OF p")) {
+        return { rowCount: 1, rows: [{
+          version_number: 2,
+          current_path: "about/current",
+          title: "Current",
+          summary: "Current page summary.",
+          published_version_id: null,
+        }] };
+      }
+      return { rowCount: 0, rows: [] };
+    };
+    const pool = {
+      async query() {
+        return { rowCount: 1, rows: [{
+          id: pageId,
+          current_path: "about/current",
+          current_version_id: currentRevisionId,
+          published_version_id: null,
+          public_path: null,
+          archived_at: null,
+          version_number: 2,
+          title: "Current",
+          summary: "Current page summary.",
+          ...currentObject,
+        }] };
+      },
+      async connect() {
+        return { query, release() {} };
+      },
+    } as unknown as Pool;
+    return { pages: new PageRepository(pool, store), transactionCalls };
+  }
+
+  function expectCanonicalOrder(calls: string[]) {
+    const transition = calls.findIndex((sql) => sql.includes(
+      "pg_advisory_xact_lock_shared",
+    ));
+    const document = calls.findIndex((sql) => sql.includes("lock_operational_document"));
+    const page = calls.findIndex((sql) => sql.includes("FOR UPDATE OF p"));
+    expect(transition).toBeGreaterThan(-1);
+    expect(document).toBeGreaterThan(transition);
+    expect(page).toBeGreaterThan(document);
+  }
+
+  test("update locks the corpus transition and operational identity before the page row", async () => {
+    const { pages, transactionCalls } = repository();
+    await expect(pages.update(pageId, {
+      path: "about/current",
+      title: "Update",
+      summary: "Updated page summary.",
+      body_markdown: "Updated body",
+      commit_message: "Update current page",
+      expected_version_number: 1,
+    }, { kind: "dashboard", subject: "owner" })).rejects.toThrow(
+      "Page changed; current version is 2",
+    );
+    expectCanonicalOrder(transactionCalls);
+  });
+
+  test("archive uses the same lock order before checking the current page", async () => {
+    const { pages, transactionCalls } = repository();
+    await expect(pages.archive(pageId, {
+      commit_message: "Archive current page",
+      expected_version_number: 1,
+    }, { kind: "dashboard", subject: "owner" })).rejects.toThrow(
+      "Page changed; current version is 2",
+    );
+    expectCanonicalOrder(transactionCalls);
   });
 });
 

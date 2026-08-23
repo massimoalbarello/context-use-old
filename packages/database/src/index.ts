@@ -40,6 +40,35 @@ export {
   type SourceRecordWrite,
   type SourceRecordWriter,
 } from "./source-records.ts";
+export {
+  CorpusMigrationInventoryDriftError,
+  CorpusMigrationRepository,
+  neutralPublicDirectoryTitle,
+  type ApplyCorpusPageInput,
+  type ApplyDirectoryHubInput,
+  type BeginCorpusMigrationInput,
+  type CompleteExistingCorpusItemInput,
+  type CorpusDirectoryDisposition,
+  type CorpusMigrationBlocker,
+  type CorpusMigrationInspection,
+  type CorpusMigrationItemKind,
+  type CorpusMigrationPhase,
+  type CorpusMigrationPlan,
+  type CorpusReadyObject,
+  type CorpusMigrationStatus,
+  type CorpusObjectRef,
+  type CorpusPublishedArtifactRef,
+  type CorpusPublicAlias,
+  type LegacyCorpusAsset,
+  type LegacyCorpusDirectory,
+  type LegacyCorpusPage,
+  type LegacyCorpusRecord,
+  type PlannedCorpusAutomation,
+  type PlannedCorpusDirectory,
+  type PlannedCorpusPage,
+  type PlannedObjectWrite,
+  type PlannedRevisionRef,
+} from "./corpus-migration.ts";
 export { ConfirmationRepository } from "./confirmation.ts";
 export type { ConfirmationIntentKind, ConfirmationPasskey, VerifiedPasskey } from "./confirmation.ts";
 export { PageDeletionRepository } from "./page-deletion.ts";
@@ -47,8 +76,12 @@ export type { PageDeletionPrincipal } from "./page-deletion.ts";
 export {
   formatTemplateResult,
   knowledgeTemplateBaseline,
+  knowledgeTemplateMigrationContract,
+  knowledgeTemplatePageContractMatches,
   reconcileKnowledgeTemplate,
   type KnowledgeTemplateBaseline,
+  type KnowledgeTemplateMigrationContract,
+  type KnowledgeTemplatePageContract,
   type TemplateAction,
   type TemplateRepositories,
   type TemplateResult,
@@ -102,9 +135,26 @@ export {
   extractDirectoryLinks,
   extractPageLinks,
   extractWikiLinks,
+  mapMarkdownOutsideCode,
   MAX_DOCUMENT_LINKS_PER_REVISION,
   normalizeInternalDocumentLinks,
   normalizeInternalPageLinks,
   wikiLinkCandidatePaths,
   type WikiLink,
 } from "./links.ts";
+export {
+  AutomationRegistryIdentityConflictError,
+  AutomationRegistryRepository,
+  type AutomationRegistration,
+  type RegisterAutomationInput,
+} from "./automation-registry.ts";
+export {
+  OperationalDocumentReplacementDriftError,
+  OperationalDocumentReplacementRepository,
+  type ApplyOperationalDocumentReplacementInput,
+  type BeginOperationalDocumentReplacementInput,
+  type ManagedOperationalDocument,
+  type OperationalAutomationStateTarget,
+  type OperationalDocumentReplacementPlan,
+  type OperationalDocumentReplacementTarget,
+} from "./operational-document-replacements.ts";
