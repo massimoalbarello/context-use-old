@@ -100,7 +100,14 @@ export {
   type PlannedRevisionRef,
 } from "./corpus-migration.ts";
 export { ConfirmationRepository } from "./confirmation.ts";
-export type { ConfirmationIntentKind, ConfirmationPasskey, VerifiedPasskey } from "./confirmation.ts";
+export type {
+  ConfirmationIntentKind,
+  ConfirmationPasskey,
+  LegacyPublicationConfirmationIntent,
+  PathlessPublicationConfirmationIntent,
+  PublicationConfirmationIntent,
+  VerifiedPasskey,
+} from "./confirmation.ts";
 export { PageDeletionRepository } from "./page-deletion.ts";
 export type { PageDeletionPrincipal } from "./page-deletion.ts";
 export {
@@ -159,6 +166,41 @@ export {
   type PublicPage,
   type PublicKnowledgeSettings,
 } from "./publication.ts";
+export {
+  PathlessPublicEntrypointRepository,
+  PathlessPublicRepository,
+  PathlessPublicationAdoptionRepository,
+  PathlessPublicationRepository,
+  PathlessStoragePublicationRepository,
+  type PathlessAssetPublicationAdoptionArtifactReceipt,
+  type PathlessAssetPublicationAdoptionWriteAuthorization,
+  type PathlessAssetPublicationWriteAuthorization,
+  type PathlessPagePublicationAdoptionArtifactReceipt,
+  type PathlessPagePublicationAdoptionWriteAuthorization,
+  type PathlessPagePublicationWriteAuthorization,
+  type PathlessPublicActiveAssetRoute,
+  type PathlessPublicActivePageRoute,
+  type PathlessPublicAsset,
+  type PathlessPublicInactiveRoute,
+  type PathlessPublicPage,
+  type PathlessPublicRouteKind,
+  type PathlessPublicRouteResolution,
+  type PathlessPublicUnassignedRoute,
+  type PathlessPublicUnavailableRoute,
+  type PathlessPublicationAdoption,
+  type PathlessPublicationAdoptionArtifactReceipt,
+  type PathlessPublicationAdoptionKind,
+  type PathlessPublicationAdoptionPhase,
+  type PathlessPublicationAdoptionWriteAuthorization,
+  type PathlessPublicationEntrypoint,
+  type PathlessPublicationEntrypointCandidate,
+  type PathlessPublicationIntent,
+  type PathlessPublicationPrincipal,
+  type PathlessPublicationProjectionOutcome,
+  type PathlessPublicationProjectionTarget,
+  type PathlessPublicationWriteAuthorization,
+  type PathlessStorageRoute,
+} from "./pathless-publication.ts";
 export {
   extractAssetLinks,
   extractDocumentLinks,

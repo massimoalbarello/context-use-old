@@ -385,6 +385,9 @@ describeDatabase("pg_dump ownership reconciliation", () => {
     expect(migrationAdminName).toBeTruthy();
     const initialMigration = await processResult(migrate, { environment: migrationEnvironment });
     expect(initialMigration.stdout).not.toContain("Applied ");
+    const currentMigrationCount = (await targetClient.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM schema_migrations",
+    )).rows[0]!.count;
 
     const missingReconcile = await processFailure(migrate, reconcileEnvironment);
     expect(missingReconcile).toContain("reconciliation requires a pending contract");
@@ -443,7 +446,7 @@ describeDatabase("pg_dump ownership reconciliation", () => {
         pg_catalog.to_regnamespace($1)::text AS contract
     `, [RESTORE_OWNERSHIP_SCHEMA]);
     expect(rolledBack.rows).toEqual([{
-      migrations: "28",
+      migrations: currentMigrationCount,
       contract: RESTORE_OWNERSHIP_SCHEMA,
     }]);
 
@@ -460,7 +463,7 @@ describeDatabase("pg_dump ownership reconciliation", () => {
         pg_catalog.to_regnamespace($1)::text AS contract
     `, [RESTORE_OWNERSHIP_SCHEMA]);
     expect(streamRolledBack.rows).toEqual([{
-      migrations: "28",
+      migrations: currentMigrationCount,
       contract: RESTORE_OWNERSHIP_SCHEMA,
     }]);
 
@@ -656,9 +659,11 @@ describeDatabase("pg_dump ownership reconciliation", () => {
       );
       expect(restoredVersions.rows.some(({ version }) => version === "027_pathless_document_contract.sql")).toBe(true);
       expect(restoredVersions.rows.some(({ version }) => version === "028_pathless_publication_artifacts.sql")).toBe(false);
+      expect(restoredVersions.rows.some(({ version }) => version === "029_pathless_publication_api.sql")).toBe(false);
 
       const upgraded = await processResult(migrate, { environment: reconcileEnvironment });
       expect(upgraded.stdout).toContain("Applied 028_pathless_publication_artifacts.sql");
+      expect(upgraded.stdout).toContain("Applied 029_pathless_publication_api.sql");
       expect(upgraded.stdout).toContain(`Reconciled ${expected.length} restored routine/view ownerships`);
       const upgradedOwnership = new Map(
         (await catalogOwnership(targetClient)).map((object) => [objectKey(object), object]),

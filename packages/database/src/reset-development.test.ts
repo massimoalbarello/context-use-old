@@ -21,13 +21,18 @@ describe("development data reset", () => {
   test("clears every pathless publication table in the same explicit truncate", () => {
     const pathlessPublicationTables = [
       "public_artifact_id_reservations",
+      "public_representation_token_reservations",
       "pathless_publication_intents",
+      "publication_intent_id_reservations",
       "pathless_publication_artifact_staging",
       "public_page_artifacts",
       "public_asset_artifacts",
       "page_publications",
       "asset_publications",
       "pathless_publication_settings",
+      "public_visibility_generations",
+      "publication_target_generations",
+      "pathless_publication_adoption_staging",
       "pathless_publication_adoptions",
       "public_namespace_conflicts",
     ] as const;

@@ -111,6 +111,10 @@ describeDatabase("audited filesystem to hypermedia corpus migration", () => {
             [uniquePublicIds],
           );
           await admin.query(
+            "DELETE FROM public_visibility_generations WHERE public_id=ANY($1::uuid[])",
+            [uniquePublicIds],
+          );
+          await admin.query(
             "DELETE FROM public_resources WHERE public_id=ANY($1::uuid[])",
             [uniquePublicIds],
           );
@@ -129,6 +133,15 @@ describeDatabase("audited filesystem to hypermedia corpus migration", () => {
         }
         if (createdAssetIds.length) {
           await admin.query("DELETE FROM assets WHERE id=ANY($1::uuid[])", [createdAssetIds]);
+        }
+        if (fixtureDocumentIds.length) {
+          await admin.query("SET LOCAL session_replication_role=replica");
+          await admin.query(
+            `DELETE FROM publication_target_generations
+             WHERE target_document_id=ANY($1::uuid[])`,
+            [fixtureDocumentIds],
+          );
+          await admin.query("SET LOCAL session_replication_role=origin");
         }
         if (createdSourceDocumentIds.length) {
           await admin.query("DELETE FROM source_records WHERE document_id=ANY($1::uuid[])", [createdSourceDocumentIds]);

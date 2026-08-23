@@ -908,6 +908,7 @@ describeDatabase("PostgreSQL security roles", () => {
       "public_uuid_has_legacy_alias_token",
       "public_uuid_has_private_identity",
       "public_uuid_has_reserved_public_identity",
+      "reconcile_deleted_public_namespace_conflicts",
       "reconcile_finished_operational_public_namespace_conflicts",
       "reconcile_planned_public_namespace_conflicts",
       "reconcile_superseded_public_namespace_conflicts",
@@ -926,6 +927,23 @@ describeDatabase("PostgreSQL security roles", () => {
     for (const fn of functions.rows) {
       expect(fn.owner).toBe("context_use_boundary_owner");
       expect(fn.security_definer).toBe(true);
+    }
+    for (const role of [
+      "context_use_auth",
+      "context_use_backup",
+      "context_use_confirmation",
+      "context_use_corpus",
+      "context_use_dashboard",
+      "context_use_mcp",
+      "context_use_public",
+      "context_use_storage",
+    ]) {
+      expect((await admin.query<{ allowed: boolean }>(
+        `SELECT has_function_privilege(
+           $1,'reconcile_deleted_public_namespace_conflicts()','EXECUTE'
+         ) AS allowed`,
+        [role],
+      )).rows[0]?.allowed).toBe(false);
     }
     const canonicalHelpers = await admin.query<{ proname: string; owner: string }>(
       `SELECT proname,pg_get_userbyid(proowner) AS owner
