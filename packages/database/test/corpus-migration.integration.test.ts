@@ -212,7 +212,11 @@ describeDatabase("audited filesystem to hypermedia corpus migration", () => {
     return { pageId, revisionId };
   }
 
-  async function createDirectory(path: string, title: string): Promise<string> {
+  async function createDirectory(
+    path: string,
+    title: string,
+    summary = `Fixture directory ${title}.`,
+  ): Promise<string> {
     const id = randomUUID();
     const parentPath = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
     if (parentPath && !(await admin.query(
@@ -224,7 +228,7 @@ describeDatabase("audited filesystem to hypermedia corpus migration", () => {
     await admin.query(
       `INSERT INTO knowledge_directories(id,current_path,title,summary,search_vector)
        VALUES ($1,$2,$3,$4,directory_search_vector($2,$3,$4,''))`,
-      [id, path, title, `Fixture directory ${title}.`],
+      [id, path, title, summary],
     );
     createdDirectoryIds.push(id);
     return id;
@@ -373,7 +377,7 @@ describeDatabase("audited filesystem to hypermedia corpus migration", () => {
     const guide = await ensureRootGuide();
     const suffix = randomUUID();
     const publicDirectoryPath = `published-${"x".repeat(450)}-${suffix}`;
-    const publicDirectoryId = await createDirectory(publicDirectoryPath, "Published fixture");
+    const publicDirectoryId = await createDirectory(publicDirectoryPath, "Published fixture", "");
     await createDirectory(`scaffold-${suffix}`, "Empty scaffold");
     const published = await createPublishedPageMovedOutOfDirectory(publicDirectoryPath);
     await admin.query(
@@ -745,6 +749,10 @@ describeDatabase("audited filesystem to hypermedia corpus migration", () => {
     expect(safeHubMetadata.summary).toBe(
       "Published knowledge formerly available under this public collection.",
     );
+    expect((await admin.query<{ summary: string }>(
+      "SELECT summary FROM knowledge_page_versions WHERE id=$1",
+      [hub.private_revision.revision_id],
+    )).rows[0]?.summary).toBe("Knowledge collected in this directory.");
 
     const sealed = await repository.seal(plan.run_id);
     expect(sealed.phase).toBe("ready");

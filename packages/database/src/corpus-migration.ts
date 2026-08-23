@@ -964,6 +964,12 @@ function publicDirectoryMetadata(directory: LegacyCorpusDirectory): {
   };
 }
 
+const defaultPrivateDirectoryHubSummary = "Knowledge collected in this directory.";
+
+function privateDirectoryHubSummary(summary: string): string {
+  return summary.trim() ? summary : defaultPrivateDirectoryHubSummary;
+}
+
 async function assertPublishedArtifactCurrent(
   client: Pick<Pool, "query">,
   page: LegacyCorpusPage,
@@ -2188,7 +2194,7 @@ export class CorpusMigrationRepository {
         ? String(privateSource!.source_summary)
         : plan.disposition === "public_compatibility"
         ? publicMetadata.summary
-        : plan.snapshot.summary;
+        : privateDirectoryHubSummary(plan.snapshot.summary);
       const privatePath = plan.private_revision_mode === "copy"
         ? String(privateSource!.source_path)
         : plan.temporary_path;
