@@ -130,6 +130,32 @@ describeDatabase("pathless publication global namespaces", () => {
     }
   });
 
+  test("the corpus boundary reports and rejects an incomplete hypermedia cutover", async () => {
+    await client.query("BEGIN");
+    try {
+      await client.query(
+        "UPDATE pathless_publication_settings SET updated_at=NULL WHERE singleton",
+      );
+      await client.query("SET LOCAL ROLE context_use_corpus");
+      const blockers = await client.query<{
+        blocker_code: string;
+        affected_count: string;
+      }>(
+        `SELECT blocker_code,affected_count
+         FROM list_hypermedia_cutover_blockers()`,
+      );
+      expect(blockers.rows).toContainEqual({
+        blocker_code: "pathless_entrypoint_not_latched",
+        affected_count: "1",
+      });
+      expect(await sqlState(client, () => client.query(
+        "SELECT assert_hypermedia_cutover_ready()",
+      ))).toBe("55000");
+    } finally {
+      await client.query("ROLLBACK");
+    }
+  });
+
   test("serializes cross-kind representation token and artifact UUID races", async () => {
     const contender = new Client({ connectionString: databaseUrl });
     const firstToken = randomToken();

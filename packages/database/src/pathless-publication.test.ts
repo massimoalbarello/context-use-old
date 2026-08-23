@@ -344,6 +344,24 @@ describe("pathless publication adoption boundary", () => {
     expect(corpus.calls[0]!.sql).not.toContain("source_revision_id");
   });
 
+  test("reports cutover blockers and exposes a separate fail-closed assertion", async () => {
+    const corpus = recordingPoolSequence([[
+      { blocker_code: "legacy_page_visibility_not_adopted", affected_count: "2" },
+    ], []]);
+    const adoptions = new PathlessPublicationAdoptionRepository(corpus.pool);
+
+    expect(await adoptions.cutoverBlockers()).toEqual([{
+      blocker_code: "legacy_page_visibility_not_adopted",
+      affected_count: 2,
+    }]);
+    await adoptions.assertCutoverReady();
+    expect(corpus.calls[0]!.sql).toContain("FROM list_hypermedia_cutover_blockers()");
+    expect(corpus.calls[1]).toEqual({
+      sql: "SELECT assert_hypermedia_cutover_ready()",
+      values: undefined,
+    });
+  });
+
   test("keeps corpus planning/apply separate from claimed storage materialization", async () => {
     const plan: PathlessPublicationAdoption = {
       id: adoptionId,
