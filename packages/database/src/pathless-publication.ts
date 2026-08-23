@@ -506,6 +506,13 @@ export class PathlessPublicationAdoptionRepository {
   async assertCutoverReady(): Promise<void> {
     await this.corpusPool.query("SELECT assert_hypermedia_cutover_ready()");
   }
+
+  async finalizeCutover(): Promise<Date | string> {
+    const result = await this.corpusPool.query<{ finalized_at: Date | string }>(
+      "SELECT finalize_hypermedia_cutover() AS finalized_at",
+    );
+    return requireRow(result.rows[0], "Finalized hypermedia cutover").finalized_at;
+  }
 }
 
 export class PathlessStoragePublicationRepository {

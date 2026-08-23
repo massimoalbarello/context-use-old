@@ -1,21 +1,17 @@
 import {
   mapConcurrently,
   PathlessPublicRepository,
-  PublicRepository,
   createPool,
-  type PublicPage,
   type PathlessPublicActiveAssetRoute,
   type PathlessPublicActivePageRoute,
 } from "@context-use/database";
-import { AssetPath, DirectoryPath, PagePath } from "@context-use/shared";
+import { pathlessPublicRouteSchema } from "@context-use/shared";
 import { Elysia } from "elysia";
 import { config } from "./config.ts";
 import { json, routeError } from "./http.ts";
 import { renderMarkdown } from "./markdown.ts";
-import { createPublicAssetContentHandler } from "./public-asset-content.ts";
 import { renderLlmsFullTxt, renderLlmsTxt, renderPublicPageMarkdown } from "./public-llms.ts";
 import {
-  OPTIONAL_CONTACTS_PATH,
   externalProfileLinks,
   renderRobotsTxt,
   renderSitemapXml,
@@ -23,8 +19,6 @@ import {
 import {
   IMAGE_LAYOUT_STYLES,
   publicPageStyles,
-  publicPageHref,
-  renderPublicIndexDocument,
   renderPublicLandingDocument,
   renderPublicPageDocument,
 } from "./public-page.ts";
@@ -33,15 +27,12 @@ import { BrokeredStorage } from "./storage-client.ts";
 import { assetContentResponse } from "./asset-content.ts";
 
 const pool = createPool(config.PUBLIC_DATABASE_URL, { application_name: "context-use-public-web" });
-const publicData = new PublicRepository(pool);
 const pathlessPublicData = new PathlessPublicRepository(pool);
 const storage = new BrokeredStorage({
   socketPath: config.STORAGE_SOCKET_PATH,
   token: config.STORAGE_PUBLIC_TOKEN,
   publicOnly: true,
 });
-const publicAssetContent = createPublicAssetContentHandler(publicData, storage, config.ASSET_ORIGIN);
-const canonicalPublicId = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const htmlHeaders = { ...securityHeaders, "content-type": "text/html; charset=utf-8" };
 const textHeaders = { ...securityHeaders, "content-type": "text/plain; charset=utf-8" };
 const agentTextHeaders = { ...textHeaders, "x-robots-tag": "noindex, follow" };
@@ -57,32 +48,26 @@ const unavailableResolvers = {
   pagePath: async () => ({ available: false as const }),
   asset: async () => ({ available: false as const }),
   publicAssetPath: async (path: string) => {
-    const parsed = AssetPath.safeParse(path);
+    const parsed = pathlessPublicRouteSchema.safeParse(`/a/${path}`);
     if (!parsed.success) return { available: false as const };
-    const asset = await publicData.assetByPublicPath(parsed.data);
-    return asset
+    const route = await pathlessPublicData.resolve(parsed.data);
+    return route.state === "active" && route.route_kind === "asset"
       ? {
           available: true as const,
-          href: `${config.ASSET_ORIGIN}/a/${asset.public_path}`,
-          contentType: asset.content_type,
+          href: `${config.ASSET_ORIGIN}${route.canonical_path}`,
+          contentType: route.public_content_type,
         }
       : { available: false as const };
   },
 };
 
-async function publishedPage(path: string) {
-  const page = await publicData.pageByPublicPath(path);
-  if (!page) return null;
-  return { ...page, body_markdown: await storage.readPublishedDocument(page.public_path) };
-}
-
-async function publishedPages() {
-  const pages = await publicData.publishedPages();
-  return mapConcurrently(pages, 8, async (page) => ({
-    ...page,
-    body_markdown: await storage.readPublishedDocument(page.public_path),
-  }));
-}
+type PublicPage = {
+  public_path: string;
+  title: string;
+  summary: string;
+  body_markdown: string;
+  last_edited_at: string | Date;
+};
 
 function pathlessPublicPage(
   page: Awaited<ReturnType<PathlessPublicRepository["pages"]>>[number],
@@ -214,66 +199,8 @@ async function pathlessAssetResponse(
   return response;
 }
 
-async function legacyPublicEntrypoint() {
-  const settings = await publicData.settings();
-  const introduction = settings.entrypoint_public_path
-    ? await publishedPage(settings.entrypoint_public_path)
-    : null;
-  return { settings, introduction };
-}
-
-async function publicDirectoryResponse(rawPath: string): Promise<Response> {
-  const parsedPath = DirectoryPath.safeParse(rawPath);
-  if (!parsedPath.success) return new Response("Not found", { status: 404, headers: securityHeaders });
-  const [index, entrypoint] = await Promise.all([
-    publicData.directoryIndex(parsedPath.data),
-    legacyPublicEntrypoint(),
-  ]);
-  if (!index && parsedPath.data !== "") {
-    return new Response("Not found", { status: 404, headers: securityHeaders });
-  }
-  const renderedIndex = index ?? {
-    path: "",
-    title: "Knowledge",
-    summary: "No knowledge has been published yet.",
-    default_page_path: null,
-    entries: [],
-  };
-  const defaultPageHref = publicPageHref(renderedIndex.default_page_path);
-  if (defaultPageHref) {
-    return new Response(null, {
-      status: 302,
-      headers: { ...securityHeaders, location: defaultPageHref },
-    });
-  }
-  return new Response(renderPublicIndexDocument({
-    ...renderedIndex,
-    siteOrigin: config.APP_ORIGIN,
-    introduction: entrypoint.introduction,
-    entrypointPublicPath: entrypoint.settings.entrypoint_public_path,
-  }), { headers: htmlHeaders });
-}
-
 async function publicLlmsResponse(full: boolean): Promise<Response> {
   const entrypoint = await pathlessPublicData.entrypoint();
-  if (entrypoint.state === "unassigned") {
-    const [pages, settings] = await Promise.all([
-      full ? publishedPages() : publicData.publishedPages(),
-      publicData.settings(),
-    ]);
-    const content = full
-      ? renderLlmsFullTxt(pages, {
-          siteOrigin: config.APP_ORIGIN,
-          assetOrigin: config.ASSET_ORIGIN,
-          entrypointPublicPath: settings.entrypoint_public_path,
-        })
-      : renderLlmsTxt(pages, {
-          siteOrigin: config.APP_ORIGIN,
-          assetOrigin: config.ASSET_ORIGIN,
-          entrypointPublicPath: settings.entrypoint_public_path,
-        });
-    return new Response(content, { headers: full ? agentTextHeaders : textHeaders });
-  }
   const pages = await pathlessPublishedPages(full);
   const options = {
     siteOrigin: config.APP_ORIGIN,
@@ -287,18 +214,8 @@ async function publicLlmsResponse(full: boolean): Promise<Response> {
 }
 
 async function publicSitemapResponse(): Promise<Response> {
-  const entrypoint = await pathlessPublicData.entrypoint();
-  const pages = entrypoint.state === "unassigned"
-    ? await publicData.publishedPages()
-    : await pathlessPublishedPages(false);
+  const pages = await pathlessPublishedPages(false);
   return new Response(renderSitemapXml(pages, config.APP_ORIGIN), { headers: xmlHeaders });
-}
-
-async function legacyProfileLinks(): Promise<string[]> {
-  const contacts = await publishedPage(OPTIONAL_CONTACTS_PATH);
-  return contacts
-    ? externalProfileLinks(contacts.body_markdown, config.APP_ORIGIN)
-    : [];
 }
 
 export const publicApp = new Elysia({ strictPath: true })
@@ -307,16 +224,14 @@ export const publicApp = new Elysia({ strictPath: true })
     : routeError(error))
   .get("/health", () => json({ status: "ok", service: "public-web" }))
   .get("/a/*", async ({ request, params }) => {
-    const publicId = params["*"];
-    if (!canonicalPublicId.test(publicId)) return publicAssetContent(request, publicId);
     if (!publicAssetRequestAllowed(request)) return notFound();
-    const route = await pathlessPublicData.resolve(`/a/${publicId}`);
+    const parsed = pathlessPublicRouteSchema.safeParse(`/a/${params["*"]}`);
+    if (!parsed.success) return notFound();
+    const route = await pathlessPublicData.resolve(parsed.data);
     if (route.state === "active" && route.route_kind === "asset") {
-      return pathlessAssetResponse(request, publicId, route);
+      return pathlessAssetResponse(request, route.public_id, route);
     }
-    return route.state === "unassigned"
-      ? publicAssetContent(request, publicId)
-      : notFound();
+    return notFound();
   })
   .get("/robots.txt", () => new Response(renderRobotsTxt(config.APP_ORIGIN), { headers: textHeaders }))
   .get("/sitemap.xml", () => publicSitemapResponse())
@@ -335,89 +250,18 @@ export const publicApp = new Elysia({ strictPath: true })
             status: 302,
             headers: { ...securityHeaders, location: entrypoint.canonical_path },
           })
-        : entrypoint.state === "unassigned"
-          ? publicDirectoryResponse("")
-          : notFound();
+        : notFound();
     }
-    if (rawPath.endsWith("/")) return publicDirectoryResponse(rawPath.slice(0, -1));
     const markdown = rawPath.endsWith(".md");
-    const pathlessPublicId = markdown ? rawPath.slice(0, -3) : rawPath;
-    if (canonicalPublicId.test(pathlessPublicId)) {
-      const route = await pathlessPublicData.resolve(`/p/${pathlessPublicId}${markdown ? ".md" : ""}`);
-      if (route.state === "active" && route.route_kind !== "asset") {
-        return pathlessPageResponse(pathlessPublicId, markdown, route);
-      }
-      if (route.state === "inactive") return notFound();
-    }
-    const parsedPath = PagePath.safeParse(markdown ? rawPath.slice(0, -3) : rawPath);
-    if (!parsedPath.success) return new Response("Not found", { status: 404, headers: securityHeaders });
-    const publicPath = parsedPath.data;
-    const page = await publishedPage(publicPath);
-    if (!page) {
-      if (markdown) return new Response("Not found", { status: 404, headers: securityHeaders });
-      const index = await publicData.directoryIndex(publicPath);
-      if (!index) return new Response("Not found", { status: 404, headers: securityHeaders });
-      const defaultPageHref = publicPageHref(index.default_page_path);
-      return new Response(null, {
-        status: defaultPageHref ? 302 : 308,
-        headers: {
-          ...securityHeaders,
-          location: defaultPageHref ?? `/p/${publicPath}/`,
-        },
-      });
-    }
-    if (markdown) {
-      return new Response(renderPublicPageMarkdown(page, {
-        siteOrigin: config.APP_ORIGIN,
-        assetOrigin: config.ASSET_ORIGIN,
-      }), {
-        headers: {
-          ...markdownHeaders,
-          link: `<${config.APP_ORIGIN}/p/${page.public_path}>; rel="canonical"`,
-        },
-      });
-    }
-    const settings = await publicData.settings();
-    const introduction = publicPath === settings.entrypoint_public_path
-      ? page
-      : settings.entrypoint_public_path
-        ? await publishedPage(settings.entrypoint_public_path)
-        : null;
-    const profileLinks = publicPath === settings.entrypoint_public_path
-      ? await legacyProfileLinks()
-      : undefined;
-    // The database projection has already removed every private identifier and
-    // replaced independently public targets with public paths. The renderer can
-    // resolve a published asset path but has no UUID/private-path capability.
-    const content = await renderMarkdown(page.body_markdown, unavailableResolvers);
-    return new Response(renderPublicPageDocument(
-      page.title,
-      content,
-      page.public_path,
-      page.last_edited_at,
-      {
-        siteOrigin: config.APP_ORIGIN,
-        summary: page.summary,
-        introduction,
-        profileLinks,
-        entrypointPublicPath: settings.entrypoint_public_path,
-      },
-    ), { headers: htmlHeaders });
+    const parsed = pathlessPublicRouteSchema.safeParse(`/p/${rawPath}`);
+    if (!parsed.success) return notFound();
+    const route = await pathlessPublicData.resolve(parsed.data);
+    return route.state === "active" && route.route_kind !== "asset"
+      ? pathlessPageResponse(route.public_id, markdown, route)
+      : notFound();
   })
   .get("/", async () => {
     const entrypoint = await pathlessPublicEntrypoint();
-    if (entrypoint.state === "unassigned") {
-      const [legacyEntrypoint, profileLinks] = await Promise.all([
-        legacyPublicEntrypoint(),
-        legacyProfileLinks(),
-      ]);
-      return new Response(renderPublicLandingDocument({
-        siteOrigin: config.APP_ORIGIN,
-        introduction: legacyEntrypoint.introduction,
-        entrypointPublicPath: legacyEntrypoint.settings.entrypoint_public_path,
-        profileLinks,
-      }), { headers: htmlHeaders });
-    }
     const profileLinks = entrypoint.introduction
       ? externalProfileLinks(entrypoint.introduction.body_markdown, config.APP_ORIGIN)
       : [];

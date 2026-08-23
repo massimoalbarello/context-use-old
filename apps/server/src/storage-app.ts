@@ -8,13 +8,12 @@ import {
   PathlessStoragePublicationRepository,
   createPool,
   extractDocumentLinks,
-  StoragePublicationRepository,
   type PathlessPublicationAdoptionArtifactReceipt,
   type PathlessPublicationAdoptionWriteAuthorization,
   type PathlessPublicationObjectClaim,
   type PathlessPublicationWriteAuthorization,
 } from "@context-use/database";
-import { AssetPath, type PathlessPublicationArtifactReceipt } from "@context-use/shared";
+import type { PathlessPublicationArtifactReceipt } from "@context-use/shared";
 import { Elysia } from "elysia";
 import { z } from "zod";
 import { config } from "./config.ts";
@@ -56,15 +55,6 @@ function bearer(request: Request): string {
 }
 
 type StorageBrokerTokens = { dashboard: string; mcp: string; public: string };
-
-type PublishedAssetLookup = {
-  assetByPublicPath(publicPath: string): Promise<{ s3_object_key: string } | null>;
-  pageByPublicPath?(publicPath: string): Promise<{
-    body_object_key: string;
-    body_size_bytes: number | string;
-    body_content_hash: string;
-  } | null>;
-};
 
 type PrivateAssetLookup = {
   getForStorage(id: string): Promise<{
@@ -120,7 +110,6 @@ const defaultStorage: ObjectStorageBackend = config.STORAGE_DRIVER === "s3"
 
 const storagePool = createPool(config.STORAGE_DATABASE_URL, { application_name: "context-use-storage-boundary" });
 const defaultPrivateAssets = new AssetRepository(storagePool);
-const defaultPublicAssets = new StoragePublicationRepository(storagePool);
 const defaultPathlessPublications = new PathlessStoragePublicationRepository(storagePool);
 const documentMaintenance = new DocumentMaintenanceRepository(storagePool);
 const defaultTokens: StorageBrokerTokens = {
@@ -364,11 +353,12 @@ export async function materializePathlessPublicationArtifact(input: {
 export function createStorageBrokerApp(input: {
   storage: ObjectStorageBackend;
   privateAssets: PrivateAssetLookup;
-  publicAssets: PublishedAssetLookup;
+  /** Ignored source-compatibility input for in-flight test/application callers. */
+  publicAssets?: unknown;
   pathlessPublications?: PathlessPublicationClaims;
   tokens: StorageBrokerTokens;
 }) {
-  const { storage, privateAssets, publicAssets, pathlessPublications, tokens } = input;
+  const { storage, privateAssets, pathlessPublications, tokens } = input;
   const activeWrites = new Set<string>();
   return new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
   .onError(() => denied())
@@ -518,29 +508,6 @@ export function createStorageBrokerApp(input: {
       verified: await storage.verify(input.object_key, input.size_bytes, input.content_hash),
     }, { headers: { "cache-control": "no-store" } });
   })
-  .get("/public/object", async ({ request, query }) => {
-    if (!publicAuthorized(request, tokens)) return denied();
-    const publicPath = AssetPath.parse(query.path);
-    const asset = await publicAssets.assetByPublicPath(publicPath);
-    if (!asset) return denied();
-    return readObject(storage, objectKeySchema.parse(asset.s3_object_key), parseRange(request.headers.get("range")));
-  })
-  .get("/public/document", async ({ request, query }) => {
-    if (!publicAuthorized(request, tokens)) return denied();
-    const publicPath = AssetPath.parse(query.path);
-    const page = await publicAssets.pageByPublicPath?.(publicPath);
-    if (!page) return denied();
-    if (!await storage.verify(
-      page.body_object_key,
-      Number(page.body_size_bytes),
-      page.body_content_hash,
-    )) return denied();
-    return readObject(
-      storage,
-      publicDocumentKeySchema.parse(page.body_object_key),
-      parseRange(request.headers.get("range")),
-    );
-  })
   .head("/public/representation", async ({ request, query }) => {
     if (!publicAuthorized(request, tokens) || !pathlessPublications?.resolve) return denied();
     const { token: representationToken } = z.object({
@@ -583,7 +550,6 @@ export function createStorageBrokerApp(input: {
 export const storageApp = createStorageBrokerApp({
   storage: defaultStorage,
   privateAssets: defaultPrivateAssets,
-  publicAssets: defaultPublicAssets,
   pathlessPublications: defaultPathlessPublications,
   tokens: defaultTokens,
 });

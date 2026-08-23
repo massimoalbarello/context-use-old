@@ -345,9 +345,10 @@ describe("pathless publication adoption boundary", () => {
   });
 
   test("reports cutover blockers and exposes a separate fail-closed assertion", async () => {
+    const finalizedAt = new Date("2026-08-23T18:00:00Z");
     const corpus = recordingPoolSequence([[
       { blocker_code: "legacy_page_visibility_not_adopted", affected_count: "2" },
-    ], []]);
+    ], [], [{ finalized_at: finalizedAt }]]);
     const adoptions = new PathlessPublicationAdoptionRepository(corpus.pool);
 
     expect(await adoptions.cutoverBlockers()).toEqual([{
@@ -355,9 +356,14 @@ describe("pathless publication adoption boundary", () => {
       affected_count: 2,
     }]);
     await adoptions.assertCutoverReady();
+    expect(await adoptions.finalizeCutover()).toBe(finalizedAt);
     expect(corpus.calls[0]!.sql).toContain("FROM list_hypermedia_cutover_blockers()");
     expect(corpus.calls[1]).toEqual({
       sql: "SELECT assert_hypermedia_cutover_ready()",
+      values: undefined,
+    });
+    expect(corpus.calls[2]).toEqual({
+      sql: "SELECT finalize_hypermedia_cutover() AS finalized_at",
       values: undefined,
     });
   });

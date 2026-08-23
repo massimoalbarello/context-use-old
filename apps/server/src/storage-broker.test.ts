@@ -285,20 +285,19 @@ describe("storage broker capabilities", () => {
     expect(finalizations).toHaveLength(2);
   });
 
-  test("public capability resolves only an exactly published path without receiving an object key", async () => {
+  test("legacy path-based public object reads are absent", async () => {
     const storage = new MemoryStorage();
     const app = createStorageBrokerApp({
       storage,
       privateAssets: privateAssets({}),
       publicAssets: {
-        assetByPublicPath: async (path) => path === "public/asset" ? { s3_object_key: publishedKey } : null,
+        assetByPublicPath: async (path: string) => path === "public/asset" ? { s3_object_key: publishedKey } : null,
       },
       tokens,
     });
 
     const published = await app.handle(authorized(tokens.public, "/public/object?path=public%2Fasset"));
-    expect(published.status).toBe(200);
-    expect(await published.text()).toBe("published");
+    expect(published.status).toBe(404);
     expect((await app.handle(authorized(tokens.public, "/public/object?path=private%2Fasset"))).status).toBe(404);
     expect((await app.handle(authorized(tokens.public, `/public/object?key=${publishedKey}`))).status).toBe(404);
     expect((await app.handle(authorized(tokens.public, `/private/object?key=${privateKey}`))).status).toBe(404);
@@ -377,7 +376,7 @@ describe("storage broker capabilities", () => {
     ))).text()).not.toContain(publishedKey);
   });
 
-  test("knowledge revisions are immutable and public readers resolve only materialized public paths", async () => {
+  test("knowledge revisions are immutable and legacy public document reads are absent", async () => {
     const storage = new MemoryStorage();
     const revisionId = "66666666-6666-4666-8666-666666666666";
     const privateDocumentKey = `documents/private/${revisionId}.md`;
@@ -390,7 +389,7 @@ describe("storage broker capabilities", () => {
       privateAssets: privateAssets({}),
       publicAssets: {
         assetByPublicPath: async () => null,
-        pageByPublicPath: async (path) => path === "public/page"
+        pageByPublicPath: async (path: string) => path === "public/page"
           ? {
               body_object_key: publicDocumentKey,
               body_size_bytes: publicProjection.byteLength,
@@ -421,7 +420,7 @@ describe("storage broker capabilities", () => {
     ))).status).toBe(404);
 
     const published = await app.handle(authorized(tokens.public, "/public/document?path=public%2Fpage"));
-    expect(await published.text()).toBe("public projection");
+    expect(published.status).toBe(404);
     storage.objects.set(publicDocumentKey, Buffer.from("corrupt projection"));
     expect((await app.handle(authorized(tokens.public, "/public/document?path=public%2Fpage"))).status).toBe(404);
     expect((await app.handle(authorized(tokens.public, "/public/document?path=private%2Fpage"))).status).toBe(404);

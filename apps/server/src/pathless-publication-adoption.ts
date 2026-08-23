@@ -14,6 +14,7 @@ type AdoptionRepository = {
   apply(adoptionId: string): Promise<PathlessPublicationAdoptionPhase>;
   seedEntrypoint(): Promise<PathlessPublicationEntrypoint>;
   assertCutoverReady(): Promise<void>;
+  finalizeCutover(): Promise<Date | string>;
 };
 
 type ArtifactMaterializer = {
@@ -31,10 +32,11 @@ export type PathlessPublicationAdoptionResult = {
   superseded: number;
   entrypoint: PathlessPublicationEntrypoint;
   readiness: "ready";
+  compatibility: "retired";
 };
 
 export class PathlessPublicationAdoptionError extends Error {
-  readonly operation: "list" | "begin" | "materialize" | "apply" | "seed" | "verify";
+  readonly operation: "list" | "begin" | "materialize" | "apply" | "seed" | "verify" | "finalize";
   readonly adoptionKind: PathlessPublicationAdoptionCandidate["adoption_kind"] | null;
   readonly sourceDocumentId: string | null;
   readonly adoptionId: string | null;
@@ -103,7 +105,17 @@ export async function adoptRetainedPublications(input: {
       } catch (cause) {
         throw new PathlessPublicationAdoptionError({ operation: "verify", cause });
       }
-      return { ...result, entrypoint, readiness: "ready" };
+      try {
+        await input.adoptions.finalizeCutover();
+      } catch (cause) {
+        throw new PathlessPublicationAdoptionError({ operation: "finalize", cause });
+      }
+      return {
+        ...result,
+        entrypoint,
+        readiness: "ready",
+        compatibility: "retired",
+      };
     }
     result.passes = pass;
     for (const candidate of candidates) {

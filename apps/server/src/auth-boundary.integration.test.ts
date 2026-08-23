@@ -6,15 +6,12 @@ import { makeSignature } from "better-auth/crypto";
 import { Client, Pool } from "pg";
 import {
   AssetRepository,
-  DocumentMaintenanceRepository,
-  markdownObjectMetadata,
   PathlessStoragePublicationRepository,
-  StoragePublicationRepository,
 } from "@context-use/database";
 import { disposableDatabaseUrl } from "@context-use/database/disposable-database";
 import { config } from "./config.ts";
 import { csrfToken } from "./security.ts";
-import { createStorageBrokerApp, reconcileDocumentObjects } from "./storage-app.ts";
+import { createStorageBrokerApp } from "./storage-app.ts";
 import { FilesystemStorage } from "./storage.ts";
 
 const databaseUrl = await disposableDatabaseUrl();
@@ -26,14 +23,10 @@ const enabled = process.env.TEST_APP_DATABASE_URL === "1";
 const testStorageRoot = enabled ? await mkdtemp(join(tmpdir(), "context-use-app-storage-")) : null;
 const testStoragePool = enabled ? new Pool({ connectionString: requireDatabase() }) : null;
 const testStorage = testStorageRoot ? new FilesystemStorage(testStorageRoot) : null;
-const testDocumentMaintenance = testStoragePool
-  ? new DocumentMaintenanceRepository(testStoragePool)
-  : null;
 if (enabled) {
   const storageBroker = createStorageBrokerApp({
     storage: testStorage!,
     privateAssets: new AssetRepository(testStoragePool!),
-    publicAssets: new StoragePublicationRepository(testStoragePool!),
     pathlessPublications: new PathlessStoragePublicationRepository(testStoragePool!),
     tokens: {
       dashboard: config.STORAGE_DASHBOARD_TOKEN,
@@ -324,199 +317,6 @@ describeApplication("HTTP credential and OAuth boundary", () => {
     expect(response.status).toBe(404);
   });
 
-  test("nested /p paths resolve every published page and no private page", async () => {
-    const client = new Client({ connectionString: requireDatabase() });
-    const suffix = crypto.randomUUID().slice(0, 8);
-    const publicPageId = crypto.randomUUID();
-    const publicVersionId = crypto.randomUUID();
-    const privatePageId = crypto.randomUUID();
-    const privateVersionId = crypto.randomUUID();
-    const parentDirectoryId = crypto.randomUUID();
-    const nestedDirectoryId = crypto.randomUUID();
-    const parentPath = `tests/${suffix}`;
-    const nestedPath = `${parentPath}/nested`;
-    const publicPath = `tests/${suffix}/nested/public-page`;
-    const privatePath = `tests/${suffix}/nested/private-page`;
-    await client.connect();
-    try {
-      await client.query("BEGIN");
-      await client.query(
-        `INSERT INTO knowledge_directories(id,current_path,title,summary,search_vector)
-         VALUES ($1,'tests','Tests','Integration test knowledge.',directory_search_vector('tests','Tests','Integration test knowledge.',''))
-         ON CONFLICT (current_path) DO NOTHING`,
-        [crypto.randomUUID()],
-      );
-      await client.query(
-        `INSERT INTO knowledge_directories(id,current_path,title,summary,search_vector)
-         VALUES
-           ($1,$2,'PRIVATE-DIRECTORY-TITLE-CANARY','PRIVATE-DIRECTORY-SUMMARY-CANARY',directory_search_vector($2,'PRIVATE-DIRECTORY-TITLE-CANARY','PRIVATE-DIRECTORY-SUMMARY-CANARY','')),
-           ($3,$4,'PRIVATE-NESTED-DIRECTORY-TITLE-CANARY','PRIVATE-NESTED-DIRECTORY-SUMMARY-CANARY',directory_search_vector($4,'PRIVATE-NESTED-DIRECTORY-TITLE-CANARY','PRIVATE-NESTED-DIRECTORY-SUMMARY-CANARY',''))`,
-        [parentDirectoryId, parentPath, nestedDirectoryId, nestedPath],
-      );
-      await client.query(
-        `INSERT INTO knowledge_pages(id,current_path,current_version_id,published_version_id,public_path)
-         VALUES ($1,$2,$3,$3,$2),($4,$5,$6,NULL,NULL)`,
-        [publicPageId, publicPath, publicVersionId, privatePageId, privatePath, privateVersionId],
-      );
-      await client.query(
-        `INSERT INTO hypermedia_document_revisions(
-           id,document_id,revision_number,body_object_key,body_size_bytes,body_content_hash
-         ) VALUES ($1,$2,1,$3,$4,$5),($6,$7,1,$8,$9,$10)`,
-        [
-          publicVersionId, publicPageId,
-          markdownObjectMetadata(publicVersionId, "PUBLIC-NESTED-CANARY").body_object_key,
-          markdownObjectMetadata(publicVersionId, "PUBLIC-NESTED-CANARY").body_size_bytes,
-          markdownObjectMetadata(publicVersionId, "PUBLIC-NESTED-CANARY").body_content_hash,
-          privateVersionId, privatePageId,
-          markdownObjectMetadata(privateVersionId, "PRIVATE-NESTED-CANARY").body_object_key,
-          markdownObjectMetadata(privateVersionId, "PRIVATE-NESTED-CANARY").body_size_bytes,
-          markdownObjectMetadata(privateVersionId, "PRIVATE-NESTED-CANARY").body_content_hash,
-        ],
-      );
-      await client.query(
-        `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,path,title,summary,commit_message,actor_kind,actor_subject
-         ) VALUES
-           ($1,$2,1,$3,'Nested public page','PUBLIC-SUMMARY-CANARY','Create public fixture','dashboard','test'),
-           ($4,$5,1,$6,'PRIVATE-TITLE-CANARY','PRIVATE-SUMMARY-CANARY','Create private fixture','dashboard','test')`,
-        [publicVersionId, publicPageId, publicPath, privateVersionId, privatePageId, privatePath],
-      );
-      await client.query("COMMIT");
-      for (const [versionId, body] of [
-        [publicVersionId, "PUBLIC-NESTED-CANARY"],
-        [privateVersionId, "PRIVATE-NESTED-CANARY"],
-      ] as const) {
-        const metadata = markdownObjectMetadata(versionId, body);
-        await testStorage!.write({
-          id: versionId,
-          objectKey: metadata.body_object_key,
-          filename: `${versionId}.md`,
-          contentType: "text/markdown; charset=utf-8",
-          sizeBytes: metadata.body_size_bytes,
-          contentHash: metadata.body_content_hash,
-        }, new Blob([body]).stream());
-      }
-      const scopedMaintenance = {
-        async projectionSnapshot() {
-          const snapshot = await testDocumentMaintenance!.projectionSnapshot();
-          return {
-            ...snapshot,
-            pages: snapshot.pages.filter(({ page_id }) => page_id === publicPageId),
-          };
-        },
-        recordPublishedArtifact: testDocumentMaintenance!.recordPublishedArtifact
-          .bind(testDocumentMaintenance),
-      };
-      await reconcileDocumentObjects({
-        storage: testStorage!,
-        maintenance: scopedMaintenance,
-      });
-
-      const published = await application!.handle(new Request(`http://localhost:3000/p/${publicPath}`));
-      const publishedMarkdown = await application!.handle(new Request(`http://localhost:3000/p/${publicPath}.md`));
-      const privatePage = await application!.handle(new Request(`http://localhost:3000/p/${privatePath}`));
-      const privateMarkdown = await application!.handle(new Request(`http://localhost:3000/p/${privatePath}.md`));
-      const missing = await application!.handle(new Request(`http://localhost:3000/p/tests/${suffix}/nested/missing-page`));
-      const leafIndex = await application!.handle(new Request(`http://localhost:3000/p/${nestedPath}/`));
-      const leafWithoutSlash = await application!.handle(new Request(`http://localhost:3000/p/${nestedPath}`));
-      const parentIndex = await application!.handle(new Request(`http://localhost:3000/p/${parentPath}/`));
-      const parentWithoutSlash = await application!.handle(new Request(`http://localhost:3000/p/${parentPath}`));
-      const rootIndex = await application!.handle(new Request("http://localhost:3000/p/"));
-      const rootWithoutSlash = await application!.handle(new Request("http://localhost:3000/p"));
-      const llms = await application!.handle(new Request("http://localhost:3000/llms.txt"));
-      const llmsFull = await application!.handle(new Request("http://localhost:3000/llms-full.txt"));
-      const robots = await application!.handle(new Request("http://localhost:3000/robots.txt"));
-      const sitemap = await application!.handle(new Request("http://localhost:3000/sitemap.xml"));
-
-      expect(published.status).toBe(200);
-      const publishedHtml = await published.text();
-      expect(publishedHtml).toContain("PUBLIC-NESTED-CANARY");
-      expect(publishedHtml).toContain(`href="/p/${nestedPath}/"`);
-      expect(publishedHtml).toContain('href="/p/"');
-      expect(publishedHtml).toContain(`<a href="/p/${publicPath}.md" type="text/markdown">View as Markdown</a>`);
-      expect(publishedHtml).toContain('href="/llms.txt"');
-      expect(publishedMarkdown.status).toBe(200);
-      expect(publishedMarkdown.headers.get("content-type")).toBe("text/markdown; charset=utf-8");
-      expect(publishedMarkdown.headers.get("x-robots-tag")).toBe("noindex, follow");
-      expect(publishedMarkdown.headers.get("link")).toBe(
-        `<${config.APP_ORIGIN}/p/${publicPath}>; rel="canonical"`,
-      );
-      const publishedMarkdownText = await publishedMarkdown.text();
-      expect(publishedMarkdownText).toContain("# Nested public page");
-      expect(publishedMarkdownText).toContain("PUBLIC-SUMMARY-CANARY");
-      expect(publishedMarkdownText).toContain("PUBLIC-NESTED-CANARY");
-      expect(privatePage.status).toBe(404);
-      expect(await privatePage.text()).toBe(await missing.text());
-      expect(privateMarkdown.status).toBe(404);
-      expect(leafIndex.status).toBe(302);
-      expect(leafIndex.headers.get("location")).toBe(`/p/${publicPath}`);
-      expect(leafWithoutSlash.status).toBe(302);
-      expect(leafWithoutSlash.headers.get("location")).toBe(`/p/${publicPath}`);
-      expect(parentIndex.status).toBe(200);
-      expect(parentWithoutSlash.status).toBe(308);
-      expect(parentWithoutSlash.headers.get("location")).toBe(`/p/${parentPath}/`);
-      expect(rootIndex.status).toBe(200);
-      expect(rootIndex.headers.get("location")).toBeNull();
-      const rootHtml = await rootIndex.text();
-      expect(rootHtml).toContain('<a href="/">Home</a>');
-      expect(rootHtml).toContain('<h1>Knowledge</h1>');
-      expect(rootWithoutSlash.status).toBe(308);
-      expect(rootWithoutSlash.headers.get("location")).toBe("/p/");
-      const parentHtml = await parentIndex.text();
-      expect(parentHtml).toContain("PRIVATE-DIRECTORY-TITLE-CANARY");
-      expect(parentHtml).toContain("PRIVATE-NESTED-DIRECTORY-TITLE-CANARY");
-      expect(parentHtml).toContain("PRIVATE-NESTED-DIRECTORY-SUMMARY-CANARY");
-      expect(parentHtml).not.toContain("published page");
-      expect(parentHtml).toContain(`href="/p/${publicPath}"`);
-      expect(parentHtml).toContain('href="/llms.txt"');
-      expect(llms.status).toBe(200);
-      expect(llms.headers.get("x-robots-tag")).toBeNull();
-      const llmsText = await llms.text();
-      expect(llmsText).toContain(`${config.APP_ORIGIN}/p/${publicPath}.md`);
-      expect(llmsText).not.toContain(privatePath);
-      expect(llmsFull.status).toBe(200);
-      expect(llmsFull.headers.get("x-robots-tag")).toBe("noindex, follow");
-      const llmsFullText = await llmsFull.text();
-      expect(llmsFullText).toContain("PUBLIC-NESTED-CANARY");
-      expect(llmsFullText).not.toContain("PRIVATE-NESTED-CANARY");
-      expect(robots.status).toBe(200);
-      expect(robots.headers.get("content-type")).toBe("text/plain; charset=utf-8");
-      expect(await robots.text()).toContain(`Sitemap: ${config.APP_ORIGIN}/sitemap.xml`);
-      expect(sitemap.status).toBe(200);
-      expect(sitemap.headers.get("content-type")).toBe("application/xml; charset=utf-8");
-      const sitemapXml = await sitemap.text();
-      expect(sitemapXml).toContain(`<loc>${config.APP_ORIGIN}/p/${publicPath}</loc>`);
-      expect(sitemapXml).not.toContain(privatePath);
-      for (const privateCanary of [
-        "PRIVATE-TITLE-CANARY",
-        "PRIVATE-SUMMARY-CANARY",
-        "PRIVATE-NESTED-CANARY",
-        "PRIVATE-DIRECTORY-INTRO-CANARY",
-        "PRIVATE-NESTED-DIRECTORY-INTRO-CANARY",
-      ]) expect(parentHtml).not.toContain(privateCanary);
-
-      await client.query(
-        "UPDATE knowledge_pages SET published_version_id=NULL,public_path=NULL WHERE id=$1",
-        [publicPageId],
-      );
-      const removedIndex = await application!.handle(new Request(`http://localhost:3000/p/${nestedPath}/`));
-      const removedMarkdown = await application!.handle(new Request(`http://localhost:3000/p/${publicPath}.md`));
-      expect(removedIndex.status).toBe(404);
-      expect(removedMarkdown.status).toBe(404);
-    } finally {
-      await client.query("ROLLBACK").catch(() => undefined);
-      await client.query("ALTER TABLE knowledge_pages DISABLE TRIGGER ALL");
-      await client.query("DELETE FROM knowledge_pages WHERE id=ANY($1::uuid[])", [[publicPageId, privatePageId]]);
-      await client.query("ALTER TABLE knowledge_pages ENABLE TRIGGER ALL");
-      await client.query("DELETE FROM knowledge_page_versions WHERE page_id=ANY($1::uuid[])", [[publicPageId, privatePageId]]);
-      await client.query("DELETE FROM hypermedia_documents WHERE id=ANY($1::uuid[])", [[publicPageId, privatePageId]]);
-      await client.query(
-        "DELETE FROM knowledge_directories WHERE current_path IN ($1,$2)",
-        [nestedPath, parentPath],
-      );
-      await client.end();
-    }
-  });
 
   test("an active pathless page is served only through its current representation token", async () => {
     const client = new Client({ connectionString: requireDatabase() });
@@ -535,6 +335,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       new TextEncoder().encode(body),
     )).toString("hex");
     const objectKey = `documents/public/${artifactId}.md`;
+    const retainedAlias = `/p/retained-${publicId.slice(0, 8)}`;
     let previousEntrypoint: { entrypoint_public_id: string | null; updated_at: Date | null } | undefined;
     await client.connect();
     try {
@@ -610,6 +411,11 @@ describeApplication("HTTP credential and OAuth boundary", () => {
         [publicId, artifactId],
       );
       await client.query(
+        `INSERT INTO public_route_aliases(alias_path,route_kind,public_id)
+         VALUES ($1,'page',$2)`,
+        [retainedAlias, publicId],
+      );
+      await client.query(
         `UPDATE pathless_publication_settings
          SET entrypoint_public_id=$1,updated_at=now() WHERE singleton`,
         [publicId],
@@ -636,6 +442,9 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       expect(markdown.headers.get("link")).toBe(
         `<${config.APP_ORIGIN}/p/${publicId}>; rel="canonical"`,
       );
+      const aliased = await application!.handle(new Request(`http://localhost:3000${retainedAlias}`));
+      expect(aliased.status).toBe(200);
+      expect(await aliased.text()).toContain("PATHLESS-PUBLIC-CANARY");
       const entrypoint = await application!.handle(new Request("http://localhost:3000/p/"));
       expect(entrypoint.status).toBe(302);
       expect(entrypoint.headers.get("location")).toBe(`/p/${publicId}`);
@@ -666,6 +475,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
         [representationToken],
       ).catch(() => undefined);
       await client.query("DELETE FROM public_artifact_id_reservations WHERE artifact_id=$1", [artifactId]).catch(() => undefined);
+      await client.query("DELETE FROM public_route_aliases WHERE alias_path=$1", [retainedAlias]).catch(() => undefined);
       await client.query("DELETE FROM public_visibility_generations WHERE public_id=$1", [publicId]).catch(() => undefined);
       await client.query("DELETE FROM public_resources WHERE public_id=$1", [publicId]).catch(() => undefined);
       await client.query(
