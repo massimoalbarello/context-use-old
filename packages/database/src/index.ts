@@ -153,7 +153,7 @@ export {
 export {
   KnowledgeExportRepository,
   type KnowledgeExportAsset,
-  type KnowledgeExportDirectory,
+  type KnowledgeExportLink,
   type KnowledgeExportPage,
   type KnowledgeExportPrincipal,
   type KnowledgeExportSnapshot,

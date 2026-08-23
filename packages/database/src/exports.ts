@@ -9,23 +9,15 @@ import {
 export type KnowledgeExportPrincipal = { ownerUserId: string; sessionId: string };
 
 export type KnowledgeExportPage = {
-  id: string;
-  current_path: string;
+  document_id: string;
+  current_revision_id: string;
   title: string;
   summary: string;
   body_markdown: string;
 };
 
-export type KnowledgeExportDirectory = {
-  id: string;
-  current_path: string;
-  title: string;
-  summary: string;
-};
-
 export type KnowledgeExportAsset = {
-  id: string;
-  current_path: string;
+  document_id: string;
   filename: string;
   content_type: string;
   size_bytes: number | string;
@@ -33,10 +25,16 @@ export type KnowledgeExportAsset = {
   s3_object_key: string;
 };
 
+export type KnowledgeExportLink = {
+  source_document_id: string;
+  source_revision_id: string;
+  target_document_id: string;
+};
+
 export type KnowledgeExportSnapshot = {
-  directories: KnowledgeExportDirectory[];
   pages: KnowledgeExportPage[];
   assets: KnowledgeExportAsset[];
+  links: KnowledgeExportLink[];
 };
 
 async function transaction<T>(pool: Pool, work: (client: PoolClient) => Promise<T>): Promise<T> {
@@ -108,13 +106,6 @@ export class KnowledgeExportRepository {
            (
              coalesce((
                SELECT sum(
-                 octet_length(directory.title)
-                 + octet_length(directory.summary)
-               )
-               FROM knowledge_directories directory
-             ),0)
-             + coalesce((
-               SELECT sum(
                  octet_length(version.title)
                  + octet_length(version.summary)
                  + object.body_size_bytes
@@ -166,10 +157,10 @@ export class KnowledgeExportRepository {
 
   async assets(): Promise<KnowledgeExportAsset[]> {
     const result = await this.dashboardPool.query<KnowledgeExportAsset>(
-      `SELECT id,current_path,filename,content_type,size_bytes,content_hash,s3_object_key
+      `SELECT id AS document_id,filename,content_type,size_bytes,content_hash,s3_object_key
        FROM assets
        WHERE deleted_at IS NULL
-       ORDER BY current_path,id`,
+       ORDER BY id`,
     );
     return result.rows;
   }
@@ -185,13 +176,9 @@ export class KnowledgeExportRepository {
   async currentSnapshot(): Promise<KnowledgeExportSnapshot> {
     const snapshot = await transaction(this.dashboardPool, async (client) => {
       await client.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY");
-      const directories = await client.query<KnowledgeExportDirectory>(
-        `SELECT id,current_path,title,summary
-         FROM knowledge_directories
-         ORDER BY current_path,id`,
-      );
       const pages = await client.query<Omit<KnowledgeExportPage, "body_markdown"> & MarkdownObjectMetadata>(
-        `SELECT page.id,version.path AS current_path,version.title,version.summary,
+        `SELECT page.id AS document_id,version.id AS current_revision_id,
+           version.title,version.summary,
            object.body_object_key,
            object.body_size_bytes,object.body_content_hash
          FROM knowledge_pages page
@@ -199,18 +186,26 @@ export class KnowledgeExportRepository {
            ON version.id=page.current_version_id AND version.page_id=page.id
          JOIN hypermedia_document_revisions object ON object.id=version.id
          WHERE page.archived_at IS NULL
-         ORDER BY version.path,page.id`,
+         ORDER BY page.id`,
       );
       const assets = await client.query<KnowledgeExportAsset>(
-        `SELECT id,current_path,filename,content_type,size_bytes,content_hash,s3_object_key
+        `SELECT id AS document_id,filename,content_type,size_bytes,content_hash,s3_object_key
          FROM assets
          WHERE deleted_at IS NULL
-         ORDER BY current_path,id`,
+         ORDER BY id`,
+      );
+      const links = await client.query<KnowledgeExportLink>(
+        `SELECT page.id AS source_document_id,
+           page.current_version_id AS source_revision_id,link.target_document_id
+         FROM knowledge_pages page
+         JOIN document_links link ON link.source_revision_id=page.current_version_id
+         WHERE page.archived_at IS NULL
+         ORDER BY page.id,link.target_document_id`,
       );
       return {
-        directories: directories.rows,
         pages: pages.rows,
         assets: assets.rows,
+        links: links.rows,
       };
     });
     return { ...snapshot, pages: await this.hydratePages(snapshot.pages) };
