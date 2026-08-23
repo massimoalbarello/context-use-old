@@ -1,6 +1,16 @@
 import { Client } from "pg";
 
 export const DEVELOPMENT_RESET_TABLES = [
+  "page_publications",
+  "asset_publications",
+  "public_page_artifacts",
+  "public_asset_artifacts",
+  "pathless_publication_artifact_staging",
+  "pathless_publication_intents",
+  "pathless_publication_adoptions",
+  "public_artifact_id_reservations",
+  "pathless_publication_settings",
+  "public_namespace_conflicts",
   "pathless_knowledge_search_chunks",
   "pathless_knowledge_search",
   "knowledge_revision_contracts",
@@ -42,6 +52,9 @@ export function developmentResetSql(): string {
     TRUNCATE TABLE ${DEVELOPMENT_RESET_TABLES.join(", ")} RESTART IDENTITY;
     INSERT INTO public_projection_state(singleton) VALUES (true);
     INSERT INTO public_knowledge_settings(singleton) VALUES (true);
+    INSERT INTO pathless_publication_settings(
+      singleton,entrypoint_public_id,updated_at
+    ) VALUES (true,NULL,NULL);
     INSERT INTO knowledge_settings(singleton) VALUES (true);
     INSERT INTO knowledge_directories(
       id,current_path,title,summary,search_vector

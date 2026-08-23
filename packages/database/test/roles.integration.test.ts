@@ -820,6 +820,197 @@ describeDatabase("PostgreSQL security roles", () => {
     }
   });
 
+  test("pathless publication namespace boundaries are non-login owned and backup-readable", async () => {
+    const views = await admin.query<{ relname: string; owner: string }>(
+      `SELECT relname,pg_get_userbyid(relowner) AS owner
+       FROM pg_class
+       WHERE relnamespace='public'::regnamespace
+         AND relname IN (
+           'live_public_namespace_conflicts','blocking_public_namespace_conflicts'
+         )
+       ORDER BY relname`,
+    );
+    expect(views.rows).toEqual([
+      { relname: "blocking_public_namespace_conflicts", owner: "context_use_projection_owner" },
+      { relname: "live_public_namespace_conflicts", owner: "context_use_projection_owner" },
+    ]);
+
+    expect((await admin.query<{ rolcanlogin: boolean }>(
+      `SELECT rolcanlogin FROM pg_roles
+       WHERE rolname='context_use_publication_lock_owner'`,
+    )).rows).toEqual([{ rolcanlogin: false }]);
+    const routeLockHelpers = await admin.query<{
+      proname: string;
+      owner: string;
+      security_definer: boolean;
+    }>(
+      `SELECT proname,pg_get_userbyid(proowner) AS owner,
+         prosecdef AS security_definer
+       FROM pg_proc
+       WHERE pronamespace='public'::regnamespace
+         AND proname IN (
+           'lock_public_routing_audit_tables','lock_public_routing_apply_tables'
+         )
+       ORDER BY proname`,
+    );
+    expect(routeLockHelpers.rows).toEqual([
+      {
+        proname: "lock_public_routing_apply_tables",
+        owner: "context_use_publication_lock_owner",
+        security_definer: true,
+      },
+      {
+        proname: "lock_public_routing_audit_tables",
+        owner: "context_use_publication_lock_owner",
+        security_definer: true,
+      },
+    ]);
+    for (const helper of [
+      "lock_public_routing_audit_tables()",
+      "lock_public_routing_apply_tables()",
+    ]) {
+      expect((await admin.query<{ allowed: boolean }>(
+        "SELECT has_function_privilege('context_use_boundary_owner',$1,'EXECUTE') AS allowed",
+        [helper],
+      )).rows[0]?.allowed).toBe(true);
+      for (const role of [
+        "context_use_dashboard",
+        "context_use_mcp",
+        "context_use_public",
+        "context_use_storage",
+        "context_use_confirmation",
+        "context_use_corpus",
+        "context_use_backup",
+        "context_use_auth",
+      ]) {
+        expect((await admin.query<{ allowed: boolean }>(
+          "SELECT has_function_privilege($1,$2,'EXECUTE') AS allowed",
+          [role, helper],
+        )).rows[0]?.allowed).toBe(false);
+      }
+    }
+
+    const boundaryFunctions = [
+      "assert_private_uuid_available",
+      "assert_public_uuid_available",
+      "guard_artifact_reservation_namespace",
+      "guard_corpus_directory_plan_namespace",
+      "guard_legacy_alias_namespace",
+      "guard_private_uuid_columns",
+      "guard_public_resource_identity",
+      "invalidate_pathless_asset_publication_on_legacy_drift",
+      "invalidate_pathless_hub_publication_on_mapping_drift",
+      "invalidate_pathless_page_publication_on_legacy_drift",
+      "lock_public_uuid_namespace",
+      "protect_active_pathless_asset_publication",
+      "protect_active_pathless_page_publication",
+      "public_uuid_has_artifact_identity",
+      "public_uuid_has_legacy_alias_token",
+      "public_uuid_has_private_identity",
+      "public_uuid_has_reserved_public_identity",
+      "reconcile_finished_operational_public_namespace_conflicts",
+      "reconcile_planned_public_namespace_conflicts",
+      "reconcile_superseded_public_namespace_conflicts",
+      "reserve_legacy_page_artifact_identity",
+      "reserve_public_artifact_identity",
+      "validate_active_pathless_publication_pin",
+    ];
+    const functions = await admin.query<{ proname: string; owner: string; security_definer: boolean }>(
+      `SELECT proname,pg_get_userbyid(proowner) AS owner,prosecdef AS security_definer
+       FROM pg_proc
+       WHERE pronamespace='public'::regnamespace AND proname=ANY($1::text[])
+       ORDER BY proname`,
+      [boundaryFunctions],
+    );
+    expect(functions.rows.map((row) => row.proname)).toEqual([...boundaryFunctions].sort());
+    for (const fn of functions.rows) {
+      expect(fn.owner).toBe("context_use_boundary_owner");
+      expect(fn.security_definer).toBe(true);
+    }
+    const canonicalHelpers = await admin.query<{ proname: string; owner: string }>(
+      `SELECT proname,pg_get_userbyid(proowner) AS owner
+       FROM pg_proc
+       WHERE pronamespace='public'::regnamespace
+         AND proname IN ('canonical_legacy_alias_uuid','canonical_legacy_alias_kind')
+       ORDER BY proname`,
+    );
+    expect(canonicalHelpers.rows).toEqual([
+      { proname: "canonical_legacy_alias_kind", owner: "context_use_boundary_owner" },
+      { proname: "canonical_legacy_alias_uuid", owner: "context_use_boundary_owner" },
+    ]);
+
+    expect((await admin.query<{ allowed: boolean }>(
+      "SELECT has_table_privilege('context_use_boundary_owner','public_resources','UPDATE') AS allowed",
+    )).rows[0]?.allowed).toBe(false);
+    expect((await admin.query<{ allowed: boolean }>(
+      "SELECT has_table_privilege('context_use_boundary_owner','public_route_aliases','UPDATE') AS allowed",
+    )).rows[0]?.allowed).toBe(false);
+    expect((await admin.query<{ allowed: boolean }>(
+      `SELECT has_column_privilege(
+         'context_use_boundary_owner','public_resources','document_id','UPDATE'
+       ) AS allowed`,
+    )).rows[0]?.allowed).toBe(true);
+    for (const column of ["public_id", "original_document_id", "resource_kind"]) {
+      expect((await admin.query<{ allowed: boolean }>(
+        `SELECT has_column_privilege(
+           'context_use_boundary_owner','public_resources',$1,'UPDATE'
+         ) AS allowed`,
+        [column],
+      )).rows[0]?.allowed).toBe(false);
+    }
+
+    const durableRelations = [
+      "asset_publications",
+      "blocking_public_namespace_conflicts",
+      "live_public_namespace_conflicts",
+      "page_publications",
+      "pathless_publication_adoptions",
+      "pathless_publication_artifact_staging",
+      "pathless_publication_intents",
+      "pathless_publication_settings",
+      "public_artifact_id_reservations",
+      "public_asset_artifacts",
+      "public_namespace_conflicts",
+      "public_page_artifacts",
+    ];
+    for (const relation of durableRelations) {
+      expect((await admin.query<{ allowed: boolean }>(
+        "SELECT has_table_privilege('context_use_backup',$1,'SELECT') AS allowed",
+        [relation],
+      )).rows[0]?.allowed).toBe(true);
+    }
+
+    const allocator = "reserve_public_artifact_identity(uuid,text,public_artifact_allocation_kind,uuid)";
+    for (const role of [
+      "context_use_auth",
+      "context_use_backup",
+      "context_use_confirmation",
+      "context_use_corpus",
+      "context_use_dashboard",
+      "context_use_mcp",
+      "context_use_public",
+      "context_use_storage",
+    ]) {
+      expect((await admin.query<{ allowed: boolean }>(
+        "SELECT has_function_privilege($1,$2,'EXECUTE') AS allowed",
+        [role, allocator],
+      )).rows[0]?.allowed).toBe(false);
+    }
+
+    const resetSignature = "clear_knowledge(uuid,text,text,uuid,text,integer,text,text,text,text,text,tsvector,text,text)";
+    const legacyResetSignature = "clear_knowledge_legacy_implementation(uuid,text,text,uuid,text,integer,text,text,text,text,text,tsvector,text,text)";
+    expect((await admin.query<{ allowed: boolean }>(
+      "SELECT has_function_privilege('context_use_dashboard',$1,'EXECUTE') AS allowed",
+      [resetSignature],
+    )).rows[0]?.allowed).toBe(true);
+    for (const role of ["context_use_dashboard", "context_use_mcp", "context_use_confirmation", "context_use_backup"]) {
+      expect((await admin.query<{ allowed: boolean }>(
+        "SELECT has_function_privilege($1,$2,'EXECUTE') AS allowed",
+        [role, legacyResetSignature],
+      )).rows[0]?.allowed).toBe(false);
+    }
+  });
+
   test("dashboard and MCP can invoke only the guarded directory deletion capability", async () => {
     for (const role of ["context_use_dashboard", "context_use_mcp"]) {
       expect((await admin.query<{ allowed: boolean }>(

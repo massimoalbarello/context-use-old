@@ -149,14 +149,27 @@ export class DocumentMaintenanceRepository {
     sizeBytes: number;
     contentHash: string;
   }): Promise<void> {
-    await this.pool.query(
-      `INSERT INTO published_page_artifacts(
-         page_id,version_id,projection_generation,artifact_id,body_object_key,
-         body_size_bytes,body_content_hash
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7)
-       ON CONFLICT (page_id,version_id,projection_generation) DO NOTHING`,
-      [input.pageId, input.versionId, input.generation, input.artifactId,
-        input.objectKey, input.sizeBytes, input.contentHash],
-    );
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
+      );
+      await client.query(
+        `INSERT INTO published_page_artifacts(
+           page_id,version_id,projection_generation,artifact_id,body_object_key,
+           body_size_bytes,body_content_hash
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT (page_id,version_id,projection_generation) DO NOTHING`,
+        [input.pageId, input.versionId, input.generation, input.artifactId,
+          input.objectKey, input.sizeBytes, input.contentHash],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 }

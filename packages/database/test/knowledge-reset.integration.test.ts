@@ -54,6 +54,11 @@ describeDatabase("passkey-confirmed knowledge base reset", () => {
       await client.query(
         `TRUNCATE TABLE pathless_knowledge_search_chunks,
            pathless_knowledge_search,knowledge_revision_contracts,
+           page_publications,asset_publications,public_page_artifacts,
+           public_asset_artifacts,pathless_publication_artifact_staging,
+           pathless_publication_intents,pathless_publication_adoptions,
+           pathless_publication_settings,public_namespace_conflicts,
+           public_artifact_id_reservations,
            confirmation_challenges,publication_intents,knowledge_export_intents,
            page_deletion_intents,operational_document_replacements,
            automation_registry,directory_hub_migrations,
@@ -71,6 +76,11 @@ describeDatabase("passkey-confirmed knowledge base reset", () => {
       await client.query("INSERT INTO public_projection_state(singleton) VALUES (true)");
       await client.query("INSERT INTO public_knowledge_settings(singleton) VALUES (true)");
       await client.query("INSERT INTO knowledge_settings(singleton) VALUES (true)");
+      await client.query(
+        `INSERT INTO pathless_publication_settings(
+           singleton,entrypoint_public_id,updated_at
+         ) VALUES (true,NULL,NULL)`,
+      );
       await client.query("SET LOCAL session_replication_role=origin");
 
       const rootId = randomUUID();
@@ -278,6 +288,10 @@ describeDatabase("passkey-confirmed knowledge base reset", () => {
         "SELECT count(*)::int AS total FROM pathless_knowledge_search_chunks",
       )).rows[0]?.total).toBe(0);
       expect((await client.query(
+        `SELECT entrypoint_public_id,updated_at
+         FROM pathless_publication_settings WHERE singleton`,
+      )).rows).toEqual([{ entrypoint_public_id: null, updated_at: null }]);
+      expect((await client.query(
         "SELECT change_sequence::text,change_kind,path,actor_subject FROM knowledge_page_changes change ORDER BY change.change_sequence",
       )).rows).toEqual([{
         change_sequence: "1",
@@ -321,6 +335,84 @@ describeDatabase("passkey-confirmed knowledge base reset", () => {
     } finally {
       await plain.query("ROLLBACK");
       await plain.end().catch(() => undefined);
+    }
+  });
+
+  test("refuses the legacy reset after durable v2 publication work exists", async () => {
+    const plain = new Client({ connectionString: databaseUrl });
+    await plain.connect();
+    await plain.query("BEGIN");
+    try {
+      const intentId = randomUUID();
+      const artifactId = randomUUID();
+      const allocationId = randomUUID();
+      const guideVersionId = randomUUID();
+      await plain.query(
+        `INSERT INTO knowledge_export_intents(
+           id,owner_user_id,session_id,expires_at,confirmed_at,
+           download_started_at,reset_requested,download_completed_at
+         ) VALUES (
+           $1,'context-use-owner','v2-reset-session',now()+interval '1 hour',
+           now(),now(),true,now()
+         )`,
+        [intentId],
+      );
+      await plain.query(
+        `INSERT INTO public_artifact_id_reservations(
+           artifact_id,body_object_key,allocation_kind,allocation_id
+         ) VALUES ($1,$2,'pathless_intent',$3)`,
+        [artifactId, `documents/public/${artifactId}.md`, allocationId],
+      );
+
+      await plain.query("SET LOCAL ROLE context_use_dashboard");
+      expect(await failure(plain, () => plain.query(
+        `SELECT clear_knowledge(
+           $1,'context-use-owner','v2-reset-session',$2,$3,0,$4,
+           'Knowledge','Private knowledge.','AGENTS.md','Root guide.',
+           to_tsvector('simple',''),'Reset knowledge','context-use-template/default'
+         )`,
+        [intentId, guideVersionId, `documents/private/${guideVersionId}.md`, "0".repeat(64)],
+      ))).toBe("55000");
+      await plain.query("RESET ROLE");
+    } finally {
+      await plain.query("ROLLBACK");
+      await plain.end().catch(() => undefined);
+    }
+  });
+
+  test("rejects junk reset calls before acquiring the exclusive transition lock", async () => {
+    const attacker = new Client({ connectionString: databaseUrl });
+    const observer = new Client({ connectionString: databaseUrl });
+    await Promise.all([attacker.connect(), observer.connect()]);
+    await attacker.query("BEGIN");
+    await observer.query("BEGIN");
+    try {
+      const guideVersionId = randomUUID();
+      await attacker.query("SET LOCAL ROLE context_use_dashboard");
+      await expect(attacker.query(
+        `SELECT clear_knowledge(
+           $1,NULL,'junk-session',$2,$3,0,$4,
+           'Knowledge','Private knowledge.','AGENTS.md','Root guide.',
+           to_tsvector('simple',''),'Reset knowledge','context-use-template/default'
+         )`,
+        [randomUUID(), guideVersionId, `documents/private/${guideVersionId}.md`, "0".repeat(64)],
+      )).rejects.toThrow();
+
+      await observer.query("SET LOCAL lock_timeout='250ms'");
+      await observer.query(
+        `SELECT pg_advisory_xact_lock(
+           hashtextextended('filesystem-hypermedia-corpus-transition',0)
+         )`,
+      );
+    } finally {
+      await Promise.all([
+        attacker.query("ROLLBACK").catch(() => undefined),
+        observer.query("ROLLBACK").catch(() => undefined),
+      ]);
+      await Promise.all([
+        attacker.end().catch(() => undefined),
+        observer.end().catch(() => undefined),
+      ]);
     }
   });
 });
