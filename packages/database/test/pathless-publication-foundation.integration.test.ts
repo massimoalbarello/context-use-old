@@ -158,13 +158,15 @@ describeDatabase("pathless publication global namespaces", () => {
       expect((await client.query<{ finalized_at: Date | null }>(
         "SELECT finalized_at FROM hypermedia_cutover_state WHERE singleton",
       )).rows[0]?.finalized_at).toBeNull();
+      const retiredViews = await client.query<{ relation: string | null }>(
+        `SELECT to_regclass(name)::text AS relation
+         FROM unnest(ARRAY[
+           'published_pages','published_assets','published_directories',
+           'published_site_settings','storage_published_pages','storage_published_assets'
+         ]) AS name`,
+      );
+      expect(retiredViews.rows.every(({ relation }) => relation === null)).toBe(true);
       for (const [role, relation] of [
-        ["context_use_public", "published_pages"],
-        ["context_use_public", "published_assets"],
-        ["context_use_public", "published_directories"],
-        ["context_use_public", "published_site_settings"],
-        ["context_use_storage", "storage_published_pages"],
-        ["context_use_storage", "storage_published_assets"],
         ["context_use_dashboard", "publication_intents"],
         ["context_use_dashboard", "public_knowledge_settings"],
       ] as const) {
