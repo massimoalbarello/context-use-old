@@ -7,6 +7,7 @@ import {
   dnsMismatches,
   healthMatchesVersion,
   nangoPipelineRuntimeCommands,
+  publicBillboardTarget,
 } from "./deploy.ts";
 import {
   DATA_VOLUME_INITIALIZATION_TAG,
@@ -450,6 +451,20 @@ test("deployment health must report the requested release version", () => {
   expect(healthMatchesVersion({ status: "ok", version: "0.1.4" }, "v0.1.4")).toBe(true);
   expect(healthMatchesVersion({ status: "ok", version: "0.1.3" }, "v0.1.4")).toBe(false);
   expect(healthMatchesVersion({ status: "ok" }, "v0.1.4")).toBe(false);
+});
+
+test("deployment verification accepts canonical publication entrypoints", () => {
+  const publicationId = "8292e9f3-302e-47c7-9179-58d699e68ca4";
+  const landing = (href: string) => `<a class="landing-cta" href="${href}">Read my biography</a>`;
+
+  expect(publicBillboardTarget(landing("/p/"))).toBe("/p/");
+  expect(publicBillboardTarget(landing("/p/about/intro"))).toBe("/p/about/intro");
+  expect(publicBillboardTarget(landing(`/p/${publicationId}`))).toBe(`/p/${publicationId}`);
+
+  expect(publicBillboardTarget(landing(`/p/${publicationId.toUpperCase()}`))).toBeNull();
+  expect(publicBillboardTarget(landing(`/p/${publicationId}?preview=true`))).toBeNull();
+  expect(publicBillboardTarget(landing("https://example.test/p/8292e9f3-302e-47c7-9179-58d699e68ca4"))).toBeNull();
+  expect(publicBillboardTarget(landing("/p/not-a-publication-id"))).toBeNull();
 });
 
 test("legacy configs retain durable state coordinates without derived lifecycle fields", () => {

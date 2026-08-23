@@ -159,6 +159,13 @@ export function healthMatchesVersion(health: unknown, releaseVersion: string): b
   return health.version === releaseVersion.replace(/^v/, "");
 }
 
+const CANONICAL_PUBLICATION_ID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+const LANDING_CTA = new RegExp(`<a class="landing-cta" href="(/p/(?:about/intro|${CANONICAL_PUBLICATION_ID})?)"`);
+
+export function publicBillboardTarget(html: string): string | null {
+  return LANDING_CTA.exec(html)?.[1] ?? null;
+}
+
 export async function verifyDeployment(config: DeploymentConfig, releaseVersion: string, instanceId: string): Promise<void> {
   const origin = `https://${config.hostname}`;
   let lastError = "health check did not complete";
@@ -189,12 +196,12 @@ export async function verifyDeployment(config: DeploymentConfig, releaseVersion:
   // A fresh instance has published nothing, so the billboard's destination is a
   // property of the release, not of the deployment. Verify that the CTA rendered
   // and points into the public tree; the next check proves the target resolves.
-  if (!landing.ok
-      || !/<a class="landing-cta" href="\/p\/(?:about\/intro)?"/.test(landingHtml)) {
+  const billboardTarget = publicBillboardTarget(landingHtml);
+  if (!landing.ok || !billboardTarget) {
     throw new Error("The public billboard is unavailable or incomplete");
   }
-  const about = await fetch(`${origin}/p/about/intro`);
-  if (!about.ok) throw new Error("The public About empty state is unavailable");
+  const billboardDestination = await fetch(`${origin}${billboardTarget}`);
+  if (!billboardDestination.ok) throw new Error("The public billboard destination is unavailable");
   const [robots, sitemap, llms] = await Promise.all([
     fetch(`${origin}/robots.txt`),
     fetch(`${origin}/sitemap.xml`),
