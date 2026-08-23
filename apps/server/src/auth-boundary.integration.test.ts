@@ -263,6 +263,8 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       "/api/dashboard/documents",
       "/api/dashboard/documents/11111111-1111-4111-8111-111111111111",
       "/api/dashboard/documents/11111111-1111-4111-8111-111111111111/neighborhood",
+      "/api/dashboard/knowledge-documents/11111111-1111-4111-8111-111111111111",
+      "/api/dashboard/knowledge-documents/11111111-1111-4111-8111-111111111111/history",
     ]) {
       const dashboard = await application!.handle(new Request(`http://localhost:3000${path}`));
       expect(dashboard.status).toBe(401);

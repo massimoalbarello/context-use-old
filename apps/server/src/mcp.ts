@@ -10,7 +10,11 @@ import { MCP_SCOPE } from "@context-use/shared";
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
 import { config } from "./config.ts";
 import { activeMcpClientId } from "./mcp-auth-client.ts";
-import { createMcpServer, type McpContext } from "./mcp-server.ts";
+import {
+  createMcpServer,
+  type McpContext,
+  type PathlessMcpRepositories,
+} from "./mcp-server.ts";
 import { createStatelessMcpTransport, unsupportedMcpMethodResponse } from "./mcp-transport.ts";
 import type { SourceRecordReader } from "./nango-records.ts";
 import { requestMatchesOrigin } from "./security.ts";
@@ -51,6 +55,7 @@ export function createMcpRequestHandler(
   recordDocuments: SourceRecordRepository | undefined,
   knowledgeSettings: KnowledgeSettingsRepository,
   documentLinks?: DocumentLinkRepository,
+  pathless?: PathlessMcpRepositories,
 ) {
   const resource = config.MCP_RESOURCE;
   // Fetch keys over the private service network. The token issuer and audience
@@ -100,6 +105,7 @@ export function createMcpRequestHandler(
       recordDocuments,
       knowledgeSettings,
       documentLinks,
+      pathless,
     );
     await server.connect(transport);
     try {

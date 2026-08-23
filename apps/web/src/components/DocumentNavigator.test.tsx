@@ -3,6 +3,7 @@ import type { DashboardDocumentSummary } from "@context-use/shared";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { DocumentDetails } from "./DocumentDetails.tsx";
+import { NewKnowledgeDocument } from "./NewKnowledgeDocument.tsx";
 import {
   DocumentNavigator,
   documentDisplaySummary,
@@ -48,12 +49,27 @@ describe("search-first document navigation", () => {
       includeRetired: false,
       selectedId: null,
       refreshToken: 0,
+      onCreate: () => undefined,
       onSelect: () => undefined,
     }));
     expect(html).toContain("Recently updated");
     expect(html).toContain("Pages");
     expect(html).toContain("Assets");
+    expect(html).toContain("New page");
     expect(html).not.toContain("folder");
+  });
+
+  test("creates documents without asking for a directory or path", () => {
+    const html = renderToStaticMarkup(createElement(NewKnowledgeDocument, {
+      onCancel: () => undefined,
+      onCreated: () => undefined,
+    }));
+    expect(html).toContain("Create a standalone document");
+    expect(html).toContain("Title");
+    expect(html).toContain("Summary");
+    expect(html).toContain("context-use://document/&lt;uuid&gt;");
+    expect(html).not.toContain("name=\"path\"");
+    expect(html.toLowerCase()).not.toContain("folder");
   });
 
   test("fallback document details expose stable references without filesystem labels", () => {
