@@ -18,7 +18,6 @@ export type PasskeySummary = {
 type ClearableKnowledge = {
   page_count: number;
   archived_page_count: number;
-  directory_count: number;
   asset_count: number;
   published_page_count: number;
   published_asset_count: number;
@@ -48,21 +47,25 @@ type KnowledgeExportStatus = { reset?: KnowledgeResetState } & (
   | { status: "failed"; message: string; code: string }
 );
 
-type PublicEntrypoint = {
-  settings: {
-    entrypoint_page_id: string | null;
-    current_path: string | null;
-    public_path: string | null;
-    title: string | null;
-    summary: string | null;
-  } | null;
-  candidates: Array<{
-    id: string;
-    public_path: string;
-    title: string;
-    summary: string;
-  }>;
+type PublicEntrypointCandidate = {
+  public_id: string;
+  public_title: string;
+  public_summary: string;
+  public_last_edited_at: string;
 };
+
+type PublicEntrypoint = {
+  entrypoint: {
+    public_id: string | null;
+    configured: boolean;
+    active: boolean;
+  };
+  candidates: PublicEntrypointCandidate[];
+};
+
+export function publicEntrypointOptionLabel(page: PublicEntrypointCandidate): string {
+  return `${page.public_title} — ${page.public_summary}`;
+}
 
 export type KnowledgeExportJob = {
   intentId: string;
@@ -255,11 +258,14 @@ export function Settings({
 
   useEffect(() => {
     let active = true;
-    api<PublicEntrypoint>("/api/dashboard/public-entrypoint")
-      .then((result) => {
+    Promise.all([
+      api<{ entrypoint: PublicEntrypoint["entrypoint"] }>("/api/dashboard/pathless-publication-entrypoint"),
+      api<{ candidates: PublicEntrypoint["candidates"] }>("/api/dashboard/pathless-publication-entrypoint/candidates"),
+    ])
+      .then(([entrypoint, candidates]) => {
         if (!active) return;
-        setPublicEntrypoint(result);
-        setPublicEntrypointId(result.settings?.entrypoint_page_id ?? "");
+        setPublicEntrypoint({ ...entrypoint, ...candidates });
+        setPublicEntrypointId(entrypoint.entrypoint.public_id ?? "");
       })
       .catch((error: unknown) => {
         if (active) setPublicEntrypointError(error instanceof Error ? error.message : "Public entry point could not be loaded");
@@ -271,11 +277,11 @@ export function Settings({
     setPublicEntrypointWorking(true);
     setPublicEntrypointError("");
     try {
-      const result = await api<{ settings: PublicEntrypoint["settings"] }>("/api/dashboard/public-entrypoint", {
+      const result = await api<{ entrypoint: PublicEntrypoint["entrypoint"] }>("/api/dashboard/pathless-publication-entrypoint", {
         method: "PUT",
-        body: JSON.stringify({ page_id: publicEntrypointId || null }),
+        body: JSON.stringify({ public_id: publicEntrypointId || null }),
       });
-      setPublicEntrypoint((current) => current ? { ...current, settings: result.settings } : current);
+      setPublicEntrypoint((current) => current ? { ...current, entrypoint: result.entrypoint } : current);
       setMessage(publicEntrypointId ? "Public entry point updated." : "Public entry point removed.");
     } catch (error) {
       setPublicEntrypointError(error instanceof Error ? error.message : "Public entry point could not be updated");
@@ -545,14 +551,17 @@ export function Settings({
     {message && <p>{message}</p>}
     <IntrinsicServices />
     <section><h2>Public entry point</h2>
-      <p>Choose which already-published page introduces the public knowledge base. Publishing and editing remain separate decisions; this pointer never publishes private content.</p>
+      <p>Choose which already-published document opens at the public home page. Publishing and editing remain separate decisions; this pointer never publishes private content.</p>
       {publicEntrypointError && <p className="error" role="alert">{publicEntrypointError}</p>}
       {publicEntrypoint && <div className="public-entrypoint-setting">
         <label>Entry page<select value={publicEntrypointId} onChange={(event) => setPublicEntrypointId(event.target.value)}>
           <option value="">No public entry point</option>
-          {publicEntrypoint.candidates.map((page) => <option value={page.id} key={page.id}>{page.title} · /p/{page.public_path}</option>)}
+          {publicEntrypoint.entrypoint.public_id
+            && !publicEntrypoint.candidates.some((page) => page.public_id === publicEntrypoint.entrypoint.public_id)
+            && <option value={publicEntrypoint.entrypoint.public_id}>Previously selected page · currently private</option>}
+          {publicEntrypoint.candidates.map((page) => <option value={page.public_id} key={page.public_id}>{publicEntrypointOptionLabel(page)}</option>)}
         </select></label>
-        <button className="primary" disabled={publicEntrypointWorking || publicEntrypointId === (publicEntrypoint.settings?.entrypoint_page_id ?? "")} onClick={() => void savePublicEntrypoint()}>{publicEntrypointWorking ? "Saving…" : "Save entry point"}</button>
+        <button className="primary" disabled={publicEntrypointWorking || publicEntrypointId === (publicEntrypoint.entrypoint.public_id ?? "")} onClick={() => void savePublicEntrypoint()}>{publicEntrypointWorking ? "Saving…" : "Save entry point"}</button>
       </div>}
     </section>
     <KnowledgeTemplateSettings onKnowledgeChanged={onKnowledgeChanged} />
@@ -656,7 +665,6 @@ export function Settings({
       <dl className="action-dialog-details">
         <div><dt>Active pages</dt><dd>{exportIntent.knowledge.page_count}</dd></div>
         <div><dt>Archived pages</dt><dd>{exportIntent.knowledge.archived_page_count}</dd></div>
-        <div><dt>Directories</dt><dd>{exportIntent.knowledge.directory_count}</dd></div>
         <div><dt>Active assets</dt><dd>{exportIntent.knowledge.asset_count}</dd></div>
         <div><dt>Published pages</dt><dd>{exportIntent.knowledge.published_page_count}</dd></div>
         <div><dt>Published assets</dt><dd>{exportIntent.knowledge.published_asset_count}</dd></div>

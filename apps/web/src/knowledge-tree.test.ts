@@ -35,6 +35,8 @@ function asset(id: string, currentPath: string, filename: string): Asset {
     id,
     current_path: currentPath,
     public_path: null,
+    public_id: null,
+    pathless_published: false,
     filename,
     content_type: "image/jpeg",
     size_bytes: 123,

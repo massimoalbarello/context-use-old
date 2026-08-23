@@ -12,6 +12,13 @@ export type PathlessPublicationPrincipal = {
   sessionId: string;
 };
 
+export type PathlessDashboardPublicationStatus = {
+  public_id: string | null;
+  published_revision_id: string | null;
+  published_revision_number: number | null;
+  active: boolean;
+};
+
 type PathlessPublicationIntentBase = {
   id: string;
   target_document_id: string;
@@ -409,6 +416,18 @@ export class PathlessPublicationRepository {
       "SELECT cancel_pathless_publication_intent($1,$2,$3)",
       [intentId, principal.ownerUserId, principal.sessionId],
     );
+  }
+
+  async status(
+    targetKind: "page" | "asset",
+    targetDocumentId: string,
+  ): Promise<PathlessDashboardPublicationStatus> {
+    const result = await this.dashboardPool.query<PathlessDashboardPublicationStatus>(
+      `SELECT public_id,published_revision_id,published_revision_number,active
+       FROM get_pathless_dashboard_publication_status($1,$2)`,
+      [targetKind, targetDocumentId],
+    );
+    return requireRow(result.rows[0], "Pathless dashboard publication status");
   }
 }
 

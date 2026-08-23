@@ -8,6 +8,7 @@ export type DashboardKnowledgeDocument = {
   id: string;
   current_version_id: string;
   published_version_id: string | null;
+  published_version_number: number | null;
   public_id: string | null;
   archived_at: Date | string | null;
   version_number: number;
@@ -16,7 +17,8 @@ export type DashboardKnowledgeDocument = {
   body_markdown: string;
   rendered_html: string;
   legacy_published: boolean;
-  legacy_publication_eligible: boolean;
+  pathless_published: boolean;
+  public_url: string | null;
   created_at: Date | string;
   updated_at: Date | string;
 };
@@ -34,15 +36,39 @@ export type DashboardKnowledgeRevision = {
   created_at: Date | string;
 };
 
+export type DashboardPathlessRepublicationReview = {
+  published_version_number: number;
+  metadata_changes: Array<{
+    field: "title" | "summary";
+    before: string | null;
+    after: string;
+  }>;
+  markdown_changes: Array<{ before: string; after: string }>;
+  queued_versions: Array<{
+    version_number: number;
+    commit_message: string;
+    actor_kind: "dashboard" | "mcp";
+    actor_subject: string;
+    created_at: Date | string;
+  }>;
+  queued_versions_complete: boolean;
+};
+
 export function dashboardKnowledgeDocument(
   document: KnowledgeDocument,
   renderedHtml: string,
-  options: { legacy_publication_eligible: boolean },
+  options: {
+    pathless_published_revision_id: string | null;
+    pathless_published_revision_number: number | null;
+    public_url: string | null;
+  },
 ): DashboardKnowledgeDocument {
   return {
     id: document.document_id,
     current_version_id: document.current_revision_id,
-    published_version_id: document.published_revision_id,
+    published_version_id: options.pathless_published_revision_id
+      ?? document.published_revision_id,
+    published_version_number: options.pathless_published_revision_number,
     public_id: document.public_id,
     archived_at: document.archived_at,
     version_number: document.revision_number,
@@ -51,7 +77,8 @@ export function dashboardKnowledgeDocument(
     body_markdown: document.body_markdown,
     rendered_html: renderedHtml,
     legacy_published: document.legacy_published,
-    legacy_publication_eligible: options.legacy_publication_eligible,
+    pathless_published: options.pathless_published_revision_id !== null,
+    public_url: options.public_url,
     created_at: document.created_at,
     updated_at: document.updated_at,
   };
@@ -93,5 +120,31 @@ export async function dashboardKnowledgeRevisionDelta(
       previous?.body_markdown ?? "",
       current.body_markdown,
     ),
+  };
+}
+
+export async function dashboardPathlessRepublicationReview(
+  published: KnowledgeDocumentRevision,
+  candidate: KnowledgeDocumentRevision,
+  retainedHistory: KnowledgeDocumentRevision[],
+): Promise<DashboardPathlessRepublicationReview> {
+  const queued = retainedHistory
+    .filter((revision) => (
+      revision.revision_number > published.revision_number
+      && revision.revision_number <= candidate.revision_number
+    ))
+    .sort((left, right) => left.revision_number - right.revision_number);
+  return {
+    published_version_number: published.revision_number,
+    ...await dashboardKnowledgeRevisionDelta(published, candidate),
+    queued_versions: queued.map((revision) => ({
+      version_number: revision.revision_number,
+      commit_message: revision.commit_message,
+      actor_kind: revision.actor_kind,
+      actor_subject: revision.actor_subject,
+      created_at: revision.created_at,
+    })),
+    queued_versions_complete: queued.length
+      === Math.max(candidate.revision_number - published.revision_number, 0),
   };
 }

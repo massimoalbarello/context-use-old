@@ -10,6 +10,7 @@ const hash = (value: string): string =>
 
 type PageFixture = {
   pageId: string;
+  revisionId: string;
   publicId: string;
   artifactId: string;
   representationToken: string;
@@ -129,6 +130,14 @@ async function seedActivePage(
     [pageId, path, revisionId],
   );
   await client.query(
+    `INSERT INTO knowledge_page_versions(
+       id,page_id,version_number,path,title,summary,
+       commit_message,actor_kind,actor_subject
+     ) VALUES ($1,$2,1,$3,'Resolver page','A safe resolver fixture.',
+       'Create resolver fixture','dashboard','context-use-owner')`,
+    [revisionId, pageId, path],
+  );
+  await client.query(
     `INSERT INTO public_resources(
        public_id,document_id,original_document_id,resource_kind
      ) VALUES ($1,$2,$2,'page')`,
@@ -193,7 +202,7 @@ async function seedActivePage(
     [publicId, artifactId],
   );
   await client.query("SET LOCAL session_replication_role=origin");
-  return { pageId, publicId, artifactId, representationToken, origin };
+  return { pageId, revisionId, publicId, artifactId, representationToken, origin };
 }
 
 async function addAssetArtifact(
@@ -290,6 +299,7 @@ async function cleanupPageFixtures(
   const publicIds = pages.map((page) => page.publicId);
   const artifactIds = pages.map((page) => page.artifactId);
   const pageIds = pages.map((page) => page.pageId);
+  const revisionIds = pages.map((page) => page.revisionId);
   await beginTestTransaction(client);
   try {
     await client.query("SET LOCAL session_replication_role=replica");
@@ -316,6 +326,7 @@ async function cleanupPageFixtures(
        WHERE target_kind='page' AND target_document_id=ANY($1::uuid[])`,
       [pageIds],
     );
+    await client.query("DELETE FROM knowledge_page_versions WHERE id=ANY($1::uuid[])", [revisionIds]);
     await client.query("DELETE FROM knowledge_pages WHERE id=ANY($1::uuid[])", [pageIds]);
     await client.query("COMMIT");
   } catch (error) {
@@ -398,6 +409,39 @@ describeDatabase("pathless public entrypoint and resolvers", () => {
         public_id: asset.publicId,
         representation_token: asset.representationToken,
         public_duration_seconds: "1.2300",
+      });
+      expect(await asRole(client, "context_use_dashboard", async () =>
+        (await client.query(
+          "SELECT * FROM get_pathless_dashboard_publication_status('page',$1)",
+          [page.pageId],
+        )).rows[0],
+      )).toEqual({
+        public_id: page.publicId,
+        published_revision_id: page.revisionId,
+        published_revision_number: 1,
+        active: true,
+      });
+      expect(await asRole(client, "context_use_dashboard", async () =>
+        (await client.query(
+          "SELECT * FROM get_pathless_dashboard_publication_status('asset',$1)",
+          [asset.assetId],
+        )).rows[0],
+      )).toEqual({
+        public_id: asset.publicId,
+        published_revision_id: null,
+        published_revision_number: null,
+        active: true,
+      });
+      expect(await asRole(client, "context_use_dashboard", async () =>
+        (await client.query(
+          "SELECT * FROM get_pathless_dashboard_publication_status('page',$1)",
+          [randomUUID()],
+        )).rows[0],
+      )).toEqual({
+        public_id: null,
+        published_revision_id: null,
+        published_revision_number: null,
+        active: false,
       });
       expect(await asRole(client, "context_use_public", async () =>
         (await client.query<{ public_id: string }>(

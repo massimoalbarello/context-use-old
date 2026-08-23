@@ -931,6 +931,39 @@ describeDatabase("PostgreSQL security roles", () => {
       expect(fn.owner).toBe("context_use_boundary_owner");
       expect(fn.security_definer).toBe(true);
     }
+    const dashboardStatus =
+      "get_pathless_dashboard_publication_status(publication_target,uuid)";
+    expect((await admin.query<{ owner: string; security_definer: boolean }>(
+      `SELECT pg_get_userbyid(proowner) AS owner,prosecdef AS security_definer
+       FROM pg_proc WHERE oid=$1::regprocedure`,
+      [dashboardStatus],
+    )).rows[0]).toEqual({
+      owner: "context_use_boundary_owner",
+      security_definer: true,
+    });
+    expect((await admin.query<{ allowed: boolean }>(
+      "SELECT has_function_privilege('context_use_dashboard',$1,'EXECUTE') AS allowed",
+      [dashboardStatus],
+    )).rows[0]?.allowed).toBe(true);
+    // Corpus deliberately inherits the dashboard boundary for rolling
+    // preparation compatibility, so it receives the same read-only status.
+    expect((await admin.query<{ allowed: boolean }>(
+      "SELECT has_function_privilege('context_use_corpus',$1,'EXECUTE') AS allowed",
+      [dashboardStatus],
+    )).rows[0]?.allowed).toBe(true);
+    for (const role of [
+      "context_use_auth",
+      "context_use_backup",
+      "context_use_confirmation",
+      "context_use_mcp",
+      "context_use_public",
+      "context_use_storage",
+    ]) {
+      expect((await admin.query<{ allowed: boolean }>(
+        "SELECT has_function_privilege($1,$2,'EXECUTE') AS allowed",
+        [role, dashboardStatus],
+      )).rows[0]?.allowed).toBe(false);
+    }
     for (const role of [
       "context_use_auth",
       "context_use_backup",

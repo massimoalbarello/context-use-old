@@ -18,6 +18,7 @@ export type KnowledgeDocumentPage = {
   id: string;
   current_version_id: string;
   published_version_id: string | null;
+  published_version_number: number | null;
   public_id: string | null;
   archived_at: string | null;
   version_number: number;
@@ -26,7 +27,8 @@ export type KnowledgeDocumentPage = {
   body_markdown: string;
   rendered_html: string;
   legacy_published: boolean;
-  legacy_publication_eligible: boolean;
+  pathless_published: boolean;
+  public_url: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -135,6 +137,8 @@ export type Asset = {
   id: string;
   current_path: string;
   public_path: string | null;
+  public_id: string | null;
+  pathless_published: boolean;
   filename: string;
   content_type: string;
   size_bytes: number;
@@ -144,7 +148,8 @@ export type Asset = {
 
 export type AssetStatus = {
   content_available: boolean;
-  public_url: string;
+  public_url: string | null;
+  pathless_published: boolean;
 };
 
 /**
@@ -172,16 +177,15 @@ export type PublicationPreview = {
   version_number: number;
   title: string;
   summary: string;
-  path: string;
   rendered_html: string;
-  current_public_path: string | null;
+  current_public_url: string | null;
   warnings: string[];
   references: Array<{
-    kind: "page" | "directory" | "asset" | "record" | "document";
+    kind: "page" | "asset" | "record" | "document";
     id: string;
     label: string;
-    path: string | null;
     public: boolean;
+    public_url: string | null;
   }>;
   republication: RepublicationReview | null;
 };
