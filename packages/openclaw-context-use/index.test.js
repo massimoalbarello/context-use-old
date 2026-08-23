@@ -110,6 +110,15 @@ test("plugin claims the memory slot and registers the lifecycle hooks", () => {
   ]);
 });
 
+test("recall is restricted to canonical hypermedia read tools", async () => {
+  const patch = await Bun.file(new URL("./openclaw.patch.json5", import.meta.url)).text();
+  expect(patch).toContain("context-use__search_documents");
+  expect(patch).toContain("context-use__read_document");
+  expect(patch).not.toContain("context-use__search_pages");
+  expect(patch).not.toContain("context-use__read_page");
+  expect(patch).not.toContain("page paths");
+});
+
 test("plugin instances share only the opaque attachment registry", () => {
   const first = createPluginState(apiFixture());
   const second = createPluginState(apiFixture());
@@ -329,6 +338,11 @@ test("capture launches the curator with the parent provider and model", async ()
   expect(runParams.message).toContain("aubergine");
   expect(runParams.message).toContain("chat-image-2.png");
   expect(runParams.message).toContain("image/png");
+  expect(runParams.extraSystemPrompt).toContain("context-use__begin_knowledge_session");
+  expect(runParams.extraSystemPrompt).toContain("context-use__search_documents");
+  expect(runParams.extraSystemPrompt).toContain("context-use__create_document_asset_upload");
+  expect(runParams.extraSystemPrompt).not.toContain("context-use__prepare_change");
+  expect(runParams.extraSystemPrompt).not.toContain("context-use__create_asset_upload");
   expect(runParams.deliver).toBe(false);
 });
 

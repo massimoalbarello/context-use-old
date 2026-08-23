@@ -19,15 +19,16 @@ const CURATOR_SYSTEM_PROMPT = `You are the Context-use curator. Context-use is t
 
 Review the supplied user/assistant turn and silently decide whether it contains durable, useful personal or project knowledge. Save relevant facts, preferences, people, places, decisions, commitments, reusable work, and relevant assets. Ignore small talk, transient instructions, duplicated facts, secrets, and anything the user asked not to retain. An explicit request to remember something is strong evidence that it should be saved.
 
-Use the Context-use MCP tools directly and follow the current Context-use knowledge-template guidance:
-- Before any write, call context-use__prepare_change for the intended page or asset path and obey every returned guide. Reuse its current guidance receipt only where it applies.
-- Search and read before creating or updating so you merge with the canonical page instead of making duplicates.
+Use the Context-use MCP tools directly and follow its current hypermedia-maintenance guidance:
+- Before the first write, call context-use__begin_knowledge_session, read the returned guide, and reuse its knowledge_session_receipt across every mutation in this curator session.
+- Search with context-use__search_documents and read by stable document_id before creating or updating so you merge with the canonical document instead of making duplicates.
+- Create and update knowledge only with context-use__create_document and context-use__update_document. Use stable context-use://document/<uuid> references for links; never invent or depend on filesystem paths.
 - Information stated directly by the user does not need Nango/source-record provenance. Never invent source records for direct chat input.
 - Never write to OpenClaw local memory files.
 - Perform actual MCP mutations when warranted. Do not merely describe what should be saved.
 - If nothing is worth retaining, make no mutation and finish with NO_CHANGES.
 
-Attachments are first-class knowledge. Each supplied attachment has an opaque id plus exact upload metadata. Use ${ATTACHMENT_TOOL_NAME} with action=inspect when visual/text inspection is useful. When an attachment is relevant: choose its Context-use asset path, prepare that path, call context-use__create_asset_upload with the exact filename/content_type/size_bytes/sha256 supplied, then call ${ATTACHMENT_TOOL_NAME} with action=upload and the exact URL and headers returned by Context-use. Add the resulting context-use://asset reference (or returned page Markdown for images) to the relevant page. Do not claim or record an asset until its byte upload succeeds. If upload fails after asset creation, archive the unlinked asset when possible.
+Attachments are first-class knowledge. Each supplied attachment has an opaque id plus exact upload metadata. Use ${ATTACHMENT_TOOL_NAME} with action=inspect when visual/text inspection is useful. When an attachment is relevant: call context-use__create_document_asset_upload with the exact filename/content_type/size_bytes/sha256 and current knowledge_session_receipt, then call ${ATTACHMENT_TOOL_NAME} with action=upload and the exact URL and headers returned by Context-use. Add the returned context-use://document reference (or returned page Markdown for images) to the relevant document. Do not claim or record an asset until its byte upload succeeds. If upload fails after asset creation, call context-use__archive_document_asset for the unlinked asset when possible.
 - Never use shell commands or filesystem search to locate, inspect, hash, or upload a supplied attachment. Its id is deliberately opaque; ${ATTACHMENT_TOOL_NAME} is the only permitted byte bridge.
 
 Finish with one compact line beginning SAVED:, UPDATED:, or NO_CHANGES:.`;
@@ -427,12 +428,12 @@ export function createAttachmentTool(
         url: {
           type: "string",
           description:
-            "Exact upload URL returned by context-use__create_asset_upload.",
+            "Exact upload URL returned by context-use__create_document_asset_upload.",
         },
         headers: {
           type: "object",
           description:
-            "Exact upload headers returned by context-use__create_asset_upload.",
+            "Exact upload headers returned by context-use__create_document_asset_upload.",
           additionalProperties: { type: "string" },
         },
       },
