@@ -100,6 +100,40 @@ export class BrokeredStorage implements ObjectStorage {
     return markdownResponseText(response);
   }
 
+  async readPublishedRepresentation(representationToken: string, range?: ByteRange): Promise<BodyInit> {
+    if (!this.options.publicOnly) throw new Error("Published representation reads require a public-only client");
+    const response = await this.request(
+      `/public/representation?token=${encodeURIComponent(representationToken)}`,
+      { headers: range ? { range: `bytes=${range.start}-${range.end}` } : {} },
+    );
+    if (response.status === 404) throw new AssetNotFoundError();
+    if (!response.ok || !response.body) {
+      throw new Error(`Published representation read failed (${response.status})`);
+    }
+    return response.body;
+  }
+
+  async readPublishedRepresentationText(representationToken: string): Promise<string> {
+    const body = await this.readPublishedRepresentation(representationToken);
+    return new TextDecoder("utf-8", { ignoreBOM: true }).decode(await new Response(body).arrayBuffer());
+  }
+
+  async inspectPublishedRepresentation(representationToken: string): Promise<GeneratedObjectMetadata> {
+    if (!this.options.publicOnly) throw new Error("Published representation reads require a public-only client");
+    const response = await this.request(
+      `/public/representation?token=${encodeURIComponent(representationToken)}`,
+      { method: "HEAD" },
+    );
+    if (response.status === 404) throw new AssetNotFoundError();
+    if (!response.ok) throw new Error(`Published representation inspection failed (${response.status})`);
+    const sizeBytes = Number(response.headers.get("content-length"));
+    const contentHash = response.headers.get("x-content-sha256") ?? "";
+    if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0 || !/^[a-f0-9]{64}$/.test(contentHash)) {
+      throw new Error("Published representation returned invalid metadata");
+    }
+    return { sizeBytes, contentHash };
+  }
+
   async delete(objectKey: string): Promise<void> {
     if (this.options.publicOnly) throw new Error("Published storage is read-only");
     const response = await this.request(`/private/object?key=${encodeURIComponent(objectKey)}`, { method: "DELETE" });

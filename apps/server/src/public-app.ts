@@ -1,4 +1,11 @@
-import { mapConcurrently, PublicRepository, createPool } from "@context-use/database";
+import {
+  mapConcurrently,
+  PathlessPublicRepository,
+  PublicRepository,
+  createPool,
+  type PathlessPublicActiveAssetRoute,
+  type PathlessPublicActivePageRoute,
+} from "@context-use/database";
 import { AssetPath, DirectoryPath, PagePath } from "@context-use/shared";
 import { Elysia } from "elysia";
 import { config } from "./config.ts";
@@ -20,17 +27,20 @@ import {
   renderPublicLandingDocument,
   renderPublicPageDocument,
 } from "./public-page.ts";
-import { securityHeaders } from "./security.ts";
+import { requestMatchesOrigin, securityHeaders } from "./security.ts";
 import { BrokeredStorage } from "./storage-client.ts";
+import { assetContentResponse } from "./asset-content.ts";
 
 const pool = createPool(config.PUBLIC_DATABASE_URL, { application_name: "context-use-public-web" });
 const publicData = new PublicRepository(pool);
+const pathlessPublicData = new PathlessPublicRepository(pool);
 const storage = new BrokeredStorage({
   socketPath: config.STORAGE_SOCKET_PATH,
   token: config.STORAGE_PUBLIC_TOKEN,
   publicOnly: true,
 });
 const publicAssetContent = createPublicAssetContentHandler(publicData, storage, config.ASSET_ORIGIN);
+const canonicalPublicId = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const htmlHeaders = { ...securityHeaders, "content-type": "text/html; charset=utf-8" };
 const textHeaders = { ...securityHeaders, "content-type": "text/plain; charset=utf-8" };
 const agentTextHeaders = { ...textHeaders, "x-robots-tag": "noindex, follow" };
@@ -71,6 +81,86 @@ async function publishedPages() {
     ...page,
     body_markdown: await storage.readPublishedDocument(page.public_path),
   }));
+}
+
+function notFound(): Response {
+  return new Response("Not found", { status: 404, headers: securityHeaders });
+}
+
+function publicAssetRequestAllowed(request: Request): boolean {
+  return requestMatchesOrigin(request, config.ASSET_ORIGIN)
+    && !request.headers.has("cookie")
+    && !request.headers.has("authorization");
+}
+
+async function pathlessPageResponse(
+  publicId: string,
+  markdown: boolean,
+  route: PathlessPublicActivePageRoute,
+): Promise<Response> {
+  let bodyMarkdown: string;
+  try {
+    bodyMarkdown = await storage.readPublishedRepresentationText(route.representation_token);
+  } catch {
+    return notFound();
+  }
+  const page = {
+    public_path: publicId,
+    title: route.public_title,
+    summary: route.public_summary,
+    body_markdown: bodyMarkdown,
+    last_edited_at: route.public_last_edited_at,
+  };
+  if (markdown) {
+    return new Response(renderPublicPageMarkdown(page, {
+      siteOrigin: config.APP_ORIGIN,
+      assetOrigin: config.ASSET_ORIGIN,
+      entrypointPublicPath: null,
+    }), {
+      headers: {
+        ...markdownHeaders,
+        link: `<${config.APP_ORIGIN}/p/${publicId}>; rel="canonical"`,
+      },
+    });
+  }
+  const content = await renderMarkdown(bodyMarkdown, unavailableResolvers);
+  return new Response(renderPublicPageDocument(
+    route.public_title,
+    content,
+    publicId,
+    route.public_last_edited_at,
+    {
+      siteOrigin: config.APP_ORIGIN,
+      summary: route.public_summary,
+      canonicalPath: route.canonical_path,
+      entrypointPublicPath: null,
+      pathless: true,
+    },
+  ), { headers: htmlHeaders });
+}
+
+async function pathlessAssetResponse(
+  request: Request,
+  publicId: string,
+  route: PathlessPublicActiveAssetRoute,
+): Promise<Response> {
+  if (!publicAssetRequestAllowed(request)) return notFound();
+  let metadata: { sizeBytes: number; contentHash: string };
+  try {
+    metadata = await storage.inspectPublishedRepresentation(route.representation_token);
+  } catch {
+    return notFound();
+  }
+  const response = await assetContentResponse(request, {
+    filename: route.public_filename,
+    content_type: route.public_content_type,
+    size_bytes: metadata.sizeBytes,
+    content_hash: metadata.contentHash,
+  }, {
+    read: (_reference, range) => storage.readPublishedRepresentation(route.representation_token, range),
+  }, true, publicId);
+  response.headers.set("cross-origin-resource-policy", "cross-origin");
+  return response;
 }
 
 async function publicEntrypoint() {
@@ -144,7 +234,18 @@ export const publicApp = new Elysia({ strictPath: true })
     ? new Response("Not found", { status: 404, headers: securityHeaders })
     : routeError(error))
   .get("/health", () => json({ status: "ok", service: "public-web" }))
-  .get("/a/*", ({ request, params }) => publicAssetContent(request, params["*"]))
+  .get("/a/*", async ({ request, params }) => {
+    const publicId = params["*"];
+    if (!canonicalPublicId.test(publicId)) return publicAssetContent(request, publicId);
+    if (!publicAssetRequestAllowed(request)) return notFound();
+    const route = await pathlessPublicData.resolve(`/a/${publicId}`);
+    if (route.state === "active" && route.route_kind === "asset") {
+      return pathlessAssetResponse(request, publicId, route);
+    }
+    return route.state === "unassigned"
+      ? publicAssetContent(request, publicId)
+      : notFound();
+  })
   .get("/robots.txt", () => new Response(renderRobotsTxt(config.APP_ORIGIN), { headers: textHeaders }))
   .get("/sitemap.xml", () => publicSitemapResponse())
   .get("/llms.txt", () => publicLlmsResponse(false))
@@ -158,6 +259,14 @@ export const publicApp = new Elysia({ strictPath: true })
     if (rawPath === "") return publicDirectoryResponse("");
     if (rawPath.endsWith("/")) return publicDirectoryResponse(rawPath.slice(0, -1));
     const markdown = rawPath.endsWith(".md");
+    const pathlessPublicId = markdown ? rawPath.slice(0, -3) : rawPath;
+    if (canonicalPublicId.test(pathlessPublicId)) {
+      const route = await pathlessPublicData.resolve(`/p/${pathlessPublicId}${markdown ? ".md" : ""}`);
+      if (route.state === "active" && route.route_kind !== "asset") {
+        return pathlessPageResponse(pathlessPublicId, markdown, route);
+      }
+      if (route.state === "inactive") return notFound();
+    }
     const parsedPath = PagePath.safeParse(markdown ? rawPath.slice(0, -3) : rawPath);
     if (!parsedPath.success) return new Response("Not found", { status: 404, headers: securityHeaders });
     const publicPath = parsedPath.data;

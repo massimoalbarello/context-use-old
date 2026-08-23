@@ -18,6 +18,7 @@ const privateKey = "objects/22222222-2222-4222-8222-222222222222";
 const newKey = "objects/33333333-3333-4333-8333-333333333333";
 const exportKey = "exports/44444444-4444-4444-8444-444444444444.zip";
 const publicDocumentKey = "documents/public/55555555-5555-4555-8555-555555555555.md";
+const publicArtifactKey = "artifacts/public/88888888-8888-4888-8888-888888888888";
 
 function privateAssets(
   rows: Record<string, { filename: string; contentType: string; bytes: string | Uint8Array }>,
@@ -301,6 +302,79 @@ describe("storage broker capabilities", () => {
     expect((await app.handle(authorized(tokens.public, "/public/object?path=private%2Fasset"))).status).toBe(404);
     expect((await app.handle(authorized(tokens.public, `/public/object?key=${publishedKey}`))).status).toBe(404);
     expect((await app.handle(authorized(tokens.public, `/private/object?key=${privateKey}`))).status).toBe(404);
+  });
+
+  test("public capability dereferences only an active exact representation token", async () => {
+    const storage = new MemoryStorage();
+    const token = "a".repeat(64);
+    const staleToken = "b".repeat(64);
+    storage.objects.set(publicArtifactKey, Buffer.from("published"));
+    const contentHash = createHash("sha256").update("published").digest("hex");
+    const claims = {
+      claimIntent: async () => { throw new Error("unexpected claim"); },
+      finalizeIntent: async () => { throw new Error("unexpected finalize"); },
+      claimAdoption: async () => { throw new Error("unexpected claim"); },
+      finalizeAdoption: async () => { throw new Error("unexpected finalize"); },
+      resolve: async (candidate: string) => candidate === token
+        ? {
+            resource_kind: "asset" as const,
+            representation_token: token,
+            body_object_key: publicArtifactKey,
+            body_size_bytes: 9,
+            body_content_hash: contentHash,
+          }
+        : null,
+    };
+    const app = createStorageBrokerApp({
+      storage,
+      privateAssets: privateAssets({}),
+      publicAssets: { assetByPublicPath: async () => null },
+      pathlessPublications: claims,
+      tokens,
+    });
+
+    const published = await app.handle(authorized(
+      tokens.public,
+      `/public/representation?token=${token}`,
+    ));
+    expect(published.status).toBe(200);
+    expect(await published.text()).toBe("published");
+    const inspected = await app.handle(authorized(
+      tokens.public,
+      `/public/representation?token=${token}`,
+      { method: "HEAD" },
+    ));
+    expect(inspected.status).toBe(200);
+    expect(inspected.headers.get("content-length")).toBe("9");
+    expect(inspected.headers.get("x-content-sha256")).toBe(contentHash);
+    expect(await inspected.text()).toBe("");
+    const partial = await app.handle(authorized(
+      tokens.public,
+      `/public/representation?token=${token}`,
+      { headers: { range: "bytes=1-3" } },
+    ));
+    expect(partial.status).toBe(206);
+    expect(await partial.text()).toBe("ubl");
+    expect((await app.handle(authorized(
+      tokens.public,
+      `/public/representation?token=${staleToken}`,
+    ))).status).toBe(404);
+    expect((await app.handle(authorized(
+      tokens.dashboard,
+      `/public/representation?token=${token}`,
+    ))).status).toBe(404);
+    expect((await app.handle(authorized(
+      tokens.mcp,
+      `/public/representation?token=${token}`,
+    ))).status).toBe(404);
+    expect((await app.handle(authorized(
+      tokens.public,
+      `/public/representation?token=${token}&key=${publishedKey}`,
+    ))).status).toBe(404);
+    expect(await (await app.handle(authorized(
+      tokens.public,
+      `/public/representation?token=${token}`,
+    ))).text()).not.toContain(publishedKey);
   });
 
   test("knowledge revisions are immutable and public readers resolve only materialized public paths", async () => {

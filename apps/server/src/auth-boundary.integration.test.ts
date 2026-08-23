@@ -8,6 +8,7 @@ import {
   AssetRepository,
   DocumentMaintenanceRepository,
   markdownObjectMetadata,
+  PathlessStoragePublicationRepository,
   StoragePublicationRepository,
 } from "@context-use/database";
 import { disposableDatabaseUrl } from "@context-use/database/disposable-database";
@@ -33,6 +34,7 @@ if (enabled) {
     storage: testStorage!,
     privateAssets: new AssetRepository(testStoragePool!),
     publicAssets: new StoragePublicationRepository(testStoragePool!),
+    pathlessPublications: new PathlessStoragePublicationRepository(testStoragePool!),
     tokens: {
       dashboard: config.STORAGE_DASHBOARD_TOKEN,
       mcp: config.STORAGE_MCP_TOKEN,
@@ -77,6 +79,21 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       body: "{}",
     }));
     expect(confirm.status).toBe(401);
+
+    for (const [path, method] of [
+      ["/api/dashboard/pathless-publication-intents", "POST"],
+      ["/api/dashboard/pathless-publication-intents/11111111-1111-4111-8111-111111111111", "DELETE"],
+      ["/api/dashboard/pathless-publication-entrypoint", "GET"],
+      ["/api/dashboard/pathless-publication-entrypoint/candidates", "GET"],
+      ["/api/dashboard/pathless-publication-entrypoint", "PUT"],
+    ] as const) {
+      const pathless = await application!.handle(new Request(`http://localhost:3000${path}`, {
+        method,
+        headers: { authorization: "Bearer forged", "content-type": "application/json" },
+        ...(method === "POST" || method === "PUT" ? { body: "{}" } : {}),
+      }));
+      expect(pathless.status).toBe(401);
+    }
   });
 
   test("bearer and anonymous credentials cannot reach knowledge export APIs", async () => {
@@ -488,6 +505,138 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       await client.end();
     }
   });
+
+  test("an active pathless page is served only through its current representation token", async () => {
+    const client = new Client({ connectionString: requireDatabase() });
+    const pageId = crypto.randomUUID();
+    const revisionId = crypto.randomUUID();
+    const publicId = crypto.randomUUID();
+    const artifactId = crypto.randomUUID();
+    const adoptionId = crypto.randomUUID();
+    const representationToken = Buffer.from(await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(`pathless-route:${artifactId}`),
+    )).toString("hex");
+    const body = "PATHLESS-PUBLIC-CANARY\n\n[Follow another public page](/p/11111111-1111-4111-8111-111111111111).";
+    const bodyHash = Buffer.from(await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(body),
+    )).toString("hex");
+    const objectKey = `documents/public/${artifactId}.md`;
+    await client.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SET LOCAL session_replication_role=replica");
+      await client.query(
+        "INSERT INTO knowledge_pages(id,current_path,current_version_id) VALUES ($1,$2,$3)",
+        [pageId, `pathless-route-${publicId}`, revisionId],
+      );
+      await client.query(
+        `INSERT INTO public_resources(public_id,document_id,original_document_id,resource_kind)
+         VALUES ($1,$2,$2,'page')`,
+        [publicId, pageId],
+      );
+      await client.query(
+        "INSERT INTO public_visibility_generations(public_id,generation) VALUES ($1,1)",
+        [publicId],
+      );
+      await client.query(
+        `INSERT INTO publication_target_generations(target_kind,target_document_id,generation)
+         VALUES ('page',$1,1)`,
+        [pageId],
+      );
+      await client.query(
+        `INSERT INTO public_artifact_id_reservations(
+           artifact_id,body_object_key,allocation_kind,allocation_id
+         ) VALUES ($1,$2,'pathless_adoption',$3)`,
+        [artifactId, objectKey, adoptionId],
+      );
+      await client.query(
+        `INSERT INTO public_representation_token_reservations(
+           representation_token,artifact_id,resource_kind
+         ) VALUES ($1,$2,'page')`,
+        [representationToken, artifactId],
+      );
+      await client.query(
+        `INSERT INTO public_page_artifacts(
+           artifact_id,public_id,source_document_id,source_revision_id,
+           source_body_size_bytes,source_body_content_hash,body_object_key,
+           body_size_bytes,body_content_hash,public_title,public_summary,
+           public_last_edited_at,projection_receipt_hash,origin,
+           source_adoption_id,source_adoption_kind,legacy_source_artifact_id,
+           legacy_projection_generation,representation_token,
+           reservation_allocation_kind,reservation_allocation_id
+         ) VALUES (
+           $1,$2,$3,$4,$5,$6,$7,$5,$6,'Pathless route',
+           'A page without a filesystem path.','2026-08-23 12:34:56.123456+00',$8,
+           'legacy_adoption',$9,'legacy_page',$10,1,$11,'pathless_adoption',$9
+         )`,
+        [
+          artifactId,
+          publicId,
+          pageId,
+          revisionId,
+          Buffer.byteLength(body),
+          bodyHash,
+          objectKey,
+          "c".repeat(64),
+          adoptionId,
+          crypto.randomUUID(),
+          representationToken,
+        ],
+      );
+      await client.query(
+        "INSERT INTO page_publications(public_id,artifact_id) VALUES ($1,$2)",
+        [publicId, artifactId],
+      );
+      await client.query("COMMIT");
+      await testStorage!.write({
+        id: artifactId,
+        objectKey,
+        filename: `${artifactId}.md`,
+        contentType: "text/markdown; charset=utf-8",
+        sizeBytes: Buffer.byteLength(body),
+        contentHash: bodyHash,
+      }, new Blob([body]).stream());
+
+      const html = await application!.handle(new Request(`http://localhost:3000/p/${publicId}`));
+      const markdown = await application!.handle(new Request(`http://localhost:3000/p/${publicId}.md`));
+      expect(html.status).toBe(200);
+      const htmlText = await html.text();
+      expect(htmlText).toContain("PATHLESS-PUBLIC-CANARY");
+      expect(htmlText).not.toContain(representationToken);
+      expect(htmlText).not.toContain(objectKey);
+      expect(markdown.status).toBe(200);
+      expect(await markdown.text()).toContain("A page without a filesystem path.");
+      expect(markdown.headers.get("link")).toBe(
+        `<${config.APP_ORIGIN}/p/${publicId}>; rel="canonical"`,
+      );
+
+      await client.query("DELETE FROM page_publications WHERE public_id=$1", [publicId]);
+      expect((await application!.handle(new Request(`http://localhost:3000/p/${publicId}`))).status).toBe(404);
+    } finally {
+      await client.query("ROLLBACK").catch(() => undefined);
+      await client.query("BEGIN").catch(() => undefined);
+      await client.query("SET LOCAL session_replication_role=replica").catch(() => undefined);
+      await client.query("DELETE FROM page_publications WHERE public_id=$1", [publicId]).catch(() => undefined);
+      await client.query("DELETE FROM public_page_artifacts WHERE artifact_id=$1", [artifactId]).catch(() => undefined);
+      await client.query(
+        "DELETE FROM public_representation_token_reservations WHERE representation_token=$1",
+        [representationToken],
+      ).catch(() => undefined);
+      await client.query("DELETE FROM public_artifact_id_reservations WHERE artifact_id=$1", [artifactId]).catch(() => undefined);
+      await client.query("DELETE FROM public_visibility_generations WHERE public_id=$1", [publicId]).catch(() => undefined);
+      await client.query("DELETE FROM public_resources WHERE public_id=$1", [publicId]).catch(() => undefined);
+      await client.query(
+        "DELETE FROM publication_target_generations WHERE target_kind='page' AND target_document_id=$1",
+        [pageId],
+      ).catch(() => undefined);
+      await client.query("DELETE FROM knowledge_pages WHERE id=$1", [pageId]).catch(() => undefined);
+      await client.query("COMMIT").catch(() => undefined);
+      await client.end().catch(() => undefined);
+      await testStorage!.delete(objectKey).catch(() => undefined);
+    }
+  }, 15_000);
 
   test("audit history endpoint is absent", async () => {
     const response = await application!.handle(new Request("http://localhost:3000/api/dashboard/audit"));

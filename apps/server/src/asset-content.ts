@@ -10,6 +10,7 @@ type AssetMetadata = {
 };
 
 type AssetContent = AssetMetadata & { s3_object_key: string };
+type AssetReader = Pick<ObjectStorage, "read">;
 
 type ParsedRange = { start: number; end: number } | "unsatisfiable" | undefined;
 
@@ -66,20 +67,20 @@ export function parseAssetRange(value: string | null, sizeBytes: number): Parsed
 export function assetContentResponse(
   request: Request,
   asset: AssetContent,
-  storage: ObjectStorage,
+  storage: AssetReader,
   inline: boolean,
 ): Promise<Response>;
 export function assetContentResponse(
   request: Request,
   asset: AssetMetadata,
-  storage: ObjectStorage,
+  storage: AssetReader,
   inline: boolean,
   storageReference: string,
 ): Promise<Response>;
 export async function assetContentResponse(
   request: Request,
   asset: AssetMetadata | AssetContent,
-  storage: ObjectStorage,
+  storage: AssetReader,
   inline: boolean,
   storageReference?: string,
 ): Promise<Response> {
