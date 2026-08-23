@@ -3,7 +3,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { Client } from "pg";
-import { assertMigrationState } from "./migration-state.ts";
+import {
+  MIGRATION_ROLE_PASSWORD_ENV,
+  assertMigrationState,
+  configuredExistingRolePasswords,
+  migrationsThroughVersion,
+} from "./migration-state.ts";
 
 const migrationUrl = process.env.MIGRATOR_DATABASE_URL ?? process.env.DATABASE_ADMIN_URL;
 if (!migrationUrl) {
@@ -51,8 +56,13 @@ try {
     existingRelations.rows.map(({ relation }) => relation),
     baseline,
   );
+  const migrationsToApply = migrationsThroughVersion(
+    migrations,
+    applied.rows,
+    process.env.MIGRATOR_MAX_VERSION,
+  );
   await client.query("ALTER TABLE schema_migrations ALTER COLUMN checksum SET NOT NULL");
-  for (const migration of migrations) {
+  for (const migration of migrationsToApply) {
     const existing = await client.query("SELECT 1 FROM schema_migrations WHERE version = $1", [migration.version]);
     if (existing.rowCount) continue;
     await client.query("BEGIN");
@@ -70,18 +80,14 @@ try {
     }
   }
 
-  const passwordVariables: Record<string, string | undefined> = {
-    context_use_auth: process.env.DB_AUTH_PASSWORD,
-    context_use_dashboard: process.env.DB_DASHBOARD_PASSWORD,
-    context_use_corpus: process.env.DB_CORPUS_PASSWORD,
-    context_use_mcp: process.env.DB_MCP_PASSWORD,
-    context_use_public: process.env.DB_PUBLIC_PASSWORD,
-    context_use_confirmation: process.env.DB_CONFIRMATION_PASSWORD,
-    context_use_storage: process.env.DB_STORAGE_PASSWORD,
-    context_use_backup: process.env.DB_BACKUP_PASSWORD,
-  };
-  for (const [role, password] of Object.entries(passwordVariables)) {
-    if (!password) continue;
+  const existingPasswordRoles = await client.query<{ rolname: string }>(
+    "SELECT rolname::text FROM pg_roles WHERE rolname::text=ANY($1::text[])",
+    [Object.keys(MIGRATION_ROLE_PASSWORD_ENV)],
+  );
+  for (const { role, password } of configuredExistingRolePasswords(
+    process.env,
+    existingPasswordRoles.rows.map(({ rolname }) => rolname),
+  )) {
     const literal = password.replaceAll("'", "''");
     await client.query(`ALTER ROLE ${role} LOGIN PASSWORD '${literal}'`);
   }

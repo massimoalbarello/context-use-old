@@ -384,12 +384,15 @@ test("development compose confines the corpus credential to the audited one-shot
 });
 
 test("database initialization and CI provision the dedicated corpus role password", async () => {
-  const [migrator, testDatabase, workflow] = await Promise.all([
+  const [migrator, migrationState, testDatabase, workflow] = await Promise.all([
     Bun.file(new URL("../../../packages/database/src/migrate.ts", import.meta.url)).text(),
+    Bun.file(new URL("../../../packages/database/src/migration-state.ts", import.meta.url)).text(),
     Bun.file(new URL("../../../scripts/test-database.ts", import.meta.url)).text(),
     Bun.file(new URL("../../../.github/workflows/ci.yml", import.meta.url)).text(),
   ]);
-  expect(migrator).toContain("context_use_corpus: process.env.DB_CORPUS_PASSWORD");
+  expect(migrationState).toContain('context_use_corpus: "DB_CORPUS_PASSWORD"');
+  expect(migrator).toContain("configuredExistingRolePasswords");
+  expect(migrator).toContain("SELECT rolname::text FROM pg_roles");
   expect(testDatabase).toContain('DB_CORPUS_PASSWORD: "test-only"');
   expect(workflow).toContain("DB_CORPUS_PASSWORD: test-corpus");
   expect(workflow).toContain("CORPUS_DATABASE_URL: postgres://context_use_corpus:test-corpus");

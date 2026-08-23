@@ -74,6 +74,36 @@ describeDatabase("object-backed source records", () => {
         [added.document_id],
       )).rows).toEqual(initialSearchChunks.rows);
 
+      // A pre-chunk upgrade row may have only the legacy base vector. An
+      // unchanged-body replay must not clear that last searchable projection
+      // when it has no chunks to rebuild.
+      await pool.query(
+        `UPDATE source_records
+         SET search_vector=to_tsvector('english','legacyupgradevector')
+         WHERE document_id=$1`,
+        [added.document_id],
+      );
+      await pool.query(
+        "DELETE FROM source_record_search_chunks WHERE document_id=$1",
+        [added.document_id],
+      );
+      await records.write({
+        ...base,
+        action: "updated",
+        sourceUpdatedAt: "2026-08-20T09:30:00.000Z",
+        markdown: "# Issue 42\n\nOpen.\n",
+      });
+      expect((await pool.query(
+        `SELECT 1 FROM source_records
+         WHERE document_id=$1
+           AND search_vector @@ plainto_tsquery('english','legacyupgradevector')`,
+        [added.document_id],
+      )).rowCount).toBe(1);
+      expect((await pool.query(
+        "SELECT 1 FROM source_record_search_chunks WHERE document_id=$1",
+        [added.document_id],
+      )).rowCount).toBe(0);
+
       const changed = await records.write({
         ...base,
         action: "updated",

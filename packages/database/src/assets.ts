@@ -48,14 +48,19 @@ export class AssetRepository {
     // Every asset is written through here, so deriving the name once keeps the path and the
     // stored filename from drifting apart no matter which upload surface created the asset.
     const filename = assetFilenameForPath(input.currentPath, input.filename);
-    const result = await this.pool.query(
-      `INSERT INTO assets(id,current_path,filename,content_type,size_bytes,content_hash,s3_object_key,width,height,duration_seconds)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-       RETURNING id,current_path,public_path,filename,content_type,size_bytes,content_hash,width,height,duration_seconds,created_at,deleted_at`,
-      [id, input.currentPath, filename, input.contentType, input.sizeBytes, input.contentHash, key,
-        input.width ?? null, input.height ?? null, input.durationSeconds ?? null],
-    );
-    return { ...result.rows[0], objectKey: key };
+    return transaction(this.pool, async (client) => {
+      await client.query(
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
+      );
+      const result = await client.query(
+        `INSERT INTO assets(id,current_path,filename,content_type,size_bytes,content_hash,s3_object_key,width,height,duration_seconds)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         RETURNING id,current_path,public_path,filename,content_type,size_bytes,content_hash,width,height,duration_seconds,created_at,deleted_at`,
+        [id, input.currentPath, filename, input.contentType, input.sizeBytes, input.contentHash, key,
+          input.width ?? null, input.height ?? null, input.durationSeconds ?? null],
+      );
+      return { ...result.rows[0], objectKey: key };
+    });
   }
 
   async get(id: string, includeObjectKey = false) {
@@ -140,40 +145,62 @@ export class AssetRepository {
            width,height,duration_seconds,created_at,deleted_at`,
         [id],
       );
+      if (archived.rows[0]) {
+        await client.query("UPDATE hypermedia_documents SET updated_at=now() WHERE id=$1", [id]);
+      }
       return archived.rows[0] ?? null;
     });
   }
 
   async markDeleted(id: string): Promise<string | null> {
-    const result = await this.pool.query<{ s3_object_key: string }>(
-      `UPDATE assets SET deleted_at=now()
+    return transaction(this.pool, async (client) => {
+      await client.query(
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
+      );
+      const selected = await client.query<{ s3_object_key: string }>(
+        `SELECT s3_object_key FROM assets
          WHERE id=$1 AND public_path IS NULL AND deleted_at IS NULL
-         AND NOT EXISTS (
+         FOR UPDATE`,
+        [id],
+      );
+      if (!selected.rows[0]) return null;
+      const referenced = await client.query(
+        `SELECT 1
+         FROM knowledge_pages page
+         WHERE page.archived_at IS NULL AND EXISTS (
            SELECT 1
-           FROM knowledge_pages page
-           JOIN hypermedia_document_revisions revision
-             ON revision.id=page.published_version_id
-           WHERE page.archived_at IS NULL
-             AND (
-               EXISTS (
-                 SELECT 1 FROM document_links link
-                 WHERE link.source_revision_id=revision.id
-                   AND link.target_document_id=assets.id
-               )
-               OR EXISTS (
-                 SELECT 1 FROM knowledge_asset_links legacy_link
-                 WHERE legacy_link.source_version_id=revision.id
-                   AND legacy_link.target_asset_id=assets.id
-               )
+           FROM unnest(ARRAY[page.current_version_id,page.published_version_id]) source(revision_id)
+           WHERE source.revision_id IS NOT NULL AND (
+             EXISTS (
+               SELECT 1 FROM document_links link
+               WHERE link.source_revision_id=source.revision_id
+                 AND link.target_document_id=$1
              )
+             OR EXISTS (
+               SELECT 1 FROM knowledge_asset_links legacy_link
+               WHERE legacy_link.source_version_id=source.revision_id
+                 AND legacy_link.target_asset_id=$1
+             )
+           )
          )
-         AND NOT EXISTS (
-           SELECT 1 FROM knowledge_export_intents export
-           WHERE export.download_started_at IS NOT NULL AND export.expires_at>now()
-         )
-       RETURNING s3_object_key`,
-      [id],
-    );
-    return result.rows[0]?.s3_object_key ?? null;
+         LIMIT 1`,
+        [id],
+      );
+      if (referenced.rowCount) return null;
+      if ((await client.query(
+        `SELECT 1 FROM knowledge_export_intents
+         WHERE download_started_at IS NOT NULL AND expires_at>now() LIMIT 1`,
+      )).rowCount) return null;
+      const result = await client.query<{ s3_object_key: string }>(
+        `UPDATE assets SET deleted_at=now()
+         WHERE id=$1 AND deleted_at IS NULL
+         RETURNING s3_object_key`,
+        [id],
+      );
+      if (result.rows[0]) {
+        await client.query("UPDATE hypermedia_documents SET updated_at=now() WHERE id=$1", [id]);
+      }
+      return result.rows[0]?.s3_object_key ?? null;
+    });
   }
 }

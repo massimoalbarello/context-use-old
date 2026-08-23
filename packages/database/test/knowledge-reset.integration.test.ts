@@ -52,7 +52,9 @@ describeDatabase("passkey-confirmed knowledge base reset", () => {
       await client.query("SET CONSTRAINTS ALL DEFERRED");
       await client.query("SET LOCAL session_replication_role=replica");
       await client.query(
-        `TRUNCATE TABLE confirmation_challenges,publication_intents,knowledge_export_intents,
+        `TRUNCATE TABLE pathless_knowledge_search_chunks,
+           pathless_knowledge_search,knowledge_revision_contracts,
+           confirmation_challenges,publication_intents,knowledge_export_intents,
            page_deletion_intents,operational_document_replacements,
            automation_registry,directory_hub_migrations,
            legacy_public_directory_prefixes,
@@ -259,6 +261,22 @@ describeDatabase("passkey-confirmed knowledge base reset", () => {
       }]);
       expect((await client.query("SELECT count(*)::int AS total FROM assets")).rows[0]?.total).toBe(0);
       expect((await client.query("SELECT count(*)::int AS total FROM knowledge_asset_links")).rows[0]?.total).toBe(0);
+      expect((await client.query(
+        `SELECT contract.revision_id AS contract_revision_id,
+           search.revision_id AS search_revision_id,
+           coalesce(search.revision_id=page.current_version_id,false) AS pathless_search_ready
+         FROM knowledge_pages page
+         LEFT JOIN knowledge_revision_contracts contract
+           ON contract.revision_id=page.current_version_id
+         LEFT JOIN pathless_knowledge_search search ON search.document_id=page.id`,
+      )).rows).toEqual([{
+        contract_revision_id: null,
+        search_revision_id: null,
+        pathless_search_ready: false,
+      }]);
+      expect((await client.query(
+        "SELECT count(*)::int AS total FROM pathless_knowledge_search_chunks",
+      )).rows[0]?.total).toBe(0);
       expect((await client.query(
         "SELECT change_sequence::text,change_kind,path,actor_subject FROM knowledge_page_changes change ORDER BY change.change_sequence",
       )).rows).toEqual([{
