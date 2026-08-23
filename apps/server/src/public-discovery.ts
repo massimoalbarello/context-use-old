@@ -1,4 +1,4 @@
-import type { PublicPage } from "@context-use/database";
+import type { PublicPageContent } from "./public-content.ts";
 
 /**
  * Optional well-known introduction path. A published page here supplies public
@@ -12,7 +12,7 @@ export const INTRO_PATH = "about/intro";
  */
 export const OPTIONAL_CONTACTS_PATH = "about/contacts";
 
-type Introduction = Pick<PublicPage, "title" | "summary"> | null | undefined;
+type Introduction = Pick<PublicPageContent, "title" | "summary"> | null | undefined;
 
 function normalizedOrigin(value: string): string {
   return new URL(value).origin;
@@ -36,7 +36,7 @@ function dateIso(value: string | Date): string | null {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
-function latestEdit(pages: PublicPage[]): string | null {
+function latestEdit(pages: PublicPageContent[]): string | null {
   return pages.reduce<string | null>((latest, page) => {
     const edited = dateIso(page.last_edited_at);
     return edited !== null && (latest === null || edited > latest) ? edited : latest;
@@ -94,16 +94,16 @@ export function renderRobotsTxt(siteOrigin: string): string {
   ].join("\n");
 }
 
-export function renderSitemapXml(pages: PublicPage[], siteOrigin: string): string {
+export function renderSitemapXml(pages: PublicPageContent[], siteOrigin: string): string {
   const origin = normalizedOrigin(siteOrigin);
   const lastEdited = latestEdit(pages);
   const entries: Array<{ loc: string; lastmod: string | null }> = [
     { loc: `${origin}/`, lastmod: lastEdited },
     { loc: `${origin}/p/`, lastmod: lastEdited },
     ...[...pages]
-      .sort((left, right) => left.public_path < right.public_path ? -1 : left.public_path > right.public_path ? 1 : 0)
+      .sort((left, right) => left.public_id < right.public_id ? -1 : left.public_id > right.public_id ? 1 : 0)
       .map((page) => ({
-        loc: `${origin}/p/${page.public_path}`,
+        loc: `${origin}/p/${page.public_id}`,
         lastmod: dateIso(page.last_edited_at),
       })),
   ];

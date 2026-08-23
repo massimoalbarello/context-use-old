@@ -152,14 +152,6 @@ export {
   type KnowledgeExportSnapshot,
 } from "./exports.ts";
 export {
-  PublicationRepository,
-  PublicEntrypointRepository,
-  PublicRepository,
-  StoragePublicationRepository,
-  type PublicPage,
-  type PublicKnowledgeSettings,
-} from "./publication.ts";
-export {
   PathlessPublicEntrypointRepository,
   PathlessPublicRepository,
   PathlessPublicationAdoptionRepository,

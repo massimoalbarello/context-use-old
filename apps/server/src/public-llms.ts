@@ -1,4 +1,4 @@
-import type { PublicPage } from "@context-use/database";
+import type { PublicPageContent } from "./public-content.ts";
 import { INTRO_PATH, publicSiteName } from "./public-discovery.ts";
 
 const PRIVATE_UUID = "[private identifier]";
@@ -36,18 +36,18 @@ function publicMarkdownPageUrl(origin: string, path: string): string {
   return `${publicPageUrl(origin, path)}.md`;
 }
 
-function entrypointFirst(left: PublicPage, right: PublicPage, entrypoint: string | null | undefined): number {
-  if (left.public_path === entrypoint && right.public_path !== entrypoint) return -1;
-  if (right.public_path === entrypoint && left.public_path !== entrypoint) return 1;
-  return left.public_path < right.public_path ? -1 : left.public_path > right.public_path ? 1 : 0;
+function entrypointFirst(left: PublicPageContent, right: PublicPageContent, entrypoint: string | null | undefined): number {
+  if (left.public_id === entrypoint && right.public_id !== entrypoint) return -1;
+  if (right.public_id === entrypoint && left.public_id !== entrypoint) return 1;
+  return left.public_id < right.public_id ? -1 : left.public_id > right.public_id ? 1 : 0;
 }
 
-function orderedPages(pages: PublicPage[], entrypoint?: string | null): PublicPage[] {
+function orderedPages(pages: PublicPageContent[], entrypoint?: string | null): PublicPageContent[] {
   return [...pages].sort((left, right) => entrypointFirst(left, right, entrypoint));
 }
 
-function descriptionFor(pages: PublicPage[], entrypoint?: string | null): string {
-  const introduction = pages.find(({ public_path }) => public_path === entrypoint);
+function descriptionFor(pages: PublicPageContent[], entrypoint?: string | null): string {
+  const introduction = pages.find(({ public_id }) => public_id === entrypoint);
   return normalizedInlineText(introduction?.summary ?? "")
     || "Only explicitly published knowledge is included.";
 }
@@ -57,7 +57,7 @@ function dateIso(value: string | Date): string | null {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
-function latestEdit(pages: PublicPage[]): string | null {
+function latestEdit(pages: PublicPageContent[]): string | null {
   return pages.reduce<string | null>((latest, page) => {
     const edited = dateIso(page.last_edited_at);
     return edited !== null && (latest === null || edited > latest) ? edited : latest;
@@ -100,11 +100,11 @@ function absolutePublicMarkdown(
   return redactPrivateReferences(result);
 }
 
-export function renderLlmsTxt(pages: PublicPage[], options: PublicLlmsOptions): string {
+export function renderLlmsTxt(pages: PublicPageContent[], options: PublicLlmsOptions): string {
   const siteOrigin = normalizedOrigin(options.siteOrigin);
   const entrypoint = options.entrypointPublicPath === undefined ? INTRO_PATH : options.entrypointPublicPath;
   const ordered = orderedPages(pages, entrypoint);
-  const introduction = ordered.find(({ public_path }) => public_path === entrypoint);
+  const introduction = ordered.find(({ public_id }) => public_id === entrypoint);
   const lines = [
     `# ${publicSiteName(siteOrigin, introduction)}`,
     "",
@@ -125,17 +125,17 @@ export function renderLlmsTxt(pages: PublicPage[], options: PublicLlmsOptions): 
     lines.push("", "## Public pages", "");
     for (const page of ordered) {
       lines.push(
-        `- [${escapedLinkLabel(page.title)}](${publicMarkdownPageUrl(siteOrigin, page.public_path)}): ${normalizedInlineText(page.summary)}`,
+        `- [${escapedLinkLabel(page.title)}](${publicMarkdownPageUrl(siteOrigin, page.public_id)}): ${normalizedInlineText(page.summary)}`,
       );
     }
   }
   return `${lines.join("\n")}\n`;
 }
 
-export function renderPublicPageMarkdown(page: PublicPage, options: PublicLlmsOptions): string {
+export function renderPublicPageMarkdown(page: PublicPageContent, options: PublicLlmsOptions): string {
   const siteOrigin = normalizedOrigin(options.siteOrigin);
   const assetOrigin = normalizedOrigin(options.assetOrigin);
-  const canonicalUrl = publicPageUrl(siteOrigin, page.public_path);
+  const canonicalUrl = publicPageUrl(siteOrigin, page.public_id);
   const lines = [
     `# ${normalizedInlineText(page.title)}`,
     "",
@@ -152,12 +152,12 @@ export function renderPublicPageMarkdown(page: PublicPage, options: PublicLlmsOp
   return `${lines.join("\n")}\n`;
 }
 
-export function renderLlmsFullTxt(pages: PublicPage[], options: PublicLlmsOptions): string {
+export function renderLlmsFullTxt(pages: PublicPageContent[], options: PublicLlmsOptions): string {
   const siteOrigin = normalizedOrigin(options.siteOrigin);
   const assetOrigin = normalizedOrigin(options.assetOrigin);
   const entrypoint = options.entrypointPublicPath === undefined ? INTRO_PATH : options.entrypointPublicPath;
   const ordered = orderedPages(pages, entrypoint);
-  const introduction = ordered.find(({ public_path }) => public_path === entrypoint);
+  const introduction = ordered.find(({ public_id }) => public_id === entrypoint);
   const lines = [
     `# ${publicSiteName(siteOrigin, introduction)} — full public context`,
     "",
@@ -173,7 +173,7 @@ export function renderLlmsFullTxt(pages: PublicPage[], options: PublicLlmsOption
   if (lastEdited !== null) lines.push(`- Last updated: ${lastEdited}`);
 
   for (const page of ordered) {
-    const canonicalUrl = publicPageUrl(siteOrigin, page.public_path);
+    const canonicalUrl = publicPageUrl(siteOrigin, page.public_id);
     lines.push(
       "",
       "---",
@@ -181,7 +181,7 @@ export function renderLlmsFullTxt(pages: PublicPage[], options: PublicLlmsOption
       `## ${normalizedInlineText(page.title)}`,
       "",
       `- Canonical URL: [${canonicalUrl}](${canonicalUrl})`,
-      `- Public ID: \`${page.public_path}\``,
+      `- Public ID: \`${page.public_id}\``,
       `- Summary: ${normalizedInlineText(page.summary)}`,
     );
     const edited = dateIso(page.last_edited_at);

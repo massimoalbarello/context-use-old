@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { PublicPage } from "@context-use/database";
+import type { PublicPageContent } from "./public-content.ts";
 import {
   introductionName,
   externalProfileLinks,
@@ -8,16 +8,16 @@ import {
   renderSitemapXml,
 } from "./public-discovery.ts";
 
-const pages: PublicPage[] = [
+const pages: PublicPageContent[] = [
   {
-    public_path: "projects/one&only",
+    public_id: "projects/one&only",
     title: "One & only",
     summary: "The first project.",
     body_markdown: "Project body.",
     last_edited_at: "2026-07-26T09:00:00.000Z",
   },
   {
-    public_path: "about/intro",
+    public_id: "about/intro",
     title: "Intro",
     summary: "Massimo Albarello's introduction: a builder from Como.",
     body_markdown: "Biography.",

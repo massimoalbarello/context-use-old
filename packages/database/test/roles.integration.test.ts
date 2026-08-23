@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Client, Pool } from "pg";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { PageRepository, PublicRepository } from "../src/index.ts";
+import { PageRepository } from "../src/index.ts";
 import { disposableDatabaseUrl } from "../src/disposable-database.ts";
 import { MemoryMarkdownStore } from "./memory-markdown-store.ts";
+import { LegacyPublicProjectionReader } from "./legacy-public-projection-reader.ts";
 
 const adminUrl = await disposableDatabaseUrl();
 const describeDatabase = adminUrl ? describe : describe.skip;
@@ -1495,7 +1496,7 @@ describeDatabase("PostgreSQL security roles", () => {
       );
 
       await admin.query("SET LOCAL ROLE context_use_projection_owner");
-      const publicAssets = new PublicRepository(admin as unknown as Pool);
+      const publicAssets = new LegacyPublicProjectionReader(admin as unknown as Pool);
       expect(await publicAssets.assetByPublicPath(publishedPath)).toBeNull();
       expect(await publicAssets.assetByPublicPath(privatePath)).toBeNull();
       await admin.query("RESET ROLE");
@@ -1981,7 +1982,7 @@ describeDatabase("PostgreSQL security roles", () => {
       const canProjectPrivateBodies = await admin.query<{ allowed: boolean }>(
         "SELECT has_function_privilege('context_use_projection_owner','project_public_markdown(text)','EXECUTE') AS allowed",
       );
-      const publicKnowledge = new PublicRepository(admin as unknown as Pool);
+      const publicKnowledge = new LegacyPublicProjectionReader(admin as unknown as Pool);
       const siteSettings = await publicKnowledge.settings();
       const rootIndex = await publicKnowledge.directoryIndex("");
       const profileIndex = await publicKnowledge.directoryIndex("profile");
