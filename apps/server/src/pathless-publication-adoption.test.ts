@@ -52,6 +52,7 @@ describe("retained publication adoption", () => {
         apply: async () => phases.shift()!,
         seedEntrypoint: async () => entrypoint,
         assertCutoverReady: async () => undefined,
+        finalizeCutover: async () => new Date("2026-08-23T18:00:00Z"),
       },
       storage: {
         materializePublicationArtifact: async (kind, id) => {
@@ -71,6 +72,7 @@ describe("retained publication adoption", () => {
       superseded: 1,
       entrypoint,
       readiness: "ready",
+      compatibility: "retired",
     });
   });
 
@@ -91,6 +93,7 @@ describe("retained publication adoption", () => {
           return { public_id: null, configured: true, active: false };
         },
         assertCutoverReady: async () => { throw new Error("unexpected readiness check"); },
+        finalizeCutover: async () => { throw new Error("unexpected cutover finalization"); },
       },
       storage: { materializePublicationArtifact: async () => undefined },
     })).rejects.toThrow("did not converge (1 candidate remain)");

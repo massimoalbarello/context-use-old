@@ -21,6 +21,7 @@ describe("development data reset", () => {
   test("clears every pathless publication table in the same explicit truncate", () => {
     const pathlessPublicationTables = [
       "public_artifact_id_reservations",
+      "hypermedia_cutover_state",
       "public_representation_token_reservations",
       "pathless_publication_intents",
       "publication_intent_id_reservations",
@@ -57,5 +58,6 @@ describe("development data reset", () => {
     expect(developmentResetSql()).toContain("INSERT INTO public_projection_state(singleton)");
     expect(developmentResetSql()).toContain("INSERT INTO pathless_publication_settings(");
     expect(developmentResetSql()).toContain("VALUES (true,NULL,NULL)");
+    expect(developmentResetSql()).toContain("INSERT INTO hypermedia_cutover_state(singleton,finalized_at)");
   });
 });

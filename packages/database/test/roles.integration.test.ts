@@ -1366,7 +1366,7 @@ describeDatabase("PostgreSQL security roles", () => {
     }
   });
 
-  test("public role can see publication views but not private base tables", async () => {
+  test("public role can see only pathless publication views, not legacy projections or private tables", async () => {
     for (const relation of ["knowledge_directories", "knowledge_pages", "assets"]) {
       const result = await admin.query<{ allowed: boolean }>(
         "SELECT has_table_privilege('context_use_public', $1, 'SELECT') AS allowed",
@@ -1374,12 +1374,18 @@ describeDatabase("PostgreSQL security roles", () => {
       );
       expect(result.rows[0]?.allowed).toBe(false);
     }
-    for (const relation of ["published_pages", "published_directories", "published_assets"]) {
+    for (const relation of ["published_pages", "published_directories", "published_assets", "published_site_settings"]) {
       const result = await admin.query<{ allowed: boolean }>(
         "SELECT has_table_privilege('context_use_public', $1, 'SELECT') AS allowed",
         [relation],
       );
-      expect(result.rows[0]?.allowed).toBe(true);
+      expect(result.rows[0]?.allowed).toBe(false);
+    }
+    for (const relation of ["pathless_public_pages", "pathless_public_assets"]) {
+      expect((await admin.query<{ allowed: boolean }>(
+        "SELECT has_table_privilege('context_use_public',$1,'SELECT') AS allowed",
+        [relation],
+      )).rows[0]?.allowed).toBe(true);
     }
     for (const relation of ["published_page_sources", "storage_published_assets"]) {
       expect((await admin.query<{ allowed: boolean }>(
@@ -1411,6 +1417,15 @@ describeDatabase("PostgreSQL security roles", () => {
     expect(publicAssetColumns.rows.map(({ column_name }) => column_name)).toEqual([
       "public_path", "filename", "content_type", "size_bytes",
     ]);
+    for (const column of ["singleton", "entrypoint_page_id"]) {
+      expect((await admin.query<{ allowed: boolean }>(
+        "SELECT has_column_privilege('context_use_corpus','public_knowledge_settings',$1,'SELECT') AS allowed",
+        [column],
+      )).rows[0]?.allowed).toBe(true);
+    }
+    expect((await admin.query<{ allowed: boolean }>(
+      "SELECT has_table_privilege('context_use_corpus','public_knowledge_settings','UPDATE') AS allowed",
+    )).rows[0]?.allowed).toBe(false);
   });
 
   test("storage role can reconcile private objects without granting that access to public services", async () => {
@@ -1445,10 +1460,10 @@ describeDatabase("PostgreSQL security roles", () => {
     )).rows[0]?.allowed).toBe(false);
     expect((await admin.query<{ allowed: boolean }>(
       "SELECT has_table_privilege('context_use_storage','storage_published_assets','SELECT') AS allowed",
-    )).rows[0]?.allowed).toBe(true);
+    )).rows[0]?.allowed).toBe(false);
     expect((await admin.query<{ allowed: boolean }>(
       "SELECT has_table_privilege('context_use_storage','storage_published_pages','SELECT') AS allowed",
-    )).rows[0]?.allowed).toBe(true);
+    )).rows[0]?.allowed).toBe(false);
     expect((await admin.query<{ allowed: boolean }>(
       "SELECT has_table_privilege('context_use_storage','hypermedia_document_revisions','UPDATE') AS allowed",
     )).rows[0]?.allowed).toBe(false);
@@ -1477,7 +1492,7 @@ describeDatabase("PostgreSQL security roles", () => {
     )).rowCount).toBe(0);
   });
 
-  test("published assets resolve by knowledge path while private assets stay absent", async () => {
+  test("the projection owner can inspect retired asset projections without exposing private assets", async () => {
     const publishedAssetId = randomUUID();
     const privateAssetId = randomUUID();
     const intentId = randomUUID();
@@ -1502,7 +1517,7 @@ describeDatabase("PostgreSQL security roles", () => {
         [intentId, publishedAssetId, publishedPath],
       );
 
-      await admin.query("SET LOCAL ROLE context_use_public");
+      await admin.query("SET LOCAL ROLE context_use_projection_owner");
       const publicAssets = new PublicRepository(admin as unknown as Pool);
       expect(await publicAssets.assetByPublicPath(publishedPath)).toBeNull();
       expect(await publicAssets.assetByPublicPath(privatePath)).toBeNull();
@@ -1513,7 +1528,7 @@ describeDatabase("PostgreSQL security roles", () => {
       await admin.query("SELECT confirm_publication_intent($1,'context-use-owner','session','test-credential',0,1)", [intentId]);
       await admin.query("RESET ROLE");
 
-      await admin.query("SET LOCAL ROLE context_use_public");
+      await admin.query("SET LOCAL ROLE context_use_projection_owner");
       expect(await publicAssets.assetByPublicPath(publishedPath)).toMatchObject({
         public_path: publishedPath,
         filename: "public.png",
@@ -1690,7 +1705,7 @@ describeDatabase("PostgreSQL security roles", () => {
     )).rows[0]?.allowed).toBe(false);
     expect((await admin.query<{ allowed: boolean }>(
       "SELECT has_any_column_privilege('context_use_dashboard','publication_intents','INSERT') AS allowed",
-    )).rows[0]?.allowed).toBe(true);
+    )).rows[0]?.allowed).toBe(false);
   });
 
   test("application-level knowledge restore is absent", async () => {
@@ -1894,7 +1909,7 @@ describeDatabase("PostgreSQL security roles", () => {
     }
   });
 
-  test("public webpage role sees only reconciled artifact metadata", async () => {
+  test("the projection owner retains reconciled legacy metadata for provenance", async () => {
     const privatePageId = randomUUID();
     const privateVersionId = randomUUID();
     const parentPageId = randomUUID();
@@ -1976,7 +1991,7 @@ describeDatabase("PostgreSQL security roles", () => {
         [parentPageId],
       );
 
-      await admin.query("SET LOCAL ROLE context_use_public");
+      await admin.query("SET LOCAL ROLE context_use_projection_owner");
       const webpage = await admin.query<{
         public_path: string;
         title: string;
@@ -1987,7 +2002,7 @@ describeDatabase("PostgreSQL security roles", () => {
         "SELECT public_path,title,summary,body_markdown,last_edited_at FROM published_pages WHERE public_path='profile/work/project'",
       );
       const canProjectPrivateBodies = await admin.query<{ allowed: boolean }>(
-        "SELECT has_function_privilege('context_use_public','project_public_markdown(text)','EXECUTE') AS allowed",
+        "SELECT has_function_privilege('context_use_projection_owner','project_public_markdown(text)','EXECUTE') AS allowed",
       );
       const publicKnowledge = new PublicRepository(admin as unknown as Pool);
       const siteSettings = await publicKnowledge.settings();
@@ -2000,7 +2015,7 @@ describeDatabase("PostgreSQL security roles", () => {
       expect(webpage.rows[0]?.last_edited_at).toBeInstanceOf(Date);
       expect(webpage.rows[0]?.summary).toBe("A public project fixture.");
       expect(webpage.rows[0]?.body_markdown).toBeNull();
-      expect(canProjectPrivateBodies.rows[0]?.allowed).toBe(false);
+      expect(canProjectPrivateBodies.rows[0]?.allowed).toBe(true);
       expect(siteSettings).toEqual({ entrypoint_public_path: "profile" });
       expect(rootIndex?.entries).toContainEqual({
         kind: "directory",
