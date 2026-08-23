@@ -431,14 +431,14 @@ test("restore verifies the backup, keeps traffic down on failure, migrates, and 
   expect(script.lastIndexOf("DROP ROLE IF EXISTS context_use_public_mcp")).toBeGreaterThan(script.indexOf("MIGRATOR_RECONCILE_RESTORE_OWNERSHIP=true"));
   const storage = "up -d --wait storage";
   const prepare = "--exit-code-from knowledge-prepare knowledge-prepare";
-  const publicWeb = "up -d --wait public-web";
-  const privateServices = "up -d --wait dashboard-edge app auth private-mcp confirmation";
+  const publicWeb = "up -d --wait --no-deps public-web";
+  const privateServices = "up -d --wait --no-deps app private-mcp";
   expect(script).toContain("--force-recreate --no-deps --abort-on-container-exit");
   expect(script.indexOf("MIGRATOR_RECONCILE_RESTORE_OWNERSHIP=true")).toBeLessThan(script.indexOf(storage));
   expect(script.indexOf(storage)).toBeLessThan(script.indexOf(prepare));
   expect(script.indexOf(prepare)).toBeLessThan(script.indexOf(publicWeb));
   expect(script.indexOf(publicWeb)).toBeLessThan(script.indexOf(privateServices));
-  const finalServices = "up -d --remove-orphans caddy backup";
+  const finalServices = "up -d --remove-orphans --no-deps caddy backup";
   expect(script).toContain(finalServices);
   expect(script.indexOf(privateServices)).toBeLessThan(script.indexOf(finalServices));
   expect(script.match(/knowledge-prepare/g)?.length).toBe(2);
@@ -663,8 +663,8 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   const stopClients = "stop \\\n  dashboard-edge app auth private-mcp public-web confirmation storage backup";
   const restoreStorage = "up -d --wait storage";
   const prepareKnowledge = "--exit-code-from knowledge-prepare knowledge-prepare";
-  const restorePublic = "up -d --wait public-web";
-  const restoreDashboard = "up -d --wait \\\n  dashboard-edge app auth private-mcp";
+  const restorePublic = "up -d --wait --no-deps public-web";
+  const restoreDashboard = "up -d --wait --no-deps \\\n  dashboard-edge";
   expect(deployScript.indexOf(stopClients)).toBeLessThan(deployScript.indexOf("--profile migration run --rm migrate"));
   expect(deployScript.indexOf("--profile migration run --rm migrate")).toBeLessThan(deployScript.indexOf(restoreStorage));
   expect(deployScript.indexOf(restoreStorage)).toBeLessThan(deployScript.indexOf(prepareKnowledge));
@@ -865,7 +865,7 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
     "--force-recreate --no-deps --abort-on-container-exit \\",
     "--exit-code-from knowledge-prepare knowledge-prepare",
   ].join("\n  ");
-  const publicStart = "up -d --wait public-web";
+  const publicStart = "up -d --wait --no-deps public-web";
   expect(deployScript).toContain(prepareRun);
   expect(deployScript.indexOf(storageStart)).toBeLessThan(deployScript.indexOf(prepareRun));
   expect(deployScript.indexOf(prepareRun)).toBeLessThan(deployScript.indexOf(publicStart));
@@ -1103,4 +1103,24 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   expect(data).toContain('ContextUseInitialization = "pending"');
   expect(data).toContain('ignore_changes = [tags["ContextUseInitialization"]]');
   expect(data).not.toContain("aws_s3_bucket_cors_configuration");
+});
+
+test("deployment starts knowledge consumers without restarting the completed one-shot", async () => {
+  const script = await Bun.file(new URL("../../../deploy/deploy.sh", import.meta.url)).text();
+  const prepare = "--exit-code-from knowledge-prepare knowledge-prepare";
+  const starts = [
+    "up -d --wait --no-deps public-web",
+    "up -d --wait --no-deps \\\n  auth confirmation",
+    "up -d --wait --no-deps \\\n  app private-mcp",
+    "up -d --wait --no-deps \\\n  dashboard-edge",
+  ];
+
+  expect(script.match(/--exit-code-from knowledge-prepare/g)).toHaveLength(1);
+  let previous = script.indexOf(prepare);
+  expect(previous).toBeGreaterThan(-1);
+  for (const start of starts) {
+    const position = script.indexOf(start);
+    expect(position).toBeGreaterThan(previous);
+    previous = position;
+  }
 });

@@ -45,9 +45,13 @@ export function restoreCommands(bucket: string, key: string): string[] {
     `${database} -c 'DROP OWNED BY ${compatibilityRole}; DROP ROLE IF EXISTS ${compatibilityRole}'`,
     `${compose} up -d --wait storage`,
     `${compose} up --force-recreate --no-deps --abort-on-container-exit --exit-code-from knowledge-prepare knowledge-prepare`,
-    `${compose} up -d --wait public-web`,
-    `${compose} up -d --wait dashboard-edge app auth private-mcp confirmation`,
-    `${compose} up -d --remove-orphans caddy backup`,
+    // The one-shot succeeded above; explicit no-dependency starts keep Compose
+    // from traversing back through it while restoring the long-lived services.
+    `${compose} up -d --wait --no-deps public-web`,
+    `${compose} up -d --wait --no-deps auth confirmation`,
+    `${compose} up -d --wait --no-deps app private-mcp`,
+    `${compose} up -d --wait --no-deps dashboard-edge`,
+    `${compose} up -d --remove-orphans --no-deps caddy backup`,
     "trap - EXIT",
   ];
 }
