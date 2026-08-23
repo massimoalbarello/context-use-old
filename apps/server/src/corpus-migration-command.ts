@@ -13,38 +13,62 @@ import {
   PathlessPublicationAdoptionError,
   adoptRetainedPublications,
 } from "./pathless-publication-adoption.ts";
+import type { Pool } from "pg";
+
+export async function finalizedHypermediaCutover(
+  pool: Pick<Pool, "query">,
+): Promise<Date | string | null> {
+  const capability = await pool.query<{ available: boolean }>(
+    `SELECT has_column_privilege(
+       current_user,'public.hypermedia_cutover_state','finalized_at','SELECT'
+     ) AS available`,
+  );
+  if (!capability.rows[0]?.available) return null;
+  const state = await pool.query<{ finalized_at: Date | string | null }>(
+    "SELECT finalized_at FROM hypermedia_cutover_state WHERE singleton",
+  );
+  return state.rows[0]?.finalized_at ?? null;
+}
 
 export async function runKnowledgePrepareCommand(options: {
   templateName?: string;
   forceTemplate?: boolean;
 } = {}): Promise<void> {
   const production = process.env.NODE_ENV === "production";
-  const templateName = knowledgePrepareTemplateName(
-    options.templateName,
-    process.env.CONTEXT_USE_TEMPLATE_INSTALL,
-  );
-  const forceTemplate = options.forceTemplate
-    ?? knowledgePrepareForceTemplate(process.env.CONTEXT_USE_FORCE_TEMPLATE);
-  if (production && templateName !== "default") {
-    throw new Error("Production knowledge preparation only supports the default template");
-  }
   const corpusDatabaseUrl = isolatedCorpusDatabaseUrl(process.env.CORPUS_DATABASE_URL);
-  const socketPath = process.env.STORAGE_SOCKET_PATH
-    ?? (production ? undefined : "/tmp/context-use-storage.sock");
-  const token = process.env.STORAGE_DASHBOARD_TOKEN
-    ?? (production ? undefined : "development-storage-dashboard-token");
-  if (!socketPath || !token) {
-    throw new Error("Knowledge preparation requires the dashboard storage capability");
-  }
-  const configuredRoot = process.env.CONTEXT_USE_DEVELOPMENT_TEMPLATE_ROOT;
-  const templatesRoot = configuredRoot
-    ? pathToFileURL(configuredRoot.endsWith("/") ? configuredRoot : `${configuredRoot}/`)
-    : undefined;
   const corpusPool = createPool(corpusDatabaseUrl, {
     application_name: "context-use-knowledge-prepare-corpus",
   });
-  const storage = new BrokeredStorage({ socketPath, token });
   try {
+    const finalizedAt = await finalizedHypermediaCutover(corpusPool);
+    if (finalizedAt !== null) {
+      console.log(JSON.stringify({
+        event: "hypermedia_cutover_already_finalized",
+        finalized_at: finalizedAt,
+      }));
+      return;
+    }
+    const templateName = knowledgePrepareTemplateName(
+      options.templateName,
+      process.env.CONTEXT_USE_TEMPLATE_INSTALL,
+    );
+    const forceTemplate = options.forceTemplate
+      ?? knowledgePrepareForceTemplate(process.env.CONTEXT_USE_FORCE_TEMPLATE);
+    if (production && templateName !== "default") {
+      throw new Error("Production knowledge preparation only supports the default template");
+    }
+    const socketPath = process.env.STORAGE_SOCKET_PATH
+      ?? (production ? undefined : "/tmp/context-use-storage.sock");
+    const token = process.env.STORAGE_DASHBOARD_TOKEN
+      ?? (production ? undefined : "development-storage-dashboard-token");
+    if (!socketPath || !token) {
+      throw new Error("Knowledge preparation requires the dashboard storage capability");
+    }
+    const configuredRoot = process.env.CONTEXT_USE_DEVELOPMENT_TEMPLATE_ROOT;
+    const templatesRoot = configuredRoot
+      ? pathToFileURL(configuredRoot.endsWith("/") ? configuredRoot : `${configuredRoot}/`)
+      : undefined;
+    const storage = new BrokeredStorage({ socketPath, token });
     const result = await prepareKnowledgeCorpus({
       corpusPool,
       bodies: new BrokeredMarkdownObjectStore(storage),

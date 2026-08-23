@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  finalizedHypermediaCutover,
   knowledgePrepareForceTemplate,
   knowledgePreparationFailure,
   knowledgePrepareTemplateName,
@@ -9,6 +10,34 @@ import { CorpusMigrationBlockedError } from "./corpus-migration.ts";
 import { PathlessPublicationAdoptionError } from "./pathless-publication-adoption.ts";
 
 describe("knowledge preparation command", () => {
+  test("observes finalized cutover only after the narrow corpus grant is available", async () => {
+    const finalizedAt = new Date("2026-08-23T20:00:00.000Z");
+    const calls: string[] = [];
+    const available = {
+      async query(sql: string) {
+        calls.push(sql);
+        return calls.length === 1
+          ? { rows: [{ available: true }] }
+          : { rows: [{ finalized_at: finalizedAt }] };
+      },
+    };
+    expect(await finalizedHypermediaCutover(available as never)).toBe(finalizedAt);
+    expect(calls[0]).toContain("has_column_privilege");
+    expect(calls[1]).toBe(
+      "SELECT finalized_at FROM hypermedia_cutover_state WHERE singleton",
+    );
+
+    const unavailableCalls: string[] = [];
+    const unavailable = {
+      async query(sql: string) {
+        unavailableCalls.push(sql);
+        return { rows: [{ available: false }] };
+      },
+    };
+    expect(await finalizedHypermediaCutover(unavailable as never)).toBeNull();
+    expect(unavailableCalls).toHaveLength(1);
+  });
+
   test("root bootstrap uses the isolated preparation entrypoint", async () => {
     const manifest = await Bun.file(new URL("../../../package.json", import.meta.url)).json() as {
       scripts?: Record<string, string>;
@@ -23,6 +52,8 @@ describe("knowledge preparation command", () => {
     const source = await Bun.file(new URL("./corpus-migration-command.ts", import.meta.url)).text();
     expect(source).toContain("process.env.CORPUS_DATABASE_URL");
     expect(source).not.toContain("process.env.DATABASE_URL");
+    expect(source.indexOf("await finalizedHypermediaCutover(corpusPool)"))
+      .toBeLessThan(source.indexOf("new BrokeredStorage"));
   });
 
   test("rejects a missing, malformed, or dashboard-role corpus URL", () => {

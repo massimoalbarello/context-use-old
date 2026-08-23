@@ -204,6 +204,9 @@ describeDatabase("pathless publication global namespaces", () => {
       expect((await client.query<{ finalized_at: Date }>(
         "SELECT finalize_hypermedia_cutover() AS finalized_at",
       )).rows[0]!.finalized_at).toEqual(finalized);
+      expect((await client.query<{ finalized_at: Date }>(
+        "SELECT finalized_at FROM hypermedia_cutover_state WHERE singleton",
+      )).rows[0]!.finalized_at).toEqual(finalized);
       await client.query("RESET ROLE");
       expect(await sqlState(client, () => client.query(
         "UPDATE hypermedia_cutover_state SET finalized_at=NULL WHERE singleton",
