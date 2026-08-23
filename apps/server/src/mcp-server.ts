@@ -333,7 +333,7 @@ export async function createMcpServer(
     ? `Available reusable skills:\n${skills.map((skill) => `- ${skill.name}: ${skill.summary}`).join("\n")}`
     : "Available reusable skills: none.";
   const server = new McpServer(
-    { name: "context-use", version: "0.1.76" },
+    { name: "context-use", version: "0.1.77" },
     { instructions: SERVER_INSTRUCTIONS },
   );
   const actor = { kind: "mcp" as const, subject: context.clientId };
