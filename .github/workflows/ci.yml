@@ -115,11 +115,13 @@ jobs:
           docker run --detach --name "${history_container}" \
             -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=context_use_history \
             -p 127.0.0.1:55433:5432 postgres:17-alpine
+          # Probe TCP so the entrypoint's temporary Unix-socket server cannot
+          # make us race the shutdown before the final postmaster starts.
           for _ in $(seq 1 30); do
-            docker exec "${history_container}" pg_isready -U postgres -d context_use_history >/dev/null 2>&1 && break
+            docker exec "${history_container}" pg_isready -h 127.0.0.1 -U postgres -d context_use_history >/dev/null 2>&1 && break
             sleep 1
           done
-          docker exec "${history_container}" pg_isready -U postgres -d context_use_history >/dev/null
+          docker exec "${history_container}" pg_isready -h 127.0.0.1 -U postgres -d context_use_history >/dev/null
           MIGRATOR_DATABASE_URL=postgres://postgres:postgres@localhost:55433/context_use_history \
             MIGRATOR_MAX_VERSION=027_pathless_document_contract.sql \
             bun packages/database/src/migrate.ts

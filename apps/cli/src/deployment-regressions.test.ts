@@ -402,6 +402,7 @@ test("CI runs restore integration with PostgreSQL 17 dump and restore clients", 
   const workflow = await Bun.file(new URL("../../../.github/workflows/ci.yml", import.meta.url)).text();
   expect(workflow).toContain('postgres:17-alpine pg_dump "$@"');
   expect(workflow).toContain('postgres:17-alpine psql "$@"');
+  expect(workflow).toContain('pg_isready -h 127.0.0.1 -U postgres -d context_use_history');
   expect(workflow).toContain('PATH="${client_bin}:${PATH}"');
   expect(workflow.indexOf('PATH="${client_bin}:${PATH}"')).toBeLessThan(
     workflow.indexOf("bun test packages/database/test/restore-ownership.integration.test.ts"),
