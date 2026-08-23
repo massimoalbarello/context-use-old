@@ -1,4 +1,4 @@
-import type { AssetRepository } from "@context-use/database";
+import type { DocumentAssetRepository } from "@context-use/database";
 import { z } from "zod";
 import { assetContentResponse } from "./asset-content.ts";
 import { config } from "./config.ts";
@@ -12,7 +12,7 @@ function problem(message: string, status: number, code: string): Response {
 }
 
 export function createMcpAssetDownloadHandler(
-  assets: AssetRepository,
+  assets: DocumentAssetRepository,
   storage: ObjectStorage,
   authorizeLineage = activeMcpLineage,
 ) {
@@ -31,8 +31,8 @@ export function createMcpAssetDownloadHandler(
       return problem("Asset download authorization is no longer active", 401, "invalid_download_capability");
     }
 
-    const asset = await assets.get(z.string().uuid().parse(assetId), true);
+    const asset = await assets.getForStorage(z.string().uuid().parse(assetId));
     if (!asset) return problem("Asset not found", 404, "not_found");
-    return assetContentResponse(request, asset, storage, false);
+    return assetContentResponse(request, asset, storage, false, asset.object_key);
   };
 }

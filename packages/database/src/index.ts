@@ -29,6 +29,9 @@ export {
 export {
   KnowledgeDocumentRepository,
   type AdoptKnowledgeRevisionInput,
+  type KnowledgeDocumentChange,
+  type KnowledgeDocumentChangeBatch,
+  type KnowledgeDocumentChangeKind,
   type KnowledgeDocument,
   type KnowledgeDocumentMetadata,
   type KnowledgeDocumentRevision,
@@ -38,6 +41,7 @@ export {
   DocumentAssetRepository,
   type DocumentAssetCreateResult,
   type DocumentAsset,
+  type DocumentAssetStorageObject,
 } from "./document-assets.ts";
 export {
   InvalidPrivateDocumentCursorError,

@@ -1,10 +1,8 @@
 import {
-  AssetRepository,
   DocumentAssetRepository,
   DocumentLinkRepository,
   KnowledgeDocumentRepository,
   KnowledgeSettingsRepository,
-  PageRepository,
   PrivateDocumentCatalogRepository,
   SourceRecordRepository,
   createPool,
@@ -40,13 +38,11 @@ async function loadCorpusRecordReader(): Promise<SourceRecordReader> {
 }
 
 const pool = createPool(config.MCP_DATABASE_URL, { application_name: "context-use-private-mcp" });
-const assets = new AssetRepository(pool);
 const storage = new BrokeredStorage({
   socketPath: config.STORAGE_SOCKET_PATH,
   token: config.STORAGE_MCP_TOKEN,
 });
 const markdownObjects = new BrokeredMarkdownObjectStore(storage);
-const pages = new PageRepository(pool, markdownObjects);
 const knowledgeDocuments = new KnowledgeDocumentRepository(pool, markdownObjects);
 const documentAssets = new DocumentAssetRepository(pool);
 const documentCatalog = new PrivateDocumentCatalogRepository(pool);
@@ -65,15 +61,14 @@ const sourceRecords = config.EVAL_CORPUS_PATH
       })
     : undefined;
 const knowledgeMcp = createMcpRequestHandler(
-  pages,
   sourceRecords,
   recordDocuments,
   knowledgeSettings,
   documentLinks,
   { knowledgeDocuments, documentAssets, documentCatalog },
 );
-const upload = createMcpAssetUploadHandler(assets, storage);
-const download = createMcpAssetDownloadHandler(assets, storage);
+const upload = createMcpAssetUploadHandler(documentAssets, storage);
+const download = createMcpAssetDownloadHandler(documentAssets, storage);
 const protectedResourceMetadata = () => json({
   resource: config.MCP_RESOURCE,
   authorization_servers: [config.OAUTH_ISSUER],

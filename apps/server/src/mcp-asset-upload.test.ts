@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, test } from "bun:test";
-import type { AssetRepository } from "@context-use/database";
+import type { DocumentAssetRepository } from "@context-use/database";
 import { createAssetCapability, verifyAssetCapability } from "./mcp-asset-capability.ts";
 import { createMcpAssetUploadHandler } from "./mcp-asset-upload.ts";
 import type { ObjectStorage, StoredAsset } from "./storage.ts";
@@ -12,20 +12,19 @@ const principal = { clientId: "mcp-client", sessionId: "mcp-session" };
 
 function fixture() {
   const asset = {
-    id: assetId,
-    current_path: "documents/private-asset",
+    document_id: assetId,
     filename: "private.pdf",
     content_type: "application/pdf",
     size_bytes: bytes.byteLength,
     content_hash: contentHash,
-    s3_object_key: `objects/${assetId}`,
+    object_key: `objects/${assetId}`,
   };
   let written: { asset: StoredAsset; bytes: Uint8Array } | null = null;
   const assets = {
-    async get(id: string, includeObjectKey: boolean) {
-      return id === assetId && includeObjectKey ? asset : null;
+    async getForStorage(id: string) {
+      return id === assetId ? asset : null;
     },
-  } as unknown as AssetRepository;
+  } as unknown as DocumentAssetRepository;
   const storage = {
     async write(storedAsset: StoredAsset, body: ReadableStream<Uint8Array> | null) {
       written = { asset: storedAsset, bytes: new Uint8Array(await new Response(body).arrayBuffer()) };
@@ -106,7 +105,7 @@ describe("MCP asset upload capabilities", () => {
 
   test("rejects a signed capability after its MCP lineage is revoked", async () => {
     const capability = createAssetCapability("upload", assetId, principal);
-    const revoked = createMcpAssetUploadHandler({} as AssetRepository, {} as ObjectStorage, async () => false);
+    const revoked = createMcpAssetUploadHandler({} as DocumentAssetRepository, {} as ObjectStorage, async () => false);
 
     expect((await revoked(uploadRequest(capability.token), assetId)).status).toBe(401);
   });

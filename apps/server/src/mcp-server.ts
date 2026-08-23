@@ -3,7 +3,6 @@ import {
   DocumentLinkRepository,
   KnowledgeSettingsRepository,
   KnowledgeDocumentRepository,
-  PageRepository,
   PrivateDocumentCatalogRepository,
   SourceRecordRepository,
 } from "@context-use/database";
@@ -24,7 +23,7 @@ import {
   verifyKnowledgeGuideReceipt,
 } from "./mcp-guidance-receipt.ts";
 import type { SourceRecordReader } from "./nango-records.ts";
-import { pageDelta } from "./page-delta.ts";
+import { documentDelta } from "./page-delta.ts";
 
 export type McpContext = {
   clientId: string;
@@ -118,7 +117,6 @@ function documentGuidanceRequired(retryTool: string) {
 
 export async function createMcpServer(
   context: McpContext,
-  pages: PageRepository,
   sourceRecords: SourceRecordReader | undefined,
   recordDocuments: SourceRecordRepository | undefined,
   knowledgeSettings: KnowledgeSettingsRepository,
@@ -494,31 +492,12 @@ export async function createMcpServer(
       }),
       annotations: { readOnlyHint: true },
     }, async ({ cursor, page_token, limit }) => {
-      const batch = await pages.changesSince({
+      const batch = await documents.knowledgeDocuments.changesSince({
         ...(cursor ? { cursor } : {}),
         ...(page_token ? { pageToken: page_token } : {}),
         limit,
       });
-      return jsonObjectContent({
-        ...batch,
-        changes: batch.changes.map((change) => {
-          const {
-            page_id,
-            version_id,
-            version_number,
-            previous_version_number,
-            path: _path,
-            ...metadata
-          } = change;
-          return {
-            ...metadata,
-            document_id: page_id,
-            revision_id: version_id,
-            revision_number: version_number,
-            previous_revision_number: previous_version_number ?? null,
-          };
-        }),
-      });
+      return jsonObjectContent(batch);
     });
 
     server.registerTool("compare_document_revisions", {
@@ -541,8 +520,8 @@ export async function createMcpServer(
       const [requestedPrevious, current] = await Promise.all([
         previous_revision_number === null
           ? Promise.resolve(null)
-          : pages.version(document_id, previous_revision_number),
-        pages.version(document_id, revision_number),
+          : documents.knowledgeDocuments.revision(document_id, previous_revision_number),
+        documents.knowledgeDocuments.revision(document_id, revision_number),
       ]);
       if (!current) {
         return textContent([
@@ -551,7 +530,7 @@ export async function createMcpServer(
         ].join("\n\n"), true);
       }
       const retainedPrevious = previous_revision_number !== null && !requestedPrevious
-        ? await pages.oldestRetainedVersionAfter(
+        ? await documents.knowledgeDocuments.oldestRetainedRevisionAfter(
           document_id,
           previous_revision_number,
           revision_number,
@@ -562,8 +541,8 @@ export async function createMcpServer(
         ? null
         : requestedPrevious
           ? previous_revision_number
-          : retainedPrevious!.version_number;
-      const delta = await pageDelta(previous, current);
+          : retainedPrevious!.revision_number;
+      const delta = await documentDelta(previous, current);
       return jsonObjectContent({
         document_id,
         comparison: {
@@ -572,7 +551,7 @@ export async function createMcpServer(
           to_revision: revision_number,
           complete: actualFromRevision === previous_revision_number,
         },
-        metadata_changes: delta.metadata_changes.filter(({ field }) => field !== "path"),
+        metadata_changes: delta.metadata_changes,
         markdown_changes: delta.markdown_changes,
       });
     });

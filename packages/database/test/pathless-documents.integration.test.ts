@@ -75,6 +75,7 @@ describeDatabase("pathless private documents", () => {
   });
 
   test("creates, revises and archives without exposing compatibility paths or storage keys", async () => {
+    const changesBefore = (await knowledge.changesSince()).next_cursor;
     const asset = await assets.create({
       filename: "pathless-diagram.png",
       content_type: "image/png",
@@ -100,6 +101,10 @@ describeDatabase("pathless private documents", () => {
     // compatibility path (verified below for pages) must be unlinkable from
     // private document identity.
     expect(asset.storage.object_key).toBe(`objects/${asset.document.document_id}`);
+    expect(await assets.getForStorage(asset.document.document_id)).toEqual({
+      ...asset.document,
+      object_key: asset.storage.object_key,
+    });
 
     const dangling = randomUUID();
     const createdBody = [
@@ -211,6 +216,25 @@ describeDatabase("pathless private documents", () => {
     }, actor);
     expect(archived).toMatchObject({ revision_number: 4 });
     expect(archived?.archived_at).not.toBeNull();
+
+    const changes = await knowledge.changesSince({ cursor: changesBefore });
+    expect(changes.changes.find(({ document_id }) => document_id === created.document_id))
+      .toMatchObject({
+        document_id: created.document_id,
+        revision_id: archived!.current_revision_id,
+        revision_number: 4,
+        previous_revision_number: null,
+        change_kind: "archived",
+        title: "Pathless lifecycle updated",
+      });
+    expect(changes.changes.find(({ document_id }) => document_id === created.document_id))
+      .not.toHaveProperty("path");
+    expect(await knowledge.oldestRetainedRevisionAfter(created.document_id, 1, 4))
+      .toMatchObject({
+        document_id: created.document_id,
+        revision_number: 2,
+        body_markdown: "Searchable current body term pathlesscurrentneedle",
+      });
   });
 
   test("searches and navigates the unified private catalog with stable shapes", async () => {

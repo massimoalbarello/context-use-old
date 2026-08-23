@@ -56,6 +56,29 @@ export type KnowledgeDocumentRevision = {
   body_markdown: string;
 };
 
+export type KnowledgeDocumentChangeKind = "created" | "updated" | "archived" | "deleted";
+
+export type KnowledgeDocumentChange = {
+  cursor: string;
+  document_id: string;
+  revision_id: string;
+  revision_number: number;
+  previous_revision_number: number | null;
+  change_kind: KnowledgeDocumentChangeKind;
+  title: string;
+  commit_message: string;
+  actor_kind: Actor["kind"] | null;
+  actor_subject: string | null;
+  changed_at: Date | string;
+};
+
+export type KnowledgeDocumentChangeBatch = {
+  changes: KnowledgeDocumentChange[];
+  next_cursor: string;
+  next_page_token?: string;
+  has_more: boolean;
+};
+
 export type AdoptKnowledgeRevisionInput = {
   document_id: string;
   revision_id: string;
@@ -65,6 +88,76 @@ export type AdoptKnowledgeRevisionInput = {
 
 type StoredKnowledgeDocumentRow = KnowledgeDocumentMetadata & MarkdownObjectMetadata;
 type StoredKnowledgeRevisionRow = Omit<KnowledgeDocumentRevision, "body_markdown"> & MarkdownObjectMetadata;
+type KnowledgeDocumentChangeRow = Omit<KnowledgeDocumentChange, "cursor"> & {
+  change_sequence: string;
+};
+
+const CHANGE_CURSOR_PREFIX = "cu-page-changes-v1.";
+const CHANGE_PAGE_TOKEN_PREFIX = "cu-page-scan-v1.";
+const MAX_BIGINT = 9_223_372_036_854_775_807n;
+
+function parseBase36(value: string): bigint {
+  if (!/^[0-9a-z]+$/.test(value)) throw new Error("Invalid knowledge document change cursor");
+  let result = 0n;
+  for (const character of value) {
+    result = result * 36n + BigInt(parseInt(character, 36));
+    if (result > MAX_BIGINT) throw new Error("Invalid knowledge document change cursor");
+  }
+  return result;
+}
+
+function changeCursor(sequence: string | bigint): string {
+  return `${CHANGE_CURSOR_PREFIX}${BigInt(sequence).toString(36)}`;
+}
+
+function parseChangeCursor(cursor?: string): bigint {
+  if (!cursor) return 0n;
+  if (!cursor.startsWith(CHANGE_CURSOR_PREFIX)) {
+    throw new Error("Invalid knowledge document change cursor");
+  }
+  return parseBase36(cursor.slice(CHANGE_CURSOR_PREFIX.length));
+}
+
+function pageToken(after: bigint, through: bigint, position: bigint): string {
+  return `${CHANGE_PAGE_TOKEN_PREFIX}${after.toString(36)}.${through.toString(36)}.${position.toString(36)}`;
+}
+
+function parsePageToken(token: string): { after: bigint; through: bigint; position: bigint } {
+  if (!token.startsWith(CHANGE_PAGE_TOKEN_PREFIX)) {
+    throw new Error("Invalid knowledge document change page token");
+  }
+  const parts = token.slice(CHANGE_PAGE_TOKEN_PREFIX.length).split(".");
+  if (parts.length !== 3) throw new Error("Invalid knowledge document change page token");
+  const after = parseBase36(parts[0]!);
+  const through = parseBase36(parts[1]!);
+  const position = parseBase36(parts[2]!);
+  if (after > position || position > through) {
+    throw new Error("Invalid knowledge document change page token");
+  }
+  return { after, through, position };
+}
+
+async function knowledgeChangeWindowHead(pool: Pool, after: bigint): Promise<bigint> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended('knowledge-page-change-ledger',0))",
+    );
+    const head = await client.query<{ change_sequence: string }>(
+      `SELECT GREATEST($1::bigint,COALESCE(max(change_sequence),0))::text AS change_sequence
+       FROM knowledge_page_changes`,
+      [after.toString()],
+    );
+    await client.query("COMMIT");
+    return BigInt(head.rows[0]?.change_sequence ?? after);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
 
 function boundedLimit(value: number | undefined, fallback: number, maximum: number): number {
   if (!Number.isFinite(value)) return fallback;
@@ -428,6 +521,88 @@ export class KnowledgeDocumentRepository {
       { body_object_key, body_size_bytes, body_content_hash },
     );
     return { ...metadata, body_markdown };
+  }
+
+  async oldestRetainedRevisionAfter(
+    documentId: string,
+    afterRevisionNumber: number,
+    throughRevisionNumber: number,
+  ): Promise<KnowledgeDocumentRevision | null> {
+    const result = await this.pool.query<{ revision_number: number }>(
+      `SELECT version.version_number AS revision_number
+       FROM knowledge_page_versions version
+       WHERE version.page_id=$1
+         AND version.version_number>$2
+         AND version.version_number<=$3
+       ORDER BY version.version_number ASC
+       LIMIT 1`,
+      [documentId, afterRevisionNumber, throughRevisionNumber],
+    );
+    const revisionNumber = result.rows[0]?.revision_number;
+    return revisionNumber === undefined ? null : this.revision(documentId, revisionNumber);
+  }
+
+  async changesSince(options: {
+    cursor?: string;
+    pageToken?: string;
+    limit?: number;
+  } = {}): Promise<KnowledgeDocumentChangeBatch> {
+    if (options.cursor && options.pageToken) {
+      throw new Error("Provide a cursor or page token, not both");
+    }
+    const limit = Math.min(Math.max(options.limit ?? 200, 1), 500);
+    let after: bigint;
+    let through: bigint;
+    let position: bigint;
+    if (options.pageToken) {
+      ({ after, through, position } = parsePageToken(options.pageToken));
+    } else {
+      after = parseChangeCursor(options.cursor);
+      through = await knowledgeChangeWindowHead(this.pool, after);
+      position = after;
+    }
+    const result = await this.pool.query<KnowledgeDocumentChangeRow>(
+      `WITH latest_per_document AS (
+         SELECT DISTINCT ON (page_id)
+           change_sequence,page_id,version_id,version_number,change_kind,title,
+           commit_message,actor_kind,actor_subject,changed_at
+         FROM knowledge_page_changes
+         WHERE change_sequence>$1::bigint AND change_sequence<=$2::bigint
+         ORDER BY page_id,change_sequence DESC
+       )
+       SELECT latest.change_sequence::text AS change_sequence,
+         latest.page_id AS document_id,latest.version_id AS revision_id,
+         latest.version_number AS revision_number,
+         baseline.version_number AS previous_revision_number,
+         latest.change_kind,latest.title,latest.commit_message,
+         latest.actor_kind,latest.actor_subject,latest.changed_at
+       FROM latest_per_document latest
+       LEFT JOIN LATERAL (
+         SELECT prior.version_number
+         FROM knowledge_page_changes prior
+         WHERE prior.page_id=latest.page_id AND prior.change_sequence<=$1::bigint
+         ORDER BY prior.change_sequence DESC
+         LIMIT 1
+       ) baseline ON true
+       WHERE latest.change_sequence>$3::bigint
+       ORDER BY latest.change_sequence
+       LIMIT $4`,
+      [after.toString(), through.toString(), position.toString(), limit + 1],
+    );
+    const hasMore = result.rows.length > limit;
+    const included = result.rows.slice(0, limit);
+    const lastPosition = included.length
+      ? BigInt(included[included.length - 1]!.change_sequence)
+      : position;
+    return {
+      changes: included.map(({ change_sequence, ...change }) => ({
+        cursor: changeCursor(change_sequence),
+        ...change,
+      })),
+      next_cursor: changeCursor(through),
+      ...(hasMore ? { next_page_token: pageToken(after, through, lastPosition) } : {}),
+      has_more: hasMore,
+    };
   }
 
   async adoptCurrent(input: AdoptKnowledgeRevisionInput): Promise<KnowledgeDocumentMetadata> {

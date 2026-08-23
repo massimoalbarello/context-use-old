@@ -1,4 +1,4 @@
-import type { AssetRepository } from "@context-use/database";
+import type { DocumentAssetRepository } from "@context-use/database";
 import { z } from "zod";
 import { config } from "./config.ts";
 import { verifyAssetCapability } from "./mcp-asset-capability.ts";
@@ -11,7 +11,7 @@ function problem(message: string, status: number, code: string): Response {
 }
 
 export function createMcpAssetUploadHandler(
-  assets: AssetRepository,
+  assets: DocumentAssetRepository,
   storage: ObjectStorage,
   authorizeLineage = activeMcpLineage,
 ) {
@@ -30,7 +30,7 @@ export function createMcpAssetUploadHandler(
       return problem("Asset upload authorization is no longer active", 401, "invalid_upload_capability");
     }
 
-    const asset = await assets.get(z.string().uuid().parse(assetId), true);
+    const asset = await assets.getForStorage(z.string().uuid().parse(assetId));
     if (!asset) return problem("Asset not found", 404, "not_found");
     const expectedSize = Number(asset.size_bytes);
     const suppliedSize = request.headers.get("content-length");
@@ -43,8 +43,8 @@ export function createMcpAssetUploadHandler(
     if (!request.body && expectedSize !== 0) return problem("Asset size mismatch", 422, "integrity_error");
     try {
       await storage.write({
-        id: asset.id,
-        objectKey: asset.s3_object_key,
+        id: asset.document_id,
+        objectKey: asset.object_key,
         filename: asset.filename,
         contentType: asset.content_type,
         sizeBytes: expectedSize,
@@ -54,6 +54,6 @@ export function createMcpAssetUploadHandler(
       if (error instanceof AssetIntegrityError) return problem(error.message, 422, "integrity_error");
       throw error;
     }
-    return Response.json({ uploaded: true, asset_id: asset.id }, { headers: securityHeaders });
+    return Response.json({ uploaded: true, asset_id: asset.document_id }, { headers: securityHeaders });
   };
 }
