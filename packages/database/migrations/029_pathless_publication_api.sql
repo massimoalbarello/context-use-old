@@ -9,6 +9,80 @@ SELECT pg_advisory_xact_lock(
   hashtextextended('filesystem-hypermedia-corpus-transition',0)
 );
 
+-- The durable conflict ledger is the checked read boundary. Planned conflicts
+-- are reconciled synchronously when their only mutable authorities finish or
+-- are deleted; evaluating the full live-conflict audit graph on every public
+-- read gives PostgreSQL a very high-cost plan and can trigger excessive JIT
+-- compilation even when no planned conflict exists.
+ALTER FUNCTION reconcile_planned_public_namespace_conflicts() SET jit=off;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM public_namespace_conflicts
+    WHERE conflict_lifecycle='planned' AND resolved_at IS NULL
+  ) THEN
+    PERFORM reconcile_planned_public_namespace_conflicts();
+  END IF;
+END;
+$$;
+
+CREATE OR REPLACE VIEW blocking_public_namespace_conflicts
+WITH (security_barrier=true,security_invoker=false)
+AS
+SELECT conflict.conflict_key,conflict.namespace_uuid,conflict.conflict_kind,
+  conflict.public_id,conflict.alias_path,conflict.conflicting_identity_kind,
+  conflict.conflict_lifecycle,conflict.detected_at
+FROM public_namespace_conflicts conflict
+WHERE conflict.resolved_at IS NULL;
+
+CREATE FUNCTION reconcile_deleted_public_namespace_conflicts()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path=pg_catalog,public
+AS $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM public_namespace_conflicts
+    WHERE conflict_lifecycle='planned' AND resolved_at IS NULL
+  ) THEN
+    PERFORM reconcile_planned_public_namespace_conflicts();
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER corpus_runs_029_reconcile_conflict_delete
+AFTER DELETE ON corpus_migration_runs
+FOR EACH STATEMENT
+EXECUTE FUNCTION reconcile_deleted_public_namespace_conflicts();
+CREATE TRIGGER corpus_directory_plans_029_reconcile_conflict_delete
+AFTER DELETE ON corpus_directory_migration_plans
+FOR EACH STATEMENT
+EXECUTE FUNCTION reconcile_deleted_public_namespace_conflicts();
+CREATE TRIGGER corpus_page_plans_029_reconcile_conflict_delete
+AFTER DELETE ON corpus_page_migration_plans
+FOR EACH STATEMENT
+EXECUTE FUNCTION reconcile_deleted_public_namespace_conflicts();
+CREATE TRIGGER corpus_automation_plans_029_reconcile_conflict_delete
+AFTER DELETE ON corpus_migration_automation_plans
+FOR EACH STATEMENT
+EXECUTE FUNCTION reconcile_deleted_public_namespace_conflicts();
+CREATE TRIGGER operational_replacements_029_reconcile_conflict_delete
+AFTER DELETE ON operational_document_replacements
+FOR EACH STATEMENT
+EXECUTE FUNCTION reconcile_deleted_public_namespace_conflicts();
+
+REVOKE ALL ON FUNCTION reconcile_deleted_public_namespace_conflicts()
+  FROM PUBLIC;
+GRANT USAGE,CREATE ON SCHEMA public TO context_use_boundary_owner;
+ALTER FUNCTION reconcile_deleted_public_namespace_conflicts()
+  OWNER TO context_use_boundary_owner;
+REVOKE CREATE ON SCHEMA public FROM context_use_boundary_owner;
+
 CREATE TYPE publication_intent_store AS ENUM ('legacy','pathless');
 
 -- Both artifact relations previously enforced representation-token uniqueness

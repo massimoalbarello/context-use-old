@@ -621,6 +621,12 @@ describeDatabase("pathless publication lifecycle coexistence", () => {
   test("audits both directions of grandfathered active-plan public mapping drift", async () => {
     await client.query("BEGIN");
     try {
+      await client.query("SET LOCAL statement_timeout='10s'");
+      await client.query(
+        `SELECT pg_advisory_xact_lock(
+           hashtextextended('filesystem-hypermedia-corpus-transition',0)
+         )`,
+      );
       const runId = randomUUID();
       const samePublicDifferentDocument = {
         publicId: randomUUID(),
@@ -780,7 +786,7 @@ describeDatabase("pathless publication lifecycle coexistence", () => {
     } finally {
       await client.query("ROLLBACK");
     }
-  });
+  }, 15_000);
 
   test("finishing an operational replacement reconciles stale planned namespace blockers", async () => {
     await client.query("BEGIN");
@@ -833,6 +839,198 @@ describeDatabase("pathless publication lifecycle coexistence", () => {
       await client.query("ROLLBACK");
     }
   });
+
+  test("hard deleting a planned authority reconciles persisted namespace blockers", async () => {
+    await client.query("BEGIN");
+    try {
+      await client.query("SET LOCAL statement_timeout='10s'");
+      await client.query(
+        `SELECT pg_advisory_xact_lock(
+           hashtextextended('filesystem-hypermedia-corpus-transition',0)
+         )`,
+      );
+      const triggers = await client.query<{ relation: string }>(
+        `SELECT tgrelid::regclass::text AS relation
+         FROM pg_trigger
+         WHERE NOT tgisinternal AND tgname IN (
+           'corpus_automation_plans_029_reconcile_conflict_delete',
+           'corpus_directory_plans_029_reconcile_conflict_delete',
+           'corpus_page_plans_029_reconcile_conflict_delete',
+           'corpus_runs_029_reconcile_conflict_delete',
+           'operational_replacements_029_reconcile_conflict_delete'
+         )
+         ORDER BY relation`,
+      );
+      expect(triggers.rows).toEqual([
+        { relation: "corpus_directory_migration_plans" },
+        { relation: "corpus_migration_automation_plans" },
+        { relation: "corpus_migration_runs" },
+        { relation: "corpus_page_migration_plans" },
+        { relation: "operational_document_replacements" },
+      ]);
+
+      const runId = randomUUID();
+      const plannedDirectoryId = randomUUID();
+      const plannedRevisionId = randomUUID();
+      const runConflictKey =
+        `public:planned_directory_resource:${plannedDirectoryId}` +
+        ":private:planned_directory_document";
+      await client.query(
+        `INSERT INTO corpus_migration_runs(
+           id,inventory_token,plan_token,settings_snapshot,readable_document_ids,
+           phase,actor_subject
+         ) VALUES ($1,$2,$3,'{}'::jsonb,'{}'::uuid[],'applying',
+           'context-use-template/delete-reconcile')`,
+        [runId, token(), token()],
+      );
+      await client.query("SET LOCAL session_replication_role=replica");
+      await client.query(
+        `INSERT INTO corpus_migration_inventory(
+           run_id,item_kind,item_id,legacy_path,source_fingerprint,snapshot
+         ) VALUES ($1,'directory',$2,$3,$4,'{}'::jsonb)`,
+        [runId, plannedDirectoryId, `planned-delete-${plannedDirectoryId}`, token()],
+      );
+      await client.query(
+        `INSERT INTO corpus_directory_migration_plans(
+           run_id,directory_id,disposition,private_revision_mode,
+           temporary_path,private_revision_id,private_revision_number,
+           public_id,private_projection_fingerprint
+         ) VALUES (
+           $1,$2,'public_compatibility','render',$3,$4,1,$2,$5
+         )`,
+        [
+          runId,
+          plannedDirectoryId,
+          `planned-delete-${plannedDirectoryId}`,
+          plannedRevisionId,
+          token(),
+        ],
+      );
+      await client.query("SET LOCAL session_replication_role=origin");
+      expect((await client.query(
+        `INSERT INTO public_namespace_conflicts(
+           conflict_key,namespace_uuid,conflict_kind,public_id,alias_path,
+           conflicting_identity_kind,conflict_lifecycle
+         )
+         SELECT conflict_key,namespace_uuid,conflict_kind,public_id,alias_path,
+           conflicting_identity_kind,conflict_lifecycle
+         FROM live_public_namespace_conflicts
+         WHERE conflict_key=$1`,
+        [runConflictKey],
+      )).rowCount).toBe(1);
+      expect((await client.query<{ reconciled: number }>(
+        "SELECT reconcile_planned_public_namespace_conflicts() AS reconciled",
+      )).rows[0]?.reconciled).toBe(0);
+      expect((await client.query<{ live: boolean }>(
+        `SELECT EXISTS(
+           SELECT 1 FROM live_public_namespace_conflicts WHERE conflict_key=$1
+         ) AS live`,
+        [runConflictKey],
+      )).rows[0]?.live).toBe(true);
+      expect((await client.query<{ resolved: boolean }>(
+        `SELECT resolved_at IS NOT NULL AS resolved
+         FROM public_namespace_conflicts WHERE conflict_key=$1`,
+        [runConflictKey],
+      )).rows[0]?.resolved).toBe(false);
+      expect((await client.query(
+        "SELECT 1 FROM blocking_public_namespace_conflicts WHERE conflict_key=$1",
+        [runConflictKey],
+      )).rowCount).toBe(1);
+      await client.query(
+        `DELETE FROM corpus_migration_inventory
+         WHERE run_id=$1 AND item_kind='directory' AND item_id=$2`,
+        [runId, plannedDirectoryId],
+      );
+      expect((await client.query(
+        "SELECT 1 FROM corpus_migration_runs WHERE id=$1",
+        [runId],
+      )).rowCount).toBe(1);
+      expect((await client.query(
+        `SELECT 1 FROM corpus_directory_migration_plans
+         WHERE run_id=$1 AND directory_id=$2`,
+        [runId, plannedDirectoryId],
+      )).rowCount).toBe(0);
+      expect((await client.query<{ resolved: boolean }>(
+        `SELECT resolved_at IS NOT NULL AS resolved
+         FROM public_namespace_conflicts WHERE conflict_key=$1`,
+        [runConflictKey],
+      )).rows[0]?.resolved).toBe(true);
+      expect((await client.query(
+        "SELECT 1 FROM blocking_public_namespace_conflicts WHERE conflict_key=$1",
+        [runConflictKey],
+      )).rowCount).toBe(0);
+      await client.query("DELETE FROM corpus_migration_runs WHERE id=$1", [runId]);
+
+      const replacementId = randomUUID();
+      const replacementDocumentId = randomUUID();
+      const replacementRevisionId = randomUUID();
+      const replacementConflictKey =
+        `public:resource:${replacementDocumentId}` +
+        ":private:planned_operational_document";
+      await client.query("SET LOCAL session_replication_role=replica");
+      await client.query(
+        `INSERT INTO public_resources(
+           public_id,document_id,original_document_id,resource_kind
+         ) VALUES ($1,NULL,$2,'page')`,
+        [replacementDocumentId, randomUUID()],
+      );
+      await client.query(
+        `INSERT INTO operational_document_replacements(
+           id,target_kind,source_document_id,source_revision_id,
+           replacement_document_id,replacement_revision_id,replacement_path,
+           replacement_title,replacement_summary,body_object_key,
+           body_size_bytes,body_content_hash,actor_subject
+         ) VALUES (
+           $1,'global_guide',$2,$3,$4,$5,$6,'Managed guide',
+           'A managed guide replacement.',$7,4,$8,'context-use-template/test'
+         )`,
+        [
+          replacementId,
+          randomUUID(),
+          randomUUID(),
+          replacementDocumentId,
+          replacementRevisionId,
+          `managed-operational-${replacementDocumentId}`,
+          `documents/private/${replacementRevisionId}.md`,
+          hash("9"),
+        ],
+      );
+      await client.query("SET LOCAL session_replication_role=origin");
+      expect((await client.query(
+        `INSERT INTO public_namespace_conflicts(
+           conflict_key,namespace_uuid,conflict_kind,public_id,alias_path,
+           conflicting_identity_kind,conflict_lifecycle
+         )
+         SELECT conflict_key,namespace_uuid,conflict_kind,public_id,alias_path,
+           conflicting_identity_kind,conflict_lifecycle
+         FROM live_public_namespace_conflicts
+         WHERE conflict_key=$1`,
+        [replacementConflictKey],
+      )).rowCount).toBe(1);
+      expect((await client.query<{ reconciled: number }>(
+        "SELECT reconcile_planned_public_namespace_conflicts() AS reconciled",
+      )).rows[0]?.reconciled).toBe(0);
+      expect((await client.query(
+        "SELECT 1 FROM blocking_public_namespace_conflicts WHERE conflict_key=$1",
+        [replacementConflictKey],
+      )).rowCount).toBe(1);
+      await client.query(
+        "DELETE FROM operational_document_replacements WHERE id=$1",
+        [replacementId],
+      );
+      expect((await client.query<{ resolved: boolean }>(
+        `SELECT resolved_at IS NOT NULL AS resolved
+         FROM public_namespace_conflicts WHERE conflict_key=$1`,
+        [replacementConflictKey],
+      )).rows[0]?.resolved).toBe(true);
+      expect((await client.query(
+        "SELECT 1 FROM blocking_public_namespace_conflicts WHERE conflict_key=$1",
+        [replacementConflictKey],
+      )).rowCount).toBe(0);
+    } finally {
+      await client.query("ROLLBACK");
+    }
+  }, 15_000);
 
   test("a hard delete holding the page row makes a concurrent pin fail without deadlock", async () => {
     const setup = new Client({ connectionString: databaseUrl });

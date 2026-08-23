@@ -79,6 +79,11 @@ async function sqlStateAsRole(
   }
 }
 
+async function beginTestTransaction(client: Client): Promise<void> {
+  await client.query("BEGIN");
+  await client.query("SET LOCAL statement_timeout='10s'");
+}
+
 async function resolvePublic(client: Client, route: string): Promise<PublicRouteRow> {
   return await asRole(client, "context_use_public", async () =>
     (await client.query<PublicRouteRow>(
@@ -285,7 +290,7 @@ async function cleanupPageFixtures(
   const publicIds = pages.map((page) => page.publicId);
   const artifactIds = pages.map((page) => page.artifactId);
   const pageIds = pages.map((page) => page.pageId);
-  await client.query("BEGIN");
+  await beginTestTransaction(client);
   try {
     await client.query("SET LOCAL session_replication_role=replica");
     await client.query(
@@ -323,7 +328,7 @@ describeDatabase("pathless public entrypoint and resolvers", () => {
   test("resolves exact active routes without exposing private namespace misses", async () => {
     const client = new Client({ connectionString: databaseUrl });
     await client.connect();
-    await client.query("BEGIN");
+    await beginTestTransaction(client);
     try {
       const page = await seedActivePage(client);
       const asset = await seedActiveAsset(client);
@@ -535,7 +540,7 @@ describeDatabase("pathless public entrypoint and resolvers", () => {
   test("storage resolves only the exact current pin and keeps raw tables closed", async () => {
     const client = new Client({ connectionString: databaseUrl });
     await client.connect();
-    await client.query("BEGIN");
+    await beginTestTransaction(client);
     try {
       const asset = await seedActiveAsset(client);
       const replacement = await addAssetArtifact(client, asset.assetId, asset.publicId, false);
@@ -650,7 +655,7 @@ describeDatabase("pathless public entrypoint and resolvers", () => {
   test("seeds and sets the three-state entrypoint with exact replay semantics", async () => {
     const client = new Client({ connectionString: databaseUrl });
     await client.connect();
-    await client.query("BEGIN");
+    await beginTestTransaction(client);
     try {
       const ordinary = await seedActivePage(client, "legacy_adoption");
       const hub = await seedActivePage(client, "directory_hub_promotion");
@@ -855,7 +860,7 @@ describeDatabase("pathless public entrypoint and resolvers", () => {
       clientConnected = true;
       await contender.connect();
       contenderConnected = true;
-      await client.query("BEGIN");
+      await beginTestTransaction(client);
       pages.push(await seedActivePage(client), await seedActivePage(client));
       await client.query(
         `UPDATE pathless_publication_settings
@@ -870,7 +875,7 @@ describeDatabase("pathless public entrypoint and resolvers", () => {
 
       await contender.query("SET statement_timeout='4s'");
       await contender.query("SET ROLE context_use_dashboard");
-      await client.query("BEGIN");
+      await beginTestTransaction(client);
       await client.query("SET LOCAL lock_timeout='750ms'");
       await client.query("SELECT 1 FROM knowledge_pages WHERE id=$1 FOR UPDATE", [pages[0]!.pageId]);
       const setting = contender.query<{
@@ -889,7 +894,7 @@ describeDatabase("pathless public entrypoint and resolvers", () => {
       });
       await contender.query("RESET ROLE");
 
-      await client.query("BEGIN");
+      await beginTestTransaction(client);
       await client.query(
         `UPDATE pathless_publication_settings
          SET entrypoint_public_id=NULL,updated_at=NULL WHERE singleton`,
@@ -902,7 +907,7 @@ describeDatabase("pathless public entrypoint and resolvers", () => {
       );
       await client.query("COMMIT");
       await contender.query("SET ROLE context_use_corpus");
-      await client.query("BEGIN");
+      await beginTestTransaction(client);
       await client.query("SET LOCAL lock_timeout='750ms'");
       await client.query("SELECT 1 FROM knowledge_pages WHERE id=$1 FOR UPDATE", [pages[0]!.pageId]);
       const seeding = contender.query<{
@@ -921,7 +926,7 @@ describeDatabase("pathless public entrypoint and resolvers", () => {
       });
       await contender.query("RESET ROLE");
 
-      await client.query("BEGIN");
+      await beginTestTransaction(client);
       await client.query("SELECT 1 FROM pathless_publication_settings WHERE singleton FOR UPDATE");
       await client.query(
         `UPDATE pathless_publication_settings
