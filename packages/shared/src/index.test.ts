@@ -1,10 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
-  archiveAssetSchema,
   archiveDocumentAssetSchema,
   archiveKnowledgeDocumentSchema,
-  assetFilenameForPath,
-  assetUploadSchema,
   createDocumentAssetSchema,
   createDirectorySchema,
   createKnowledgeDocumentSchema,
@@ -12,9 +9,7 @@ import {
   dashboardDocumentNeighborhoodSchema,
   dashboardDocumentSummarySchema,
   deleteDirectorySchema,
-  AssetPath,
   createPageSchema,
-  publicationIntentSchema,
   PAGE_MARKDOWN_BODY_DESCRIPTION,
   summarizeTemplateResult,
   updateKnowledgeDocumentSchema,
@@ -37,15 +32,8 @@ describe("strict mutation schemas", () => {
     expect(createPageSchema.shape.body_markdown.description).toContain("Example: ![Portrait]");
   });
 
-  test("asset paths use the same hierarchical format as page paths", () => {
-    expect(AssetPath.safeParse("projects/acme/site-photo").success).toBe(true);
-    expect(AssetPath.safeParse("Projects/acme/site-photo.jpg").success).toBe(false);
-    expect(AssetPath.safeParse("projects//site-photo").success).toBe(false);
-  });
-
-  test("asset uploads bind private metadata to an exact checksum and size", () => {
-    expect(assetUploadSchema.safeParse({
-      path: "projects/acme/site-photo",
+  test("document asset uploads bind metadata to an exact checksum and size", () => {
+    expect(createDocumentAssetSchema.safeParse({
       filename: "site-photo.jpg",
       content_type: "image/jpeg",
       size_bytes: 123,
@@ -53,8 +41,7 @@ describe("strict mutation schemas", () => {
       width: 800,
       height: 600,
     }).success).toBe(true);
-    expect(assetUploadSchema.safeParse({
-      path: "projects/acme/site-photo",
+    expect(createDocumentAssetSchema.safeParse({
       filename: "site-photo.jpg",
       content_type: "image/jpeg",
       size_bytes: 123,
@@ -63,19 +50,9 @@ describe("strict mutation schemas", () => {
     }).success).toBe(false);
   });
 
-  test("the stored asset filename follows the path leaf and keeps only the extension", () => {
-    expect(assetFilenameForPath(
-      "library/a-mem-agentic-memory/figures/traditional-vs-agentic-memory",
-      "a-mem-figure-1-traditional-vs-agentic-memory.png",
-    )).toBe("traditional-vs-agentic-memory.png");
-    expect(assetFilenameForPath("library/some-paper/paper", "2401.12345v3.PDF")).toBe("paper.pdf");
-    expect(assetFilenameForPath("photos/portrait", "portrait")).toBe("portrait");
-    expect(assetFilenameForPath("archives/backup", "backup.tar.gz")).toBe("backup.gz");
-  });
-
   test("asset archival accepts only a stable asset identifier", () => {
-    expect(archiveAssetSchema.safeParse({ asset_id: pageId }).success).toBe(true);
-    expect(archiveAssetSchema.safeParse({
+    expect(archiveDocumentAssetSchema.safeParse({ asset_id: pageId }).success).toBe(true);
+    expect(archiveDocumentAssetSchema.safeParse({
       asset_id: pageId,
       path: "projects/acme/site-photo",
     }).success).toBe(false);
@@ -263,24 +240,6 @@ describe("strict mutation schemas", () => {
     expect(deleteDirectorySchema.safeParse({ expected_version_number: 3 }).success).toBe(true);
     expect(deleteDirectorySchema.safeParse({}).success).toBe(false);
     expect(deleteDirectorySchema.safeParse({ expected_version_number: 3, cascade: true }).success).toBe(false);
-  });
-
-  test("publication intents bind valid fields to the exact action", () => {
-    expect(publicationIntentSchema.safeParse({
-      action: "publish", target_kind: "page", target_id: pageId, version_id: versionId,
-    }).success).toBe(true);
-    expect(publicationIntentSchema.safeParse({
-      action: "publish", target_kind: "page", target_id: pageId,
-    }).success).toBe(false);
-    expect(publicationIntentSchema.safeParse({
-      action: "unpublish", target_kind: "page", target_id: pageId, version_id: versionId,
-    }).success).toBe(false);
-    expect(publicationIntentSchema.safeParse({
-      action: "publish", target_kind: "asset", target_id: pageId,
-    }).success).toBe(true);
-    expect(publicationIntentSchema.safeParse({
-      action: "publish", target_kind: "page", target_id: pageId, version_id: versionId, public_path: "caller-chosen",
-    }).success).toBe(false);
   });
 
 });
