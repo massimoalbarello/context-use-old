@@ -31,6 +31,11 @@ export type DocumentAssetStorageObject = DocumentAsset & {
   object_key: string;
 };
 
+export type DeletedDocumentAssetStorageObject = {
+  document_id: string;
+  object_key: string;
+};
+
 async function transaction<T>(pool: Pool, work: (client: PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();
   try {
@@ -134,6 +139,21 @@ export class DocumentAssetRepository {
     if (!row) return null;
     const { object_key, ...asset } = row;
     return { ...normalizeAsset(asset), object_key };
+  }
+
+  /** Exact deleted byte locator used only by the isolated storage cleanup boundary. */
+  async getDeletedForStorage(documentId: string): Promise<DeletedDocumentAssetStorageObject | null> {
+    const result = await this.pool.query<DeletedDocumentAssetStorageObject>(
+      `SELECT asset.id AS document_id,asset.s3_object_key AS object_key
+       FROM assets asset
+       JOIN hypermedia_documents document
+         ON document.id=asset.id
+        AND document.authority='knowledge'
+        AND document.representation='asset'
+       WHERE asset.id=$1 AND asset.deleted_at IS NOT NULL`,
+      [documentId],
+    );
+    return result.rows[0] ?? null;
   }
 
   async list(): Promise<DocumentAsset[]> {

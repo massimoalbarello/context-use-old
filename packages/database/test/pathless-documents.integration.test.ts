@@ -184,6 +184,11 @@ describeDatabase("pathless private documents", () => {
     expect(updated?.revision_number).toBe(2);
     const deletedAsset = await assets.archive({ asset_id: asset.document.document_id });
     expect(deletedAsset?.deleted_at).not.toBeNull();
+    expect(await assets.getForStorage(asset.document.document_id)).toBeNull();
+    expect(await assets.getDeletedForStorage(asset.document.document_id)).toEqual({
+      document_id: asset.document.document_id,
+      object_key: asset.storage.object_key,
+    });
 
     const tombstoneLinked = await knowledge.update(created.document_id, {
       title: "Pathless lifecycle updated",

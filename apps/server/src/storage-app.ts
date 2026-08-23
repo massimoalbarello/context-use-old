@@ -2,7 +2,7 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { unlink } from "node:fs/promises";
 import { chmod } from "node:fs/promises";
 import {
-  AssetRepository,
+  DocumentAssetRepository,
   DocumentMaintenanceRepository,
   MAX_MARKDOWN_DOCUMENT_BYTES,
   PathlessStoragePublicationRepository,
@@ -58,16 +58,16 @@ type StorageBrokerTokens = { dashboard: string; mcp: string; public: string };
 
 type PrivateAssetLookup = {
   getForStorage(id: string): Promise<{
-    id: string;
-    s3_object_key: string;
+    document_id: string;
+    object_key: string;
     filename: string;
     content_type: string;
     size_bytes: number | string;
     content_hash: string;
   } | null>;
   getDeletedForStorage(id: string): Promise<{
-    id: string;
-    s3_object_key: string;
+    document_id: string;
+    object_key: string;
   } | null>;
 };
 
@@ -109,7 +109,7 @@ const defaultStorage: ObjectStorageBackend = config.STORAGE_DRIVER === "s3"
   : new FilesystemStorage(config.STORAGE_PATH);
 
 const storagePool = createPool(config.STORAGE_DATABASE_URL, { application_name: "context-use-storage-boundary" });
-const defaultPrivateAssets = new AssetRepository(storagePool);
+const defaultPrivateAssets = new DocumentAssetRepository(storagePool);
 const defaultPathlessPublications = new PathlessStoragePublicationRepository(storagePool);
 const documentMaintenance = new DocumentMaintenanceRepository(storagePool);
 const defaultTokens: StorageBrokerTokens = {
@@ -377,7 +377,7 @@ export function createStorageBrokerApp(input: {
     if (asset.objectKey !== `objects/${asset.id}`) return denied();
     const expected = await privateAssets.getForStorage(asset.id);
     if (!expected
-        || expected.s3_object_key !== asset.objectKey
+        || expected.object_key !== asset.objectKey
         || expected.filename !== asset.filename
         || expected.content_type !== asset.contentType
         || Number(expected.size_bytes) !== asset.sizeBytes
@@ -497,7 +497,7 @@ export function createStorageBrokerApp(input: {
     // Metadata is the lifecycle authority. A published row cannot become
     // deleted until passkey-confirmed unpublication clears its visibility, so
     // a bare dashboard storage capability cannot hide public bytes.
-    if (!deleted || deleted.s3_object_key !== objectKey) return denied();
+    if (!deleted || deleted.object_key !== objectKey) return denied();
     await storage.delete(objectKey);
     return new Response(null, { status: 204 });
   })
