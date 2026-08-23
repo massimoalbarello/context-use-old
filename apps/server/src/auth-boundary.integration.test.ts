@@ -258,8 +258,15 @@ describeApplication("HTTP credential and OAuth boundary", () => {
   });
 
   test("private asset access requires a dashboard session on the dashboard origin", async () => {
-    const dashboard = await application!.handle(new Request("http://localhost:3000/api/dashboard/pages"));
-    expect(dashboard.status).toBe(401);
+    for (const path of [
+      "/api/dashboard/pages",
+      "/api/dashboard/documents",
+      "/api/dashboard/documents/11111111-1111-4111-8111-111111111111",
+      "/api/dashboard/documents/11111111-1111-4111-8111-111111111111/neighborhood",
+    ]) {
+      const dashboard = await application!.handle(new Request(`http://localhost:3000${path}`));
+      expect(dashboard.status).toBe(401);
+    }
     for (const headers of [{}, { authorization: "Bearer forged" }]) {
       const privateAsset = await application!.handle(new Request(
         "http://localhost:3000/api/dashboard/assets/11111111-1111-4111-8111-111111111111/content",

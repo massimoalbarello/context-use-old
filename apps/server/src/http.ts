@@ -1,6 +1,7 @@
 import {
   DirectoryNotEmptyError,
   DirectoryVersionConflictError,
+  InvalidPrivateDocumentCursorError,
   PublicationStateError,
   RootDirectoryDeletionError,
   VersionConflictError,
@@ -35,6 +36,9 @@ export function routeError(error: unknown): Response {
   }
   if (error instanceof RootDirectoryDeletionError) {
     return problem(error.message, 409, "directory_protected");
+  }
+  if (error instanceof InvalidPrivateDocumentCursorError) {
+    return problem(error.message, 422, "invalid_cursor");
   }
   if (error instanceof PublicationStateError) return problem(error.message, 409, "publication_state");
   if (error instanceof z.ZodError) return json({ error: "validation_error", issues: error.issues }, 422);

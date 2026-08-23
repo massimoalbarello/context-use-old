@@ -332,6 +332,71 @@ export type UpdateKnowledgeDocumentInput = z.infer<typeof updateKnowledgeDocumen
 export type ArchiveKnowledgeDocumentInput = z.infer<typeof archiveKnowledgeDocumentSchema>;
 export type CreateDocumentAssetInput = z.infer<typeof createDocumentAssetSchema>;
 export type ArchiveDocumentAssetInput = z.infer<typeof archiveDocumentAssetSchema>;
+
+export const dashboardDocumentKindSchema = z.enum(["knowledge", "record", "asset"]);
+export const dashboardDocumentLifecycleSchema = z.enum(["active", "archived", "deleted"]);
+export const dashboardDocumentOperationalRoleSchema = z.enum([
+  "global_guide",
+  "automation_instructions",
+  "automation_state",
+  "directory_hub",
+]);
+
+/** Pathless, locator-free document metadata safe for the authenticated dashboard. */
+export const dashboardDocumentSummarySchema = z.object({
+  document_id: UUID,
+  document_kind: dashboardDocumentKindSchema,
+  authority: z.enum(["knowledge", "source"]),
+  representation: z.enum(["markdown", "asset"]),
+  lifecycle: dashboardDocumentLifecycleSchema,
+  current_revision_id: UUID.nullable(),
+  title: z.string().nullable(),
+  summary: z.string().nullable(),
+  filename: z.string().nullable(),
+  content_type: z.string().nullable(),
+  operational_roles: z.array(dashboardDocumentOperationalRoleSchema),
+  updated_at: z.string().datetime({ offset: true }),
+}).strict();
+
+export const dashboardDocumentCatalogPageSchema = z.object({
+  documents: z.array(dashboardDocumentSummarySchema),
+  next_cursor: z.string().nullable(),
+  has_more: z.boolean(),
+}).strict();
+
+export const dashboardDocumentNeighborSchema = z.object({
+  target_document_id: UUID,
+  resolved: z.boolean(),
+  document: dashboardDocumentSummarySchema.nullable(),
+}).strict();
+
+export const dashboardDocumentNeighborhoodSchema = z.object({
+  document: dashboardDocumentSummarySchema,
+  outbound: z.object({
+    revision_id: UUID.nullable(),
+    neighbors: z.array(dashboardDocumentNeighborSchema),
+    next_cursor: UUID.nullable(),
+    has_more: z.boolean(),
+    index_complete: z.boolean(),
+  }).strict(),
+  backlinks: z.object({
+    documents: z.array(dashboardDocumentSummarySchema),
+    next_cursor: UUID.nullable(),
+    has_more: z.boolean(),
+    completeness_checked: z.boolean(),
+    complete: z.boolean().nullable(),
+  }).strict(),
+}).strict();
+
+export type DashboardDocumentKind = z.infer<typeof dashboardDocumentKindSchema>;
+export type DashboardDocumentLifecycle = z.infer<typeof dashboardDocumentLifecycleSchema>;
+export type DashboardDocumentOperationalRole = z.infer<
+  typeof dashboardDocumentOperationalRoleSchema
+>;
+export type DashboardDocumentSummary = z.infer<typeof dashboardDocumentSummarySchema>;
+export type DashboardDocumentCatalogPage = z.infer<typeof dashboardDocumentCatalogPageSchema>;
+export type DashboardDocumentNeighbor = z.infer<typeof dashboardDocumentNeighborSchema>;
+export type DashboardDocumentNeighborhood = z.infer<typeof dashboardDocumentNeighborhoodSchema>;
 export type Actor = {
   kind: "dashboard" | "mcp";
   subject: string;

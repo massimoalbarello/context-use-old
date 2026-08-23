@@ -6,6 +6,7 @@ import {
   KnowledgeExportRepository,
   KnowledgeResetRepository,
   KnowledgeSettingsRepository,
+  PrivateDocumentCatalogRepository,
   type KnowledgeExportAsset,
   type KnowledgeExportSnapshot,
   PageRepository,
@@ -45,6 +46,13 @@ import {
   issueConfirmationOptions,
 } from "./confirmation-client.ts";
 import { dashboardServices } from "./dashboard-services.ts";
+import {
+  dashboardDocumentCatalogPage,
+  dashboardDocumentNeighborhood,
+  dashboardDocumentSummary,
+  parseDashboardDocumentCatalogQuery,
+  parseDashboardDocumentNeighborhoodQuery,
+} from "./dashboard-document-discovery.ts";
 import { bodyJson, json, problem, routeError } from "./http.ts";
 import { publicationWarnings, renderMarkdown } from "./markdown.ts";
 import { pageDelta } from "./page-delta.ts";
@@ -86,6 +94,7 @@ const publications = new PublicationRepository(dashboardPool);
 const publicEntrypoint = new PublicEntrypointRepository(dashboardPool);
 const knowledgeExports = new KnowledgeExportRepository(dashboardPool, markdownObjects);
 const knowledgeResets = new KnowledgeResetRepository(dashboardPool, markdownObjects);
+const dashboardDocumentCatalog = new PrivateDocumentCatalogRepository(dashboardPool);
 
 async function reconcileDashboardKnowledgeTemplate(input: {
   templateName: string;
@@ -681,6 +690,31 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
       return json(await dashboardPages.searchMetadata(query.q, { includeArchived, excludeGuides: true }));
     }
     return json(await dashboardPages.listMetadata(includeArchived, true));
+  })
+  .get("/api/dashboard/documents", async ({ request, query }) => {
+    await ownerRequest(request);
+    const parsed = parseDashboardDocumentCatalogQuery(query);
+    const page = parsed.query
+      ? await dashboardDocumentCatalog.search(parsed.query, parsed.options)
+      : await dashboardDocumentCatalog.list(parsed.options);
+    return json(dashboardDocumentCatalogPage(page));
+  })
+  .get("/api/dashboard/documents/:id", async ({ request, params }) => {
+    await ownerRequest(request);
+    const document = await dashboardDocumentCatalog.get(z.string().uuid().parse(params.id));
+    return document
+      ? json(dashboardDocumentSummary(document))
+      : problem("Document not found", 404, "not_found");
+  })
+  .get("/api/dashboard/documents/:id/neighborhood", async ({ request, params, query }) => {
+    await ownerRequest(request);
+    const neighborhood = await dashboardDocumentCatalog.neighborhood(
+      z.string().uuid().parse(params.id),
+      parseDashboardDocumentNeighborhoodQuery(query),
+    );
+    return neighborhood
+      ? json(dashboardDocumentNeighborhood(neighborhood))
+      : problem("Document not found", 404, "not_found");
   })
   .get("/api/dashboard/knowledge-changes", async ({ request, query }) => {
     await ownerRequest(request);
