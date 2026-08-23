@@ -251,23 +251,42 @@ docker compose --env-file "${secrets}/runtime.env" stop \
 docker compose --env-file "${secrets}/runtime.env" stop \
   nango-auth-gateway nango-public-gateway oauth2-proxy nango-sso-redis \
   nango-jobs nango-backup nango-server nango-persist nango-orchestrator nango-redis
-docker compose --env-file "${secrets}/runtime.env" --profile migration run --rm migrate
+if [ -n "${CONTEXT_USE_RECOVERY_BACKUP_KEY}" ]; then
+  # The backup was created without owners. Retain this release's exact
+  # least-privilege routine/view ownership contract outside pg_dump before the
+  # restore, then the explicit post-restore reconciliation pass consumes it.
+  docker compose --env-file "${secrets}/runtime.env" --profile migration run --rm \
+    -e MIGRATOR_PREPARE_RESTORE_OWNERSHIP=true migrate
+else
+  docker compose --env-file "${secrets}/runtime.env" --profile migration run --rm migrate
+fi
 if [ -n "${CONTEXT_USE_RECOVERY_BACKUP_KEY}" ]; then
   export PGPASSWORD="$(get_secret POSTGRES_PASSWORD)"
   docker compose --env-file "${secrets}/runtime.env" up -d postgres aws-credential-broker
   # Historical dumps contain grants to this retired role. Recreate it without
   # login authority only for the stopped restore, then let the cleanup
   # migration remove it before any application service starts.
+  ensure_restore_compatibility_role() {
+    docker compose --env-file "${secrets}/runtime.env" exec -T -e PGPASSWORD postgres \
+      psql -X -v ON_ERROR_STOP=1 -U postgres -d context_use \
+      -c "DO \$compatibility\$ BEGIN IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname='context_use_public_mcp') THEN IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles AS role WHERE role.rolname='context_use_public_mcp' AND (role.rolsuper OR role.rolinherit OR role.rolcreaterole OR role.rolcreatedb OR role.rolcanlogin OR role.rolreplication OR role.rolbypassrls OR role.rolconfig IS NOT NULL OR EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members AS membership WHERE membership.roleid=role.oid OR membership.member=role.oid) OR EXISTS (SELECT 1 FROM pg_catalog.pg_shdepend AS dependency WHERE dependency.refclassid='pg_catalog.pg_authid'::pg_catalog.regclass AND dependency.refobjid=role.oid AND NOT (dependency.deptype='o' AND dependency.classid='pg_catalog.pg_default_acl'::pg_catalog.regclass AND dependency.dbid=(SELECT database.oid FROM pg_catalog.pg_database AS database WHERE database.datname=pg_catalog.current_database())) AND NOT (dependency.deptype='a' AND dependency.dbid=(SELECT database.oid FROM pg_catalog.pg_database AS database WHERE database.datname=pg_catalog.current_database()))))) THEN RAISE EXCEPTION 'Existing context_use_public_mcp role is not an isolated NOLOGIN compatibility role'; END IF; ELSE CREATE ROLE context_use_public_mcp NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; END IF; END \$compatibility\$"
+  }
+  ensure_restore_compatibility_role
+  # The deferred temporary guard makes an absent/truncated upstream stream fail
+  # at COMMIT, so the clean-room reset rolls back if fetch or gunzip fails.
+  {
+    docker compose --env-file "${secrets}/runtime.env" run --rm -T backup fetch "${CONTEXT_USE_RECOVERY_BACKUP_KEY}" \
+      | gunzip &&
+      printf '%s\n' 'INSERT INTO pg_temp.context_use_restore_guard SELECT true FROM pg_temp.context_use_restore_contract_snapshot AS captured WHERE captured.fingerprint=context_use_deployment_internal.restore_contract_fingerprint();'
+  } | docker compose --env-file "${secrets}/runtime.env" exec -T -e PGPASSWORD postgres \
+    psql -X --single-transaction -v ON_ERROR_STOP=1 -U postgres -d context_use \
+    -c 'CREATE TEMP TABLE context_use_restore_contract_snapshot AS SELECT context_use_deployment_internal.restore_contract_fingerprint() AS fingerprint; SELECT context_use_deployment_internal.reset_default_acls_for_restore(); CREATE TEMP TABLE context_use_restore_guard(complete boolean PRIMARY KEY); CREATE TEMP TABLE context_use_restore_guard_required(complete boolean NOT NULL REFERENCES context_use_restore_guard(complete) DEFERRABLE INITIALLY DEFERRED); INSERT INTO context_use_restore_guard_required VALUES (true); DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION pg_database_owner; GRANT USAGE ON SCHEMA public TO PUBLIC' -f -
+  docker compose --env-file "${secrets}/runtime.env" --profile migration run --rm \
+    -e MIGRATOR_RECONCILE_RESTORE_OWNERSHIP=true migrate
+  ensure_restore_compatibility_role
   docker compose --env-file "${secrets}/runtime.env" exec -T -e PGPASSWORD postgres \
-    psql -v ON_ERROR_STOP=1 -U postgres -d context_use \
-    -c 'DROP ROLE IF EXISTS context_use_public_mcp; CREATE ROLE context_use_public_mcp NOLOGIN'
-  docker compose --env-file "${secrets}/runtime.env" run --rm -T backup fetch "${CONTEXT_USE_RECOVERY_BACKUP_KEY}" \
-    | gunzip \
-    | docker compose --env-file "${secrets}/runtime.env" exec -T -e PGPASSWORD postgres psql --single-transaction -v ON_ERROR_STOP=1 -U postgres -d context_use
-  docker compose --env-file "${secrets}/runtime.env" --profile migration run --rm migrate
-  docker compose --env-file "${secrets}/runtime.env" exec -T -e PGPASSWORD postgres \
-    psql -v ON_ERROR_STOP=1 -U postgres -d context_use \
-    -c 'DROP ROLE IF EXISTS context_use_public_mcp'
+    psql -X -v ON_ERROR_STOP=1 -U postgres -d context_use \
+    -c 'DROP OWNED BY context_use_public_mcp; DROP ROLE IF EXISTS context_use_public_mcp'
 fi
 # The primary Context Use edge is independent from Nango. Bring it back after
 # its own migration/restore so a later Nango failure cannot leave the main

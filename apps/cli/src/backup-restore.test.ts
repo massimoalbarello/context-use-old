@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { databaseBackupCommands, releaseIncludesNango } from "./commands/backup.ts";
 import { nangoRestoreCommands } from "./commands/nango/restore.ts";
+import { restoreCommands } from "./commands/restore.ts";
 
 test("manual backup creates both database backups and requires Nango support", () => {
   const script = databaseBackupCommands(true).join("\n");
@@ -83,4 +84,43 @@ test("Nango restore accepts only its own verified backup namespace", () => {
     .toThrow("Invalid Nango backup key");
   expect(() => nangoRestoreCommands("backups'; false", "nango-postgres/2026-07-30T12-34-56Z.sql.gz"))
     .toThrow("Invalid backup bucket");
+});
+
+test("Context Use restore captures and reconciles privileged object ownership around the dump", () => {
+  const script = restoreCommands("backups", "postgres/2026-07-30T12-34-56Z.sql.gz").join("\n");
+  const stopBackup = "stop backup";
+  const pendingCheck = "to_regnamespace('context_use_deployment_internal') IS NOT NULL";
+  const safetyBackup = "run --rm backup once";
+  const stop = "stop caddy dashboard-edge app auth private-mcp public-web confirmation storage";
+  const capture = "--profile migration run --rm -e MIGRATOR_PREPARE_RESTORE_OWNERSHIP=true migrate";
+  const restore = "backup fetch 'postgres/2026-07-30T12-34-56Z.sql.gz'";
+  const reconcile = "--profile migration run --rm -e MIGRATOR_RECONCILE_RESTORE_OWNERSHIP=true migrate";
+
+  expect(script.indexOf(stopBackup)).toBeLessThan(script.indexOf(pendingCheck));
+  expect(script.indexOf(pendingCheck)).toBeLessThan(script.indexOf(safetyBackup));
+  expect(script.indexOf(safetyBackup)).toBeLessThan(script.indexOf(stop));
+  expect(script.indexOf(stop)).toBeLessThan(script.indexOf(capture));
+  expect(script.indexOf(capture)).toBeLessThan(script.indexOf(restore));
+  expect(script.indexOf(restore)).toBeLessThan(script.indexOf(reconcile));
+  expect(script).toContain("DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION pg_database_owner");
+  expect(script).toContain("GRANT USAGE ON SCHEMA public TO PUBLIC");
+  expect(script).toContain("context_use_restore_guard_required");
+  expect(script).toContain("restore_contract_fingerprint()");
+  expect(script).toContain("reset_default_acls_for_restore()");
+  expect(script).toContain("captured.fingerprint=context_use_deployment_internal.restore_contract_fingerprint()");
+  expect(script).toContain("psql -X -v ON_ERROR_STOP=1");
+  expect(script).toContain("--single-transaction");
+  expect(script).toContain("-f -");
+  expect(script).toContain(reconcile);
+  expect(script).toContain("CREATE ROLE context_use_public_mcp NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS");
+  expect(script).toContain("Existing context_use_public_mcp role is not an isolated NOLOGIN compatibility role");
+  expect(script).toContain("dependency.dbid=(SELECT database.oid");
+  // The same two-clause validator runs both before restore and immediately
+  // before successful cleanup.
+  expect(script.match(/dependency\.dbid=\(SELECT database\.oid/g)).toHaveLength(4);
+  expect(script).toContain("DROP OWNED BY context_use_public_mcp; DROP ROLE IF EXISTS context_use_public_mcp");
+  expect(script).not.toContain("DROP ROLE IF EXISTS context_use_public_mcp; CREATE ROLE");
+  const failureHandler = script.slice(script.indexOf("restore_failed()"), script.indexOf("trap restore_failed EXIT"));
+  expect(failureHandler).toContain("up -d postgres aws-credential-broker");
+  expect(failureHandler).not.toContain("aws-credential-broker backup");
 });
