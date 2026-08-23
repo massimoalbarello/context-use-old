@@ -137,6 +137,60 @@ export const publicationIntentSchema = z
     }
   });
 
+const pathlessPagePublishIntentSchema = z.object({
+  action: z.literal("publish"),
+  target_kind: z.literal("page"),
+  target_document_id: UUID,
+  expected_revision_id: UUID,
+}).strict();
+
+const pathlessPageUnpublishIntentSchema = z.object({
+  action: z.literal("unpublish"),
+  target_kind: z.literal("page"),
+  target_document_id: UUID,
+}).strict();
+
+const pathlessAssetPublishIntentSchema = z.object({
+  action: z.literal("publish"),
+  target_kind: z.literal("asset"),
+  target_document_id: UUID,
+}).strict();
+
+const pathlessAssetUnpublishIntentSchema = z.object({
+  action: z.literal("unpublish"),
+  target_kind: z.literal("asset"),
+  target_document_id: UUID,
+}).strict();
+
+/** Four exact variants keep page revision approval distinct from asset publication. */
+export const pathlessPublicationIntentSchema = z.union([
+  pathlessPagePublishIntentSchema,
+  pathlessPageUnpublishIntentSchema,
+  pathlessAssetPublishIntentSchema,
+  pathlessAssetUnpublishIntentSchema,
+]);
+
+export const pathlessPublicationEntrypointSchema = z.object({
+  public_id: UUID.nullable(),
+}).strict();
+
+function isPathlessPublicRoute(value: string): boolean {
+  if (value === "/p/") return true;
+  if (value.startsWith("/a/")) return AssetPath.safeParse(value.slice(3)).success;
+  if (!value.startsWith("/p/")) return false;
+
+  const suffix = value.slice(3);
+  if (suffix.endsWith("/")) return KnowledgePath.safeParse(suffix.slice(0, -1)).success;
+  if (suffix.endsWith(".md")) return PagePath.safeParse(suffix.slice(0, -3)).success;
+  return PagePath.safeParse(suffix).success;
+}
+
+/** Exact canonical and grandfathered-alias routes accepted by the public resolver. */
+export const pathlessPublicRouteSchema = z.string().refine(
+  isPathlessPublicRoute,
+  "Use an exact /p/, /p/<path>, /p/<path>.md, or /a/<path> public route",
+);
+
 const AssetFilename = z.string().trim().min(1).max(1024);
 const DocumentAssetFilename = AssetFilename.refine(
   (value) => value !== "." && value !== ".." && !/[\\/\u0000-\u001f\u007f]/.test(value),
@@ -146,6 +200,75 @@ const DocumentAssetContentType = z.string().trim().min(1).max(255).refine(
   (value) => !/[\r\n\u0000]/.test(value),
   "Content type cannot contain control characters",
 );
+
+const Hex64 = z.string().regex(/^[a-f0-9]{64}$/);
+const CanonicalNonnegativeDecimal = z.string().max(1024).regex(
+  /^(?:0|[1-9]\d*)(?:\.\d+)?$/,
+  "Use a canonical nonnegative decimal string",
+);
+const CanonicalLowercaseUUID = UUID.refine(
+  (value) => value === value.toLowerCase(),
+  "Use canonical lowercase UUIDs",
+);
+const CanonicalPublicUUIDArray = z.array(CanonicalLowercaseUUID).max(100_000).superRefine(
+  (values, context) => {
+    for (let index = 1; index < values.length; index += 1) {
+      if (values[index - 1]! >= values[index]!) {
+        context.addIssue({
+          code: "custom",
+          path: [index],
+          message: "Public UUIDs must be unique and sorted in canonical lowercase order",
+        });
+      }
+    }
+  },
+);
+
+const pathlessPagePublicationArtifactReceiptSchema = z.object({
+  intent_id: UUID,
+  target_kind: z.literal("page"),
+  body_size_bytes: z.number().int().min(0).max(4_000_000),
+  body_content_hash: Hex64,
+  public_title: z.string().trim().min(1).max(240),
+  public_summary: KnowledgeSummary,
+  public_last_edited_at: z.iso.datetime({ offset: true }),
+  projected_target_public_ids: CanonicalPublicUUIDArray,
+  observed_public_uuid_tokens: CanonicalPublicUUIDArray,
+  projection_receipt_hash: Hex64,
+}).strict().superRefine((value, context) => {
+  if (
+    value.projected_target_public_ids.length !== value.observed_public_uuid_tokens.length
+    || value.projected_target_public_ids.some((publicId, index) => (
+      publicId !== value.observed_public_uuid_tokens[index]
+    ))
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["observed_public_uuid_tokens"],
+      message: "Observed public UUID tokens must exactly match the projected public UUID set",
+    });
+  }
+});
+
+const pathlessAssetPublicationArtifactReceiptSchema = z.object({
+  intent_id: UUID,
+  target_kind: z.literal("asset"),
+  body_size_bytes: z.number().int().min(0).max(5_000_000_000),
+  body_content_hash: Hex64,
+  public_filename: DocumentAssetFilename,
+  public_content_type: DocumentAssetContentType,
+  public_width: z.number().int().positive().nullish(),
+  public_height: z.number().int().positive().nullish(),
+  // PostgreSQL `numeric` may be more precise than a JavaScript number. The
+  // storage receipt carries its exact database text so staging can compare it
+  // without rounding.
+  public_duration_seconds: CanonicalNonnegativeDecimal.nullish(),
+}).strict();
+
+export const pathlessPublicationArtifactReceiptSchema = z.discriminatedUnion("target_kind", [
+  pathlessPagePublicationArtifactReceiptSchema,
+  pathlessAssetPublicationArtifactReceiptSchema,
+]);
 
 export const assetUploadSchema = z.object({
   path: AssetPath,
@@ -194,6 +317,14 @@ export type UpdateDirectoryInput = z.infer<typeof updateDirectorySchema>;
 export type DeleteDirectoryInput = z.infer<typeof deleteDirectorySchema>;
 export type ArchivePageInput = z.infer<typeof archivePageSchema>;
 export type PublicationIntentInput = z.infer<typeof publicationIntentSchema>;
+export type PathlessPublicationIntentInput = z.infer<typeof pathlessPublicationIntentSchema>;
+export type PathlessPublicationArtifactReceipt = z.infer<
+  typeof pathlessPublicationArtifactReceiptSchema
+>;
+export type PathlessPublicationEntrypointInput = z.infer<
+  typeof pathlessPublicationEntrypointSchema
+>;
+export type PathlessPublicRouteInput = z.infer<typeof pathlessPublicRouteSchema>;
 export type AssetUploadInput = z.infer<typeof assetUploadSchema>;
 export type ArchiveAssetInput = z.infer<typeof archiveAssetSchema>;
 export type CreateKnowledgeDocumentInput = z.infer<typeof createKnowledgeDocumentSchema>;

@@ -98,8 +98,13 @@ async function seedPagePublication(
     `INSERT INTO pathless_publication_adoptions(
        id,adoption_kind,source_document_id,source_revision_id,public_id,
        candidate_artifact_id,candidate_object_key,reservation_allocation_id,
-       source_snapshot,source_fingerprint,phase,applied_at
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$1,'{}'::jsonb,$8,'applied',now())`,
+       source_snapshot,source_fingerprint,expected_visibility_generation,
+       expected_visibility_state_hash,expected_target_generation,
+       phase,applied_at
+     ) VALUES (
+       $1,$2,$3,$4,$5,$6,$7,$1,'{}'::jsonb,$8,0,repeat('0',64),1,
+       'applied',now()
+     )`,
     [adoptionId, kind, pageId, revisionId, publicId, artifactId, objectKey, hash("b")],
   );
   if (kind === "directory_hub") {
@@ -197,9 +202,12 @@ async function seedAssetPublication(client: Client): Promise<AssetFixture> {
     `INSERT INTO pathless_publication_adoptions(
        id,adoption_kind,source_document_id,public_id,candidate_artifact_id,
        candidate_object_key,reservation_allocation_id,source_snapshot,
-       source_fingerprint,phase,applied_at
+       source_fingerprint,expected_visibility_generation,
+       expected_visibility_state_hash,expected_target_generation,
+       phase,applied_at
      ) VALUES (
-       $1,'legacy_asset',$2,$3,$4,$5,$1,'{}'::jsonb,$6,'applied',now()
+       $1,'legacy_asset',$2,$3,$4,$5,$1,'{}'::jsonb,$6,0,
+       repeat('0',64),1,'applied',now()
      )`,
     [adoptionId, assetId, publicId, artifactId, objectKey, hash("f")],
   );
@@ -229,9 +237,19 @@ async function removeCommittedPageFixture(client: Client, fixture: PageFixture):
     await client.query("DELETE FROM page_publications WHERE public_id=$1", [fixture.publicId]);
     await client.query("DELETE FROM directory_hub_migrations WHERE document_id=$1", [fixture.pageId]);
     await client.query("DELETE FROM public_page_artifacts WHERE artifact_id=$1", [fixture.artifactId]);
+    await client.query(
+      "DELETE FROM public_representation_token_reservations WHERE artifact_id=$1",
+      [fixture.artifactId],
+    );
     await client.query("DELETE FROM pathless_publication_adoptions WHERE id=$1", [fixture.adoptionId]);
     await client.query("DELETE FROM public_artifact_id_reservations WHERE artifact_id=$1", [fixture.artifactId]);
+    await client.query("DELETE FROM public_visibility_generations WHERE public_id=$1", [fixture.publicId]);
     await client.query("DELETE FROM public_resources WHERE public_id=$1", [fixture.publicId]);
+    await client.query(
+      `DELETE FROM publication_target_generations
+       WHERE target_kind='page' AND target_document_id=$1`,
+      [fixture.pageId],
+    );
     await client.query("DELETE FROM knowledge_page_changes WHERE page_id=$1", [fixture.pageId]);
     await client.query("DELETE FROM knowledge_page_versions WHERE page_id=$1", [fixture.pageId]);
     await client.query("DELETE FROM knowledge_pages WHERE id=$1", [fixture.pageId]);
@@ -394,24 +412,42 @@ describeDatabase("pathless publication lifecycle coexistence", () => {
            id,action,target_kind,target_document_id,expected_revision_id,
            candidate_public_id,candidate_artifact_id,candidate_object_key,
            artifact_allocation_kind,artifact_allocation_id,
-           projection_receipt_hash,owner_user_id,session_id,expires_at
+           projection_receipt_hash,owner_user_id,session_id,expires_at,
+           expected_visibility_generation,expected_visibility_state_hash,
+           expected_target_generation,expected_source_fingerprint
          ) VALUES (
            $1,'publish','page',$2,$3,$4,$5,$6,'pathless_intent',$1,$7,
-           'context-use-owner','projection-receipt-test',now()+interval '5 minutes'
+           'context-use-owner','projection-receipt-test',now()+interval '5 minutes',
+           0,$8,0,$9
          )`,
-        [intentId, documentId, revisionId, publicId, artifactId, objectKey, hash("a")],
+        [
+          intentId,
+          documentId,
+          revisionId,
+          publicId,
+          artifactId,
+          objectKey,
+          hash("a"),
+          hash("f"),
+          hash("e"),
+        ],
+      );
+      const representationToken = token();
+      await client.query(
+        "SELECT reserve_public_representation_token($1,$2,'page')",
+        [representationToken, artifactId],
       );
       expect(await sqlState(client, () => client.query(
         `INSERT INTO pathless_publication_artifact_staging(
            intent_id,target_kind,candidate_public_id,artifact_id,
            body_object_key,body_size_bytes,body_content_hash,public_title,
            public_summary,public_last_edited_at,projection_receipt_hash,
-           allocation_id
+           allocation_id,representation_token
          ) VALUES (
            $1,'page',$2,$3,$4,4,$5,'Public page','A safe public summary.',
-           now(),NULL,$1
+           now(),NULL,$1,$6
          )`,
-        [intentId, publicId, artifactId, objectKey, hash("b")],
+        [intentId, publicId, artifactId, objectKey, hash("b"), representationToken],
       ))).toBe("23514");
     } finally {
       await client.query("ROLLBACK");
@@ -476,9 +512,12 @@ describeDatabase("pathless publication lifecycle coexistence", () => {
         `INSERT INTO pathless_publication_adoptions(
            id,adoption_kind,source_document_id,source_revision_id,public_id,
            candidate_artifact_id,candidate_object_key,reservation_allocation_id,
-           source_snapshot,source_fingerprint,phase,applied_at
+           source_snapshot,source_fingerprint,expected_visibility_generation,
+           expected_visibility_state_hash,expected_target_generation,
+           phase,applied_at
          ) VALUES (
-           $1,'legacy_page',$2,$3,$4,$5,$6,$1,'{}'::jsonb,$7,'applied',now()
+           $1,'legacy_page',$2,$3,$4,$5,$6,$1,'{}'::jsonb,$7,0,
+           repeat('0',64),1,'applied',now()
          )`,
         [
           pageAdoptionId,
@@ -545,9 +584,12 @@ describeDatabase("pathless publication lifecycle coexistence", () => {
         `INSERT INTO pathless_publication_adoptions(
            id,adoption_kind,source_document_id,public_id,candidate_artifact_id,
            candidate_object_key,reservation_allocation_id,source_snapshot,
-           source_fingerprint,phase,applied_at
+           source_fingerprint,expected_visibility_generation,
+           expected_visibility_state_hash,expected_target_generation,
+           phase,applied_at
          ) VALUES (
-           $1,'legacy_asset',$2,$3,$4,$5,$1,'{}'::jsonb,$6,'applied',now()
+           $1,'legacy_asset',$2,$3,$4,$5,$1,'{}'::jsonb,$6,0,
+           repeat('0',64),1,'applied',now()
          )`,
         [assetAdoptionId, otherAssetId, asset.publicId, assetArtifactId, assetObjectKey, token()],
       );
