@@ -66,13 +66,6 @@ describeApplication("HTTP credential and OAuth boundary", () => {
   });
 
   test("bearer credentials are rejected by publication APIs", async () => {
-    const response = await application!.handle(new Request("http://localhost:3000/api/dashboard/publication-intents", {
-      method: "POST",
-      headers: { authorization: "Bearer forged", "content-type": "application/json" },
-      body: "{}",
-    }));
-    expect(response.status).toBe(401);
-
     const confirm = await application!.handle(new Request("http://localhost:3000/api/dashboard/publications/confirm", {
       method: "POST",
       headers: { authorization: "Bearer forged", "content-type": "application/json" },
@@ -94,6 +87,25 @@ describeApplication("HTTP credential and OAuth boundary", () => {
         ...(method === "POST" || method === "PUT" ? { body: "{}" } : {}),
       }));
       expect(pathless.status).toBe(401);
+    }
+  });
+
+  test("legacy filesystem-shaped dashboard APIs are not registered", async () => {
+    for (const [path, method] of [
+      ["/api/dashboard/pages", "GET"],
+      ["/api/dashboard/pages/11111111-1111-4111-8111-111111111111", "GET"],
+      ["/api/dashboard/directories", "GET"],
+      ["/api/dashboard/directories/11111111-1111-4111-8111-111111111111", "GET"],
+      ["/api/dashboard/public-entrypoint", "GET"],
+      ["/api/dashboard/publication-intents", "POST"],
+      ["/api/dashboard/assets/upload-intent", "POST"],
+    ] as const) {
+      const response = await application!.handle(new Request(`http://localhost:3000${path}`, {
+        method,
+        headers: { "content-type": "application/json" },
+        ...(method === "POST" ? { body: "{}" } : {}),
+      }));
+      expect(response.status).toBe(404);
     }
   });
 
@@ -123,7 +135,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
 
   test("bearer credentials cannot create or confirm permanent page deletions", async () => {
     const intent = await application!.handle(new Request(
-      "http://localhost:3000/api/dashboard/pages/11111111-1111-4111-8111-111111111111/deletion-intents",
+      "http://localhost:3000/api/dashboard/knowledge-documents/11111111-1111-4111-8111-111111111111/deletion-intents",
       {
         method: "POST",
         headers: { authorization: "Bearer forged", "content-type": "application/json" },
@@ -204,7 +216,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           method: "GET",
-          pathname: "/api/dashboard/pages",
+          pathname: "/api/dashboard/documents",
           kind: "read",
           headers: {},
         }),
@@ -277,7 +289,6 @@ describeApplication("HTTP credential and OAuth boundary", () => {
 
   test("private asset access requires a dashboard session on the dashboard origin", async () => {
     for (const path of [
-      "/api/dashboard/pages",
       "/api/dashboard/documents",
       "/api/dashboard/documents/11111111-1111-4111-8111-111111111111",
       "/api/dashboard/documents/11111111-1111-4111-8111-111111111111/neighborhood",
