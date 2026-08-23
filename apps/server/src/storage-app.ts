@@ -33,12 +33,13 @@ import { projectPathlessPublicMarkdown } from "./pathless-public-markdown.ts";
 const objectKeySchema = z.string().regex(/^objects\/[a-f0-9-]{36}$/);
 const privateDocumentKeySchema = z.string().regex(/^documents\/private\/[a-f0-9-]{36}\.md$/);
 const publicDocumentKeySchema = z.string().regex(/^documents\/public\/[a-f0-9-]{36}\.md$/);
+const publicAssetArtifactKeySchema = z.string().regex(/^artifacts\/public\/[a-f0-9-]{36}$/);
 const generatedObjectKeySchema = z.string().regex(/^exports\/[a-f0-9-]{36}\.zip$/);
 const verificationSchema = z.object({
   // Public projection artifacts are verify-only through this privileged
   // integrity endpoint. Accepting their exact key shape here does not expose
   // either the private or public read routes to the dashboard caller.
-  object_key: z.union([objectKeySchema, publicDocumentKeySchema]),
+  object_key: z.union([objectKeySchema, publicDocumentKeySchema, publicAssetArtifactKeySchema]),
   size_bytes: z.number().int().nonnegative().max(5_000_000_000),
   content_hash: z.string().regex(/^[a-f0-9]{64}$/),
 }).strict();
@@ -171,7 +172,8 @@ async function generatedObjectResponse(
 }
 
 type PathlessPublicationClaims = Pick<PathlessStoragePublicationRepository,
-  "claimIntent" | "finalizeIntent" | "claimAdoption" | "finalizeAdoption">;
+  "claimIntent" | "finalizeIntent" | "claimAdoption" | "finalizeAdoption">
+  & Partial<Pick<PathlessStoragePublicationRepository, "resolve">>;
 
 function exactNumber(value: number | string, maximum: number): number {
   const result = Number(value);
@@ -538,6 +540,43 @@ export function createStorageBrokerApp(input: {
       publicDocumentKeySchema.parse(page.body_object_key),
       parseRange(request.headers.get("range")),
     );
+  })
+  .head("/public/representation", async ({ request, query }) => {
+    if (!publicAuthorized(request, tokens) || !pathlessPublications?.resolve) return denied();
+    const { token: representationToken } = z.object({
+      token: z.string().regex(/^[a-f0-9]{64}$/),
+    }).strict().parse(query);
+    const route = await pathlessPublications.resolve(representationToken);
+    if (!route || route.representation_token !== representationToken) return denied();
+    const sizeBytes = exactNumber(route.body_size_bytes, 5_000_000_000);
+    const objectKey = route.resource_kind === "page"
+      ? publicDocumentKeySchema.parse(route.body_object_key)
+      : publicAssetArtifactKeySchema.parse(route.body_object_key);
+    if (!await storage.verify(objectKey, sizeBytes, route.body_content_hash)) return denied();
+    return new Response(null, {
+      headers: {
+        "cache-control": "no-store",
+        "content-length": String(sizeBytes),
+        "x-content-sha256": route.body_content_hash,
+      },
+    });
+  })
+  .get("/public/representation", async ({ request, query }) => {
+    if (!publicAuthorized(request, tokens) || !pathlessPublications?.resolve) return denied();
+    const { token: representationToken } = z.object({
+      token: z.string().regex(/^[a-f0-9]{64}$/),
+    }).strict().parse(query);
+    const route = await pathlessPublications.resolve(representationToken);
+    if (!route || route.representation_token !== representationToken) return denied();
+    const sizeBytes = exactNumber(route.body_size_bytes, 5_000_000_000);
+    const objectKey = route.resource_kind === "page"
+      ? publicDocumentKeySchema.parse(route.body_object_key)
+      : publicAssetArtifactKeySchema.parse(route.body_object_key);
+    if (!await storage.verify(objectKey, sizeBytes, route.body_content_hash)) return denied();
+    const range = parseRange(request.headers.get("range"));
+    if (request.headers.has("range") && !range) return denied();
+    if (range && (range.start >= sizeBytes || range.end >= sizeBytes)) return denied();
+    return readObject(storage, objectKey, range);
   });
 }
 

@@ -34,6 +34,7 @@ type PublicDocumentMetadata = {
   canonicalPath?: string | undefined;
   profileLinks?: string[] | undefined;
   entrypointPublicPath?: string | null | undefined;
+  pathless?: boolean | undefined;
 };
 
 function normalizedOrigin(value: string): string {
@@ -172,6 +173,10 @@ function renderKnowledgeNavigation(currentPath: string, currentLabel: string): s
   return `<nav class="knowledge-navigation" aria-label="Breadcrumb"><ol><li><a href="/">Home</a></li>${knowledge}${ancestors}<li aria-current="page"><span class="breadcrumb-separator" aria-hidden="true">/</span>${escapeHtml(currentLabel)}</li></ol></nav>`;
 }
 
+function renderPathlessNavigation(currentLabel: string): string {
+  return `<nav class="knowledge-navigation" aria-label="Breadcrumb"><ol><li><a href="/">Home</a></li><li aria-current="page"><span class="breadcrumb-separator" aria-hidden="true">/</span>${escapeHtml(currentLabel)}</li></ol></nav>`;
+}
+
 function renderLastEdited(lastEditedAt?: string | Date): string {
   if (lastEditedAt === undefined) return "";
   const date = new Date(lastEditedAt);
@@ -203,7 +208,11 @@ export function renderPublicPageDocument(
   lastEditedAt?: string | Date,
   metadata: PublicDocumentMetadata = {},
 ): string {
-  const navigation = publicPath === undefined ? "" : renderKnowledgeNavigation(publicPath, title);
+  const navigation = publicPath === undefined
+    ? ""
+    : metadata.pathless
+      ? renderPathlessNavigation(title)
+      : renderKnowledgeNavigation(publicPath, title);
   const markdownAlternate = publicPath === undefined
     ? ""
     : `<link rel="alternate" type="text/markdown" href="/p/${escapeHtml(publicPath)}.md" title="${escapeHtml(title)} as Markdown">`;

@@ -73,6 +73,29 @@ describe("public page presentation", () => {
     expect(rootPage.match(/href="\/p\/notes\.md"/g)).toHaveLength(2);
   });
 
+  test("uses hyperlink-first navigation for pathless public pages", () => {
+    const publicId = "11111111-1111-4111-8111-111111111111";
+    const html = renderPublicPageDocument(
+      "Opaque public page",
+      "<p>Follow the links in this page.</p>",
+      publicId,
+      "2026-08-23T12:00:00Z",
+      {
+        siteOrigin: "https://massimo.example",
+        summary: "A pathless public page.",
+        canonicalPath: `/p/${publicId}`,
+        entrypointPublicPath: null,
+        pathless: true,
+      },
+    );
+
+    expect(html).toContain('<nav class="knowledge-navigation" aria-label="Breadcrumb"><ol><li><a href="/">Home</a></li>');
+    expect(html).not.toContain('<a href="/p/">Knowledge</a>');
+    expect(html).not.toContain("11111111</a>");
+    expect(html).toContain(`href="/p/${publicId}.md"`);
+    expect(html).toContain(`rel="canonical" href="https://massimo.example/p/${publicId}"`);
+  });
+
   test("shows the published version edit date after the page content", () => {
     const html = renderPublicPageDocument(
       "Public notes",

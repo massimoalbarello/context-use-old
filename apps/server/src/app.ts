@@ -12,6 +12,8 @@ import {
   type KnowledgeExportSnapshot,
   PageRepository,
   PageDeletionRepository,
+  PathlessPublicationRepository,
+  PathlessPublicEntrypointRepository,
   PublicationRepository,
   PublicEntrypointRepository,
   SourceRecordRepository,
@@ -34,6 +36,8 @@ import {
   createPageSchema,
   deleteDirectorySchema,
   publicationIntentSchema,
+  pathlessPublicationEntrypointSchema,
+  pathlessPublicationIntentSchema,
   updateDirectorySchema,
   updateKnowledgeDocumentSchema,
   updatePageSchema,
@@ -101,7 +105,9 @@ const pageDeletions = new PageDeletionRepository(dashboardPool);
 const dashboardAssets = new AssetRepository(dashboardPool);
 const dashboardRecords = new SourceRecordRepository(dashboardPool, markdownObjects);
 const publications = new PublicationRepository(dashboardPool);
+const pathlessPublications = new PathlessPublicationRepository(dashboardPool);
 const publicEntrypoint = new PublicEntrypointRepository(dashboardPool);
+const pathlessPublicEntrypoint = new PathlessPublicEntrypointRepository(dashboardPool);
 const knowledgeExports = new KnowledgeExportRepository(dashboardPool, markdownObjects);
 const knowledgeResets = new KnowledgeResetRepository(dashboardPool, markdownObjects);
 const dashboardDocumentCatalog = new PrivateDocumentCatalogRepository(dashboardPool);
@@ -1173,6 +1179,45 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     }, publicPath);
     const authenticationOptions = await issueConfirmationOptions("publication", intent.id);
     return json({ intent, authentication_options: authenticationOptions }, 201);
+  })
+
+  .post("/api/dashboard/pathless-publication-intents", async ({ request }) => {
+    const principal = await ownerRequest(request, true);
+    const input = pathlessPublicationIntentSchema.parse(await bodyJson(request));
+    const suppliedIntentId = request.headers.get("x-publication-intent-id");
+    const intentId = suppliedIntentId === null
+      ? undefined
+      : z.string().uuid().parse(suppliedIntentId);
+    const intent = await pathlessPublications.begin(input, {
+      ownerUserId: principal.userId,
+      sessionId: principal.sessionId,
+    }, intentId);
+    if (intent.action === "publish") {
+      await storage.materializePublicationArtifact("pathless_intent", intent.id);
+    }
+    const authenticationOptions = await issueConfirmationOptions("publication", intent.id);
+    return json({ intent, authentication_options: authenticationOptions }, 201);
+  })
+  .delete("/api/dashboard/pathless-publication-intents/:id", async ({ request, params }) => {
+    const principal = await ownerRequest(request, true);
+    await pathlessPublications.cancel(z.string().uuid().parse(params.id), {
+      ownerUserId: principal.userId,
+      sessionId: principal.sessionId,
+    });
+    return json({ cancelled: true });
+  })
+  .get("/api/dashboard/pathless-publication-entrypoint", async ({ request }) => {
+    await ownerRequest(request);
+    return json({ entrypoint: await pathlessPublicEntrypoint.get() });
+  })
+  .get("/api/dashboard/pathless-publication-entrypoint/candidates", async ({ request }) => {
+    await ownerRequest(request);
+    return json({ candidates: await pathlessPublicEntrypoint.candidates() });
+  })
+  .put("/api/dashboard/pathless-publication-entrypoint", async ({ request }) => {
+    await ownerRequest(request, true);
+    const input = pathlessPublicationEntrypointSchema.parse(await bodyJson(request));
+    return json({ entrypoint: await pathlessPublicEntrypoint.set(input) });
   });
 
 if (production) {

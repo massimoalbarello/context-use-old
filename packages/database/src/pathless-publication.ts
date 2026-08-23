@@ -383,7 +383,7 @@ export class PathlessPublicationRepository {
   async begin(
     input: PathlessPublicationIntentInput,
     principal: PathlessPublicationPrincipal,
-    intentId = randomUUID(),
+    intentId: string = randomUUID(),
   ): Promise<PathlessPublicationIntent> {
     const result = await this.dashboardPool.query<PathlessPublicationIntent>(
       `SELECT id,action,target_kind,target_document_id,expected_revision_id,
@@ -419,7 +419,7 @@ export class PathlessPublicationAdoptionRepository {
   async begin(
     adoptionKind: PathlessPublicationAdoptionKind,
     sourceDocumentId: string,
-    adoptionId = randomUUID(),
+    adoptionId: string = randomUUID(),
   ): Promise<PathlessPublicationAdoption> {
     const result = await this.corpusPool.query<PathlessPublicationAdoption>(
       `SELECT id,adoption_kind,source_document_id,source_revision_id,public_id,
