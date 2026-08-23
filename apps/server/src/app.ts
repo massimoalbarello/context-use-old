@@ -14,13 +14,8 @@ import {
   PageDeletionRepository,
   PathlessPublicationRepository,
   PathlessPublicEntrypointRepository,
-  PublicationRepository,
-  PublicEntrypointRepository,
-  SourceRecordRepository,
   createPool,
   extractDocumentLinks,
-  extractDirectoryLinks,
-  extractWikiLinks,
   knowledgeTemplateBaseline,
   knowledgeTemplateMigrationContract,
   mapConcurrently,
@@ -30,19 +25,11 @@ import {
 import {
   KNOWLEDGE_PREPARATION_ACTION,
   KNOWLEDGE_PREPARATION_SCOPE,
-  assetUploadSchema,
   archiveKnowledgeDocumentSchema,
-  archivePageSchema,
   createKnowledgeDocumentSchema,
-  createDirectorySchema,
-  createPageSchema,
-  deleteDirectorySchema,
-  publicationIntentSchema,
   pathlessPublicationEntrypointSchema,
   pathlessPublicationIntentSchema,
-  updateDirectorySchema,
   updateKnowledgeDocumentSchema,
-  updatePageSchema,
 } from "@context-use/shared";
 import { Elysia } from "elysia";
 import { z } from "zod";
@@ -71,9 +58,6 @@ import {
 } from "./dashboard-knowledge-documents.ts";
 import { bodyJson, json, problem, routeError } from "./http.ts";
 import { publicationWarnings, renderMarkdown } from "./markdown.ts";
-import { pageDelta } from "./page-delta.ts";
-import { republicationReview } from "./republication-review.ts";
-import { publicationDocumentReferences } from "./publication-document-references.ts";
 import {
   SecurityError,
   requestMatchesOrigin,
@@ -106,21 +90,28 @@ const dashboardKnowledgeSettings = new KnowledgeSettingsRepository(dashboardPool
 const dashboardAutomationRegistry = new AutomationRegistryRepository(dashboardPool);
 const pageDeletions = new PageDeletionRepository(dashboardPool);
 const dashboardAssets = new AssetRepository(dashboardPool);
-const dashboardRecords = new SourceRecordRepository(dashboardPool, markdownObjects);
-const publications = new PublicationRepository(dashboardPool);
 const pathlessPublications = new PathlessPublicationRepository(dashboardPool);
-const publicEntrypoint = new PublicEntrypointRepository(dashboardPool);
 const pathlessPublicEntrypoint = new PathlessPublicEntrypointRepository(dashboardPool);
 const knowledgeExports = new KnowledgeExportRepository(dashboardPool, markdownObjects);
 const knowledgeResets = new KnowledgeResetRepository(dashboardPool, markdownObjects);
 const dashboardDocumentCatalog = new PrivateDocumentCatalogRepository(dashboardPool);
 
-async function dashboardAssetPublication<T extends { id: string; public_path: string | null }>(
-  asset: T,
-) {
+async function dashboardAssetPublication(asset: {
+  id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: string | number;
+  content_hash: string;
+  created_at: Date | string;
+}) {
   const status = await pathlessPublications.status("asset", asset.id);
   return {
-    ...asset,
+    id: asset.id,
+    filename: asset.filename,
+    content_type: asset.content_type,
+    size_bytes: Number(asset.size_bytes),
+    content_hash: asset.content_hash,
+    created_at: asset.created_at,
     public_id: status.public_id,
     pathless_published: status.active,
   };
@@ -237,68 +228,8 @@ async function dashboardKnowledgeDocumentResponse(documentId: string) {
       : null,
     public_url: pathlessStatus.active && pathlessStatus.public_id
       ? `${config.APP_ORIGIN}/p/${pathlessStatus.public_id}`
-      : compatibility.public_path
-        ? `${config.APP_ORIGIN}/p/${compatibility.public_path}`
-        : null,
+      : null,
   });
-}
-
-function isDirectoryAncestor(directoryPath: string, pagePath: string): boolean {
-  return directoryPath === "" || pagePath.startsWith(`${directoryPath}/`);
-}
-
-async function directoryWillBePublic(directoryPath: string, candidatePagePath: string): Promise<boolean> {
-  return isDirectoryAncestor(directoryPath, candidatePagePath)
-    || dashboardDirectories.hasPublishedDescendant(directoryPath);
-}
-
-function publicDirectoryHref(path: string): string {
-  return path ? `/p/${path}/` : "/p/";
-}
-
-// Publication previews simulate the state after the selected version becomes
-// public, including self-links and generated directory indexes introduced by
-// the candidate page itself.
-function publishedPreviewResolvers(pageId: string, sourcePath: string) {
-  return {
-    page: async (id: string) => {
-      if (id === pageId) return { available: true as const, href: `/p/${sourcePath}` };
-      const page = await dashboardPages.get(id);
-      return page?.published_version_id && page.public_path
-        ? { available: true as const, href: `/p/${page.public_path}` }
-        : { available: false as const };
-    },
-    directory: async (id: string) => {
-      const directory = await dashboardDirectories.get(id);
-      return directory && await directoryWillBePublic(directory.current_path, sourcePath)
-        ? { available: true as const, href: publicDirectoryHref(directory.current_path) }
-        : { available: false as const };
-    },
-    pagePath: async (path: string) => {
-      for (const candidate of wikiLinkCandidatePaths(path, sourcePath)) {
-        if (candidate === sourcePath) return { available: true as const, href: `/p/${sourcePath}` };
-        const page = await dashboardPages.getByPath(candidate);
-        if (page?.published_version_id && page.public_path) {
-          return { available: true as const, href: `/p/${page.public_path}` };
-        }
-        const directory = await dashboardDirectories.getByPath(candidate);
-        if (directory && await directoryWillBePublic(directory.current_path, sourcePath)) {
-          return { available: true as const, href: publicDirectoryHref(directory.current_path) };
-        }
-      }
-      return { available: false as const };
-    },
-    asset: async (id: string) => {
-      const asset = await dashboardAssets.get(id, true);
-      return asset?.public_path
-        ? {
-            available: true as const,
-            href: `${config.ASSET_ORIGIN}/a/${asset.public_path}`,
-            contentType: asset.content_type,
-          }
-        : { available: false as const };
-    },
-  };
 }
 
 type PathlessPreviewTarget = {
@@ -851,14 +782,6 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
       });
     });
   })
-  .get("/api/dashboard/pages", async ({ request, query }) => {
-    await ownerRequest(request);
-    const includeArchived = query.archived === "true";
-    if (typeof query.q === "string" && query.q.trim()) {
-      return json(await dashboardPages.searchMetadata(query.q, { includeArchived, excludeGuides: true }));
-    }
-    return json(await dashboardPages.listMetadata(includeArchived, true));
-  })
   .get("/api/dashboard/documents", async ({ request, query }) => {
     await ownerRequest(request);
     const parsed = parseDashboardDocumentCatalogQuery(query);
@@ -978,6 +901,25 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     const response = await dashboardKnowledgeDocumentResponse(documentId);
     return response ? json(response) : problem("Document archive was not retained", 409, "write_conflict");
   })
+  .post("/api/dashboard/knowledge-documents/:id/deletion-intents", async ({ request, params }) => {
+    const principal = await ownerRequest(request, true);
+    emptyObjectSchema.parse(await bodyJson(request));
+    const documentId = z.string().uuid().parse(params.id);
+    const document = await dashboardPages.metadata(documentId);
+    if (!document) return problem("Knowledge document not found", 404, "not_found");
+    if (!document.archived_at || document.published_version_id) {
+      return problem("Only archived, unpublished knowledge documents can be permanently deleted", 409, "document_not_deletable");
+    }
+    const intent = await pageDeletions.createIntent(documentId, {
+      ownerUserId: principal.userId,
+      sessionId: principal.sessionId,
+    });
+    if (!intent) {
+      return problem("Knowledge document is no longer eligible for permanent deletion", 409, "document_not_deletable");
+    }
+    const authenticationOptions = await issueConfirmationOptions("page_deletion", intent.id);
+    return json({ intent, authentication_options: authenticationOptions }, 201);
+  })
   .get("/api/dashboard/knowledge-documents/:id/history", async ({ request, params, query }) => {
     await ownerRequest(request);
     const history = await dashboardKnowledgeDocuments.history(
@@ -1035,214 +977,6 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
       limit,
     }));
   })
-  .get("/api/dashboard/public-entrypoint", async ({ request }) => {
-    await ownerRequest(request);
-    const [settings, candidates] = await Promise.all([
-      publicEntrypoint.get(),
-      publicEntrypoint.candidates(),
-    ]);
-    return json({ settings, candidates });
-  })
-  .put("/api/dashboard/public-entrypoint", async ({ request }) => {
-    await ownerRequest(request, true);
-    const input = z.object({ page_id: z.string().uuid().nullable() }).strict()
-      .parse(await bodyJson(request));
-    const updated = await publicEntrypoint.update(input.page_id);
-    return updated
-      ? json({ settings: await publicEntrypoint.get() })
-      : problem("The public entry point must be an explicitly published page", 422, "invalid_entrypoint");
-  })
-  .get("/api/dashboard/directories", async ({ request, query }) => {
-    await ownerRequest(request);
-    return json(await dashboardDirectories.list(typeof query.q === "string" ? query.q : undefined));
-  })
-  .post("/api/dashboard/directories", async ({ request }) => {
-    await ownerRequest(request, true);
-    const input = createDirectorySchema.parse(await bodyJson(request));
-    return json(await dashboardDirectories.create(input), 201);
-  })
-  .get("/api/dashboard/directories/:id", async ({ request, params }) => {
-    await ownerRequest(request);
-    const index = await dashboardDirectories.indexById(z.string().uuid().parse(params.id));
-    if (!index) return problem("Directory not found", 404, "not_found");
-    return json(index);
-  })
-  .put("/api/dashboard/directories/:id", async ({ request, params }) => {
-    await ownerRequest(request, true);
-    const input = updateDirectorySchema.parse(await bodyJson(request));
-    const directory = await dashboardDirectories.update(z.string().uuid().parse(params.id), input);
-    return directory ? json(directory) : problem("Directory not found", 404, "not_found");
-  })
-  .delete("/api/dashboard/directories/:id", async ({ request, params }) => {
-    await ownerRequest(request, true);
-    const input = deleteDirectorySchema.parse(await bodyJson(request));
-    const directory = await dashboardDirectories.delete(z.string().uuid().parse(params.id), input);
-    return directory ? json({ deleted: true, directory }) : problem("Directory not found", 404, "not_found");
-  })
-  .post("/api/dashboard/pages", async ({ request }) => {
-    const principal = await ownerRequest(request, true);
-    const input = createPageSchema.parse(await bodyJson(request));
-    return json(await dashboardPages.create(input, { kind: "dashboard", subject: principal.userId }), 201);
-  })
-  .get("/api/dashboard/pages/:id", async ({ request, params }) => {
-    await ownerRequest(request);
-    const page = await dashboardPages.get(z.string().uuid().parse(params.id));
-    if (!page) return problem("Page not found", 404, "not_found");
-    const html = await renderMarkdown(page.body_markdown, privatePageResolvers(page.current_path));
-    return json({ ...page, rendered_html: html });
-  })
-  .put("/api/dashboard/pages/:id", async ({ request, params }) => {
-    const principal = await ownerRequest(request, true);
-    const input = updatePageSchema.parse(await bodyJson(request));
-    const page = await dashboardPages.update(z.string().uuid().parse(params.id), input, { kind: "dashboard", subject: principal.userId });
-    return page ? json(page) : problem("Page not found", 404, "not_found");
-  })
-  .post("/api/dashboard/pages/:id/archive", async ({ request, params }) => {
-    const principal = await ownerRequest(request, true);
-    const input = archivePageSchema.parse(await bodyJson(request));
-    const page = await dashboardPages.archive(z.string().uuid().parse(params.id), input, { kind: "dashboard", subject: principal.userId });
-    return page ? json(page) : problem("Page not found", 404, "not_found");
-  })
-  .post("/api/dashboard/pages/:id/deletion-intents", async ({ request, params }) => {
-    const principal = await ownerRequest(request, true);
-    emptyObjectSchema.parse(await bodyJson(request));
-    const pageId = z.string().uuid().parse(params.id);
-    const page = await dashboardPages.get(pageId);
-    if (!page) return problem("Page not found", 404, "not_found");
-    if (!page.archived_at || page.published_version_id) {
-      return problem("Only archived, unpublished pages can be permanently deleted", 409, "page_not_deletable");
-    }
-    const intent = await pageDeletions.createIntent(pageId, {
-      ownerUserId: principal.userId,
-      sessionId: principal.sessionId,
-    });
-    if (!intent) return problem("Page is no longer eligible for permanent deletion", 409, "page_not_deletable");
-    const authenticationOptions = await issueConfirmationOptions("page_deletion", intent.id);
-    return json({ intent, authentication_options: authenticationOptions }, 201);
-  })
-  .get("/api/dashboard/pages/:id/history", async ({ request, params }) => {
-    await ownerRequest(request);
-    return json(await dashboardPages.history(z.string().uuid().parse(params.id)));
-  })
-  .get("/api/dashboard/pages/:id/versions/:version", async ({ request, params }) => {
-    await ownerRequest(request);
-    const version = await dashboardPages.version(
-      z.string().uuid().parse(params.id),
-      z.coerce.number().int().positive().parse(params.version),
-    );
-    return version ? json(version) : problem("Version not found", 404, "not_found");
-  })
-  .get("/api/dashboard/pages/:id/versions/:version/diff", async ({ request, params, query }) => {
-    await ownerRequest(request);
-    const pageId = z.string().uuid().parse(params.id);
-    const versionNumber = z.coerce.number().int().positive().parse(params.version);
-    const previousVersionNumber = query.from === undefined
-      ? null
-      : z.coerce.number().int().positive().parse(query.from);
-    if (previousVersionNumber !== null && previousVersionNumber >= versionNumber) {
-      return problem("The comparison version must be earlier than the selected version", 422, "invalid_comparison");
-    }
-    const [previous, current] = await Promise.all([
-      previousVersionNumber === null
-        ? Promise.resolve(null)
-        : dashboardPages.version(pageId, previousVersionNumber),
-      dashboardPages.version(pageId, versionNumber),
-    ]);
-    if (!current) return problem("Version not found", 404, "not_found");
-    if (previousVersionNumber !== null && !previous) {
-      return problem("Comparison version not found", 404, "not_found");
-    }
-    return json({
-      page_id: pageId,
-      comparison: {
-        from_version: previousVersionNumber,
-        to_version: versionNumber,
-      },
-      ...await pageDelta(previous, current),
-    });
-  })
-  .get("/api/dashboard/pages/:id/publication-preview", async ({ request, params, query }) => {
-    await ownerRequest(request);
-    const pageId = z.string().uuid().parse(params.id);
-    const page = await dashboardPages.get(pageId);
-    if (!page) return problem("Page not found", 404, "not_found");
-    const versionNumber = query.version ? z.coerce.number().int().positive().parse(query.version) : page.version_number;
-    const version = await dashboardPages.version(pageId, versionNumber);
-    if (!version) return problem("Version not found", 404, "not_found");
-    const republication = await republicationReview(dashboardPages, pageId, page, version);
-    const html = await renderMarkdown(version.body_markdown, publishedPreviewResolvers(pageId, version.path));
-    const references = [
-      ...await publicationDocumentReferences({
-        markdown: version.body_markdown,
-        publishingPage: { id: pageId, title: version.title, path: version.path },
-        lookups: {
-          pages: dashboardPages,
-          assets: dashboardAssets,
-          records: dashboardRecords,
-        },
-      }),
-      ...await Promise.all([
-        ...extractDirectoryLinks(version.body_markdown).map(async (id) => {
-          const target = await dashboardDirectories.get(id);
-          return {
-            kind: "directory" as const,
-            id,
-            label: target?.title ?? "Missing directory",
-            path: target?.current_path ?? null,
-            public: target ? await directoryWillBePublic(target.current_path, version.path) : false,
-          };
-        }),
-        ...extractWikiLinks(version.body_markdown).map(async ({ path, label }) => {
-          let target = null;
-          let publishingTarget = false;
-          for (const candidate of wikiLinkCandidatePaths(path, version.path)) {
-            if (candidate === version.path) {
-              target = page;
-              publishingTarget = true;
-              break;
-            }
-            target = await dashboardPages.getByPath(candidate);
-            if (target) break;
-          }
-          if (!target) {
-            let directory = null;
-            for (const candidate of wikiLinkCandidatePaths(path, version.path)) {
-              directory = await dashboardDirectories.getByPath(candidate);
-              if (directory) break;
-            }
-            if (directory) return {
-              kind: "directory" as const,
-              id: directory.id,
-              label: directory.title,
-              path: directory.current_path,
-              public: await directoryWillBePublic(directory.current_path, version.path),
-            };
-          }
-          return {
-            kind: "page" as const,
-            id: target?.id ?? `path:${path}`,
-            label: publishingTarget ? version.title : target?.title ?? label,
-            path: publishingTarget ? version.path : target?.current_path ?? path,
-            public: publishingTarget || Boolean(target?.published_version_id),
-          };
-        }),
-      ]),
-    ];
-    return json({
-      page_id: pageId,
-      version_id: version.id,
-      version_number: version.version_number,
-      title: version.title,
-      summary: version.summary,
-      path: version.path,
-      rendered_html: html,
-      current_public_path: page.public_path,
-      warnings: publicationWarnings(version.body_markdown, [version.title, version.summary]),
-      references,
-      republication,
-    });
-  })
-
   .get("/api/dashboard/assets", async ({ request }) => {
     await ownerRequest(request);
     return json(await mapConcurrently(
@@ -1250,24 +984,6 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
       8,
       dashboardAssetPublication,
     ));
-  })
-  .post("/api/dashboard/assets/upload-intent", async ({ request }) => {
-    await ownerRequest(request, true);
-    const input = assetUploadSchema.parse(await bodyJson(request));
-    const created = await dashboardAssets.create({
-      currentPath: input.path,
-      filename: input.filename,
-      contentType: input.content_type,
-      sizeBytes: input.size_bytes,
-      contentHash: input.sha256,
-      ...(input.width ? { width: input.width } : {}),
-      ...(input.height ? { height: input.height } : {}),
-      ...(input.duration_seconds !== undefined ? { durationSeconds: input.duration_seconds } : {}),
-    });
-    const { objectKey: _hidden, ...asset } = created;
-    return json({
-      asset: { ...asset, public_id: null, pathless_published: false },
-    }, 201);
   })
   // Keep large dashboard recovery uploads on the raw streaming path too.
   .put("/api/dashboard/assets/:id/content", async ({ request, params }) => {
@@ -1313,9 +1029,7 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
       ),
       public_url: pathlessStatus.active && pathlessStatus.public_id
         ? `${config.ASSET_ORIGIN}/a/${pathlessStatus.public_id}`
-        : asset.public_path
-          ? `${config.ASSET_ORIGIN}/a/${asset.public_path}`
-          : null,
+        : null,
       pathless_published: pathlessStatus.active,
     });
   })
@@ -1331,38 +1045,6 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     if (!objectKey) return problem("Published or referenced asset cannot be deleted", 409, "asset_in_use");
     await storage.delete(objectKey);
     return json({ deleted: true });
-  })
-
-  .post("/api/dashboard/publication-intents", async ({ request }) => {
-    const principal = await ownerRequest(request, true);
-    const input = publicationIntentSchema.parse(await bodyJson(request));
-
-    let publicPath: string | null = null;
-    if (input.target_kind === "page") {
-      const page = await dashboardPages.get(input.target_id);
-      if (!page) return problem("Page not found", 404, "not_found");
-      if (input.action !== "unpublish") {
-        if (!input.version_id) return problem("Page version is required", 422);
-        const history = await dashboardPages.history(input.target_id);
-        const version = history.find((candidate) => candidate.id === input.version_id);
-        if (!version) return problem("Version does not belong to page", 422);
-        publicPath = version.path;
-      }
-    } else {
-      const asset = await dashboardAssets.get(input.target_id, true);
-      if (!asset) return problem("Asset not found", 404, "not_found");
-      if (input.action !== "unpublish" && !(await storage.verify(asset.s3_object_key, Number(asset.size_bytes), asset.content_hash))) {
-        return problem("Asset upload is incomplete or failed integrity verification", 409, "asset_incomplete");
-      }
-      if (input.action !== "unpublish") publicPath = asset.current_path;
-    }
-
-    const intent = await publications.createIntent(input, {
-      ownerUserId: principal.userId,
-      sessionId: principal.sessionId,
-    }, publicPath);
-    const authenticationOptions = await issueConfirmationOptions("publication", intent.id);
-    return json({ intent, authentication_options: authenticationOptions }, 201);
   })
 
   .post("/api/dashboard/pathless-publication-intents", async ({ request }) => {
