@@ -42,6 +42,7 @@ describeDatabase("audited filesystem to hypermedia corpus migration", () => {
   const createdAssetIds: string[] = [];
   const createdSourceDocumentIds: string[] = [];
   const createdPublicIds: string[] = [];
+  const createdArtifactIds: string[] = [];
   const runIds: string[] = [];
   const bodyByRevisionId = new Map<string, string>();
   let originalEntrypoint: string | null = null;
@@ -75,6 +76,13 @@ describeDatabase("audited filesystem to hypermedia corpus migration", () => {
           );
           createdPublicIds.push(...resources.rows.map(({ public_id }) => public_id));
         }
+        if (createdPageIds.length) {
+          const artifacts = await admin.query<{ artifact_id: string }>(
+            "SELECT artifact_id FROM published_page_artifacts WHERE page_id=ANY($1::uuid[])",
+            [createdPageIds],
+          );
+          createdArtifactIds.push(...artifacts.rows.map(({ artifact_id }) => artifact_id));
+        }
         await admin.query("DELETE FROM automation_registry");
         await admin.query("DELETE FROM directory_hub_migrations");
         if (runIds.length) {
@@ -93,8 +101,27 @@ describeDatabase("audited filesystem to hypermedia corpus migration", () => {
           );
         }
         if (createdPublicIds.length) {
-          await admin.query("DELETE FROM public_route_aliases WHERE public_id=ANY($1::uuid[])", [createdPublicIds]);
-          await admin.query("DELETE FROM public_resources WHERE public_id=ANY($1::uuid[])", [createdPublicIds]);
+          const uniquePublicIds = [...new Set(createdPublicIds)];
+          // The database is explicitly disposable. Disable append-only guards
+          // only around permanent public identity teardown, then restore normal
+          // lifecycle/cascade triggers for every private fixture below.
+          await admin.query("SET LOCAL session_replication_role=replica");
+          await admin.query(
+            "DELETE FROM public_route_aliases WHERE public_id=ANY($1::uuid[])",
+            [uniquePublicIds],
+          );
+          await admin.query(
+            "DELETE FROM public_resources WHERE public_id=ANY($1::uuid[])",
+            [uniquePublicIds],
+          );
+          if (createdArtifactIds.length) {
+            await admin.query(
+              `DELETE FROM public_artifact_id_reservations
+               WHERE artifact_id=ANY($1::uuid[])`,
+              [[...new Set(createdArtifactIds)]],
+            );
+          }
+          await admin.query("SET LOCAL session_replication_role=origin");
         }
         if (createdPageIds.length) {
           await admin.query("DELETE FROM knowledge_page_versions WHERE page_id=ANY($1::uuid[])", [createdPageIds]);
@@ -724,7 +751,6 @@ describeDatabase("audited filesystem to hypermedia corpus migration", () => {
       "SELECT public_id FROM directory_hub_migrations WHERE directory_id=$1",
       [publicDirectoryId],
     )).rows[0]!;
-    createdPublicIds.push(mapping.public_id);
     await admin.query("BEGIN");
     try {
       await expect(admin.query(
@@ -1142,7 +1168,6 @@ describeDatabase("audited filesystem to hypermedia corpus migration", () => {
       bodyByRevisionId.set(hub.private_revision.revision_id, safeBody);
       bodyByRevisionId.set(hub.public_revision!.revision_id, safeBody);
       createdPageIds.push(directory.directory_id);
-      createdPublicIds.push(hub.public_id!);
     }
     expect((await repository.seal(firstPlan.run_id)).blockers).toEqual([]);
     for (const directory of compatibilityDirectories) {
