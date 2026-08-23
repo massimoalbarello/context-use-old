@@ -397,6 +397,7 @@ class FakeRepository implements CorpusMigrationRepositoryLike {
   readonly completed: Parameters<CorpusMigrationRepositoryLike["completeExisting"]>[0][] = [];
   readonly pageWrites: Parameters<CorpusMigrationRepositoryLike["applyPage"]>[0][] = [];
   readonly hubWrites: Parameters<CorpusMigrationRepositoryLike["applyHub"]>[0][] = [];
+  readonly readyHydrations: Parameters<CorpusMigrationRepositoryLike["hydrateReadyKnowledge"]>[0][] = [];
   readonly events: string[] = [];
   readonly hubOverrides = new Map<
     string,
@@ -554,6 +555,12 @@ class FakeRepository implements CorpusMigrationRepositoryLike {
       }
     }
     return ready;
+  }
+
+  async hydrateReadyKnowledge(
+    input: Parameters<CorpusMigrationRepositoryLike["hydrateReadyKnowledge"]>[0],
+  ): Promise<void> {
+    this.readyHydrations.push(input);
   }
 
   async completeExisting(input: Parameters<CorpusMigrationRepositoryLike["completeExisting"]>[0]) {
@@ -1410,6 +1417,13 @@ describe("corpus migration orchestration", () => {
     expect(repository.hubWrites).toEqual([]);
     expect(bodies.writes).toEqual([]);
     expect(verified).toHaveLength(2);
+    expect(repository.readyHydrations).toHaveLength(
+      repository.inspection.pages.filter((page) => page.archived_at === null).length,
+    );
+    expect(repository.readyHydrations).toContainEqual(expect.objectContaining({
+      document_id: inspection.pages.find((page) => page.path === "projects/article")!.document_id,
+      body_markdown_for_index: expect.stringContaining("Private current note"),
+    }));
   });
 
   test("a completed first preparation is byte-write-free on the next command", async () => {

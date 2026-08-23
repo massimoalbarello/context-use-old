@@ -250,6 +250,14 @@ export type CorpusReadyObject = {
   target_asset_ids: string[];
 };
 
+export type HydrateCorpusKnowledgeInput = {
+  run_id: string;
+  document_id: string;
+  revision_id: string;
+  body_markdown_for_index: string;
+  target_document_ids: string[];
+};
+
 type InventoryItem = {
   item_kind: CorpusMigrationItemKind;
   item_id: string;
@@ -386,6 +394,19 @@ async function replaceKnowledgeProjections(
   await client.query(
     "SELECT replace_knowledge_revision_projections($1,$2::uuid[])",
     [revisionId, targetIds],
+  );
+}
+
+async function hydrateCorpusKnowledge(
+  client: Pick<Pool, "query">,
+  input: HydrateCorpusKnowledgeInput,
+): Promise<void> {
+  await client.query(
+    `SELECT hydrate_corpus_knowledge_revision(
+       $1,$2,$3,$4,$5::uuid[]
+     )`,
+    [input.run_id, input.document_id, input.revision_id,
+      input.body_markdown_for_index, uniqueSorted(input.target_document_ids)],
   );
 }
 
@@ -1590,6 +1611,7 @@ export class CorpusMigrationRepository {
       }
       let targetIds: string[] = [];
       let indexedTargetIds: string[] = [];
+      let knowledgeHydration: HydrateCorpusKnowledgeInput | null = null;
       if (input.item_kind === "page") {
         if (typeof input.body_markdown_for_index !== "string"
             || !Array.isArray(input.target_document_ids)) {
@@ -1611,6 +1633,13 @@ export class CorpusMigrationRepository {
           page.current_revision.revision_id,
           indexedTargetIds,
         );
+        knowledgeHydration = {
+          run_id: input.run_id,
+          document_id: input.item_id,
+          revision_id: page.current_revision.revision_id,
+          body_markdown_for_index: input.body_markdown_for_index,
+          target_document_ids: targetIds,
+        };
       } else if (input.body_markdown_for_index !== undefined
           || input.target_document_ids !== undefined) {
         throw new Error("Only knowledge pages accept Markdown link receipts");
@@ -1636,6 +1665,9 @@ export class CorpusMigrationRepository {
           );
           return "Corpus item completion receipt changed across migration code versions";
         }
+        if (knowledgeHydration) {
+          await hydrateCorpusKnowledge(client, knowledgeHydration);
+        }
         return null;
       }
       const outputRevisionId = input.item_kind === "page"
@@ -1653,6 +1685,9 @@ export class CorpusMigrationRepository {
         [input.run_id, input.item_kind, input.item_id, item.source_fingerprint,
           outputRevisionId, expected, expectedArtifacts, input.actor_subject, targetIds],
       );
+      if (knowledgeHydration) {
+        await hydrateCorpusKnowledge(client, knowledgeHydration);
+      }
       return null;
     });
     if (driftError) {
@@ -1794,6 +1829,13 @@ export class CorpusMigrationRepository {
           );
           return "Knowledge page completion receipt changed across migration code versions";
         }
+        await hydrateCorpusKnowledge(client, {
+          run_id: input.run_id,
+          document_id: input.document_id,
+          revision_id: input.revision.id,
+          body_markdown_for_index: input.body_markdown_for_index,
+          target_document_ids: submittedTargets,
+        });
         return null;
       }
       const locked = await client.query<{ locked: boolean }>(
@@ -1861,6 +1903,13 @@ export class CorpusMigrationRepository {
         [input.run_id, input.document_id, planned.source_fingerprint, input.revision.id,
           expectedVerified, expectedArtifacts, input.actor_subject, targets.receipt],
       );
+      await hydrateCorpusKnowledge(client, {
+        run_id: input.run_id,
+        document_id: input.document_id,
+        revision_id: input.revision.id,
+        body_markdown_for_index: input.body_markdown_for_index,
+        target_document_ids: targets.receipt,
+      });
       return null;
     });
     if (driftError) {
@@ -1969,6 +2018,13 @@ export class CorpusMigrationRepository {
           );
           return "Directory hub completion receipt changed across migration code versions";
         }
+        await hydrateCorpusKnowledge(client, {
+          run_id: input.run_id,
+          document_id: input.directory_id,
+          revision_id: input.private_revision.id,
+          body_markdown_for_index: input.private_revision.body_markdown_for_index,
+          target_document_ids: submittedPrivateTargets,
+        });
         return null;
       }
       const locked = await client.query<{ locked: boolean }>(
@@ -2307,6 +2363,13 @@ export class CorpusMigrationRepository {
           input.private_revision.id, input.actor_subject,
           privateTargets.receipt, publicTargets.receipt],
       );
+      await hydrateCorpusKnowledge(client, {
+        run_id: input.run_id,
+        document_id: input.directory_id,
+        revision_id: input.private_revision.id,
+        body_markdown_for_index: input.private_revision.body_markdown_for_index,
+        target_document_ids: privateTargets.receipt,
+      });
       return null;
     });
     if (driftError) {
@@ -2411,6 +2474,15 @@ export class CorpusMigrationRepository {
     });
     if (result instanceof Error) throw result;
     return result;
+  }
+
+  async hydrateReadyKnowledge(input: HydrateCorpusKnowledgeInput): Promise<void> {
+    const targets = uniqueSorted(input.target_document_ids);
+    if (JSON.stringify(targets)
+        !== JSON.stringify(uniqueSorted(extractDocumentLinks(input.body_markdown_for_index)))) {
+      throw new Error("Ready knowledge hydration link receipt does not match its Markdown");
+    }
+    await hydrateCorpusKnowledge(this.pool, { ...input, target_document_ids: targets });
   }
 
   async status(runId: string): Promise<CorpusMigrationStatus> {

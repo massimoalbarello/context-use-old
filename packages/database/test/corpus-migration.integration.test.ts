@@ -768,6 +768,55 @@ describeDatabase("audited filesystem to hypermedia corpus migration", () => {
         target_document_ids: [published.danglingCurrentDocumentId],
         indexed_document_ids: [],
       });
+    const publishedReadyObject = firstReadyObjects.find((object) => (
+      object.kind === "knowledge" && object.document_id === published.pageId
+    ))!;
+    expect((await admin.query(
+      `SELECT contract.provenance,search.revision_id
+       FROM knowledge_revision_contracts contract
+       JOIN pathless_knowledge_search search ON search.document_id=contract.document_id
+       WHERE contract.revision_id=$1 AND search.revision_id=$1`,
+      [publishedReadyObject.revision.revision_id],
+    )).rows[0]).toMatchObject({
+      provenance: "corpus_migration",
+      revision_id: publishedReadyObject.revision.revision_id,
+    });
+
+    // Reproduce a run sealed by the pre-hydration deployment: its exact output
+    // receipt remains, while the additive contract and search rows are absent.
+    await admin.query(
+      "DELETE FROM pathless_knowledge_search_chunks WHERE document_id=$1",
+      [published.pageId],
+    );
+    await admin.query(
+      "DELETE FROM pathless_knowledge_search WHERE document_id=$1",
+      [published.pageId],
+    );
+    await admin.query(
+      "DELETE FROM knowledge_revision_contracts WHERE revision_id=$1",
+      [publishedReadyObject.revision.revision_id],
+    );
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await repository.hydrateReadyKnowledge({
+        run_id: plan.run_id,
+        document_id: published.pageId,
+        revision_id: publishedReadyObject.revision.revision_id,
+        body_markdown_for_index: bodyByRevisionId.get(
+          publishedReadyObject.revision.revision_id,
+        )!,
+        target_document_ids: publishedReadyObject.target_document_ids,
+      });
+    }
+    expect((await admin.query(
+      `SELECT contract.provenance,search.revision_id
+       FROM knowledge_revision_contracts contract
+       JOIN pathless_knowledge_search search ON search.document_id=contract.document_id
+       WHERE contract.revision_id=$1 AND search.revision_id=$1`,
+      [publishedReadyObject.revision.revision_id],
+    )).rows[0]).toMatchObject({
+      provenance: "corpus_migration",
+      revision_id: publishedReadyObject.revision.revision_id,
+    });
     const mapping = (await admin.query<{ public_id: string }>(
       "SELECT public_id FROM directory_hub_migrations WHERE directory_id=$1",
       [publicDirectoryId],

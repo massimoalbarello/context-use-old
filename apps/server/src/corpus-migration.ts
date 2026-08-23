@@ -46,7 +46,7 @@ const REQUIRED_DEFAULT_AUTOMATIONS = ["activity-distiller", "diary-composer"] as
 
 type DirectoryDisposition = CorpusDirectoryDisposition;
 export type CorpusMigrationRepositoryLike = Pick<CorpusMigrationRepository,
-  "inspectSource" | "beginOrResume" | "readyObjects" | "status" | "completeExisting" | "applyPage" | "applyHub" | "seal"
+  "inspectSource" | "beginOrResume" | "readyObjects" | "hydrateReadyKnowledge" | "status" | "completeExisting" | "applyPage" | "applyHub" | "seal"
 >;
 
 export type CorpusAssetVerifier = {
@@ -669,6 +669,15 @@ async function migrateCorpusAttempt(input: CorpusMigrationInput): Promise<Corpus
             object.document_id,
             "Ready knowledge body and derived link index differ",
           )]);
+        }
+        if (object.kind === "knowledge") {
+          await input.repository.hydrateReadyKnowledge({
+            run_id: plan.run_id,
+            document_id: object.document_id,
+            revision_id: object.revision.revision_id,
+            body_markdown_for_index: body,
+            target_document_ids: extracted,
+          });
         }
       },
     );
