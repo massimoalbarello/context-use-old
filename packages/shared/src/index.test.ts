@@ -8,6 +8,9 @@ import {
   createDocumentAssetSchema,
   createDirectorySchema,
   createKnowledgeDocumentSchema,
+  dashboardDocumentCatalogPageSchema,
+  dashboardDocumentNeighborhoodSchema,
+  dashboardDocumentSummarySchema,
   deleteDirectorySchema,
   AssetPath,
   createPageSchema,
@@ -164,6 +167,58 @@ describe("strict mutation schemas", () => {
       asset_id: pageId,
       path: "projects/acme/site-photo",
     }).success).toBe(false);
+  });
+
+  test("dashboard document discovery is strict and locator-free", () => {
+    const summary = {
+      document_id: pageId,
+      document_kind: "knowledge" as const,
+      authority: "knowledge" as const,
+      representation: "markdown" as const,
+      lifecycle: "active" as const,
+      current_revision_id: versionId,
+      title: "Private note",
+      summary: "A private knowledge document.",
+      filename: null,
+      content_type: null,
+      operational_roles: ["directory_hub" as const],
+      updated_at: "2026-08-23T12:34:56.789Z",
+    };
+    expect(dashboardDocumentSummarySchema.parse(summary)).toEqual(summary);
+    for (const forbidden of [
+      "current_path",
+      "body_object_key",
+      "body_content_hash",
+      "source_record_id",
+      "connection_id",
+      "public_id",
+    ]) {
+      expect(dashboardDocumentSummarySchema.safeParse({ ...summary, [forbidden]: "private" }).success)
+        .toBe(false);
+    }
+
+    expect(dashboardDocumentCatalogPageSchema.parse({
+      documents: [summary],
+      next_cursor: "opaque-cursor",
+      has_more: true,
+    }).documents[0]).toEqual(summary);
+    expect(dashboardDocumentNeighborhoodSchema.parse({
+      document: summary,
+      outbound: {
+        revision_id: versionId,
+        neighbors: [{ target_document_id: pageId, resolved: true, document: summary }],
+        next_cursor: null,
+        has_more: false,
+        index_complete: true,
+      },
+      backlinks: {
+        documents: [summary],
+        next_cursor: null,
+        has_more: false,
+        completeness_checked: false,
+        complete: null,
+      },
+    }).outbound.neighbors[0]?.document).toEqual(summary);
   });
 
   test("pages require summaries while directory public-listing summaries are optional", () => {
