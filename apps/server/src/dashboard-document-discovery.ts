@@ -40,6 +40,7 @@ const catalogQuerySchema = z.object({
   cursor: OptionalCursor,
   limit: OptionalLimit,
   include_retired: OptionalBoolean,
+  authority: z.enum(["knowledge", "source"]).optional(),
   kind: z.enum(["knowledge", "record", "asset"]).optional(),
   lifecycle: z.enum(["active", "archived", "deleted"]).optional(),
 }).strict();
@@ -80,6 +81,7 @@ export function parseDashboardDocumentCatalogQuery(
       ...(parsed.include_retired === undefined
         ? {}
         : { include_retired: parsed.include_retired }),
+      ...(parsed.authority ? { authority: parsed.authority } : {}),
       ...(parsed.kind ? { document_kind: parsed.kind } : {}),
       ...(parsed.lifecycle ? { lifecycle: parsed.lifecycle } : {}),
     },

@@ -54,6 +54,7 @@ describe("dashboard document discovery", () => {
       cursor: "opaque",
       limit: "25",
       include_retired: "true",
+      authority: "knowledge",
       kind: "knowledge",
       lifecycle: "archived",
     })).toEqual({
@@ -62,6 +63,7 @@ describe("dashboard document discovery", () => {
         cursor: "opaque",
         limit: 25,
         include_retired: true,
+        authority: "knowledge",
         document_kind: "knowledge",
         lifecycle: "archived",
       },
