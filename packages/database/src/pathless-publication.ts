@@ -535,7 +535,7 @@ export class PathlessStoragePublicationRepository {
       authorization: PathlessPublicationWriteAuthorization | null;
     }>(
       `SELECT claim_token,finalized,artifact_id,body_object_key,
-         body_size_bytes,body_content_hash,authorization
+         body_size_bytes,body_content_hash,"authorization"
        FROM claim_pathless_publication_artifact($1,$2)`,
       [intentId, requestedClaimToken],
     );
@@ -583,7 +583,7 @@ export class PathlessStoragePublicationRepository {
       authorization: PathlessPublicationAdoptionWriteAuthorization | null;
     }>(
       `SELECT claim_token,finalized,artifact_id,body_object_key,
-         body_size_bytes,body_content_hash,authorization
+         body_size_bytes,body_content_hash,"authorization"
        FROM claim_pathless_publication_adoption_artifact($1,$2)`,
       [adoptionId, requestedClaimToken],
     );
