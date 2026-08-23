@@ -304,9 +304,16 @@ docker compose --env-file "${secrets}/runtime.env" up \
 # Public pages are the availability priority once preparation succeeds. Bring
 # them back before the dashboard, MCP, and auth services start competing for
 # the same two cores.
-docker compose --env-file "${secrets}/runtime.env" up -d --wait public-web
-docker compose --env-file "${secrets}/runtime.env" up -d --wait \
-  dashboard-edge app auth private-mcp
+docker compose --env-file "${secrets}/runtime.env" up -d --wait --no-deps public-web
+# The corpus preparation one-shot has already completed and been audited above.
+# Start its long-lived consumers without traversing `depends_on`, otherwise
+# Compose starts knowledge-prepare a second time while bringing consumers up.
+docker compose --env-file "${secrets}/runtime.env" up -d --wait --no-deps \
+  auth confirmation
+docker compose --env-file "${secrets}/runtime.env" up -d --wait --no-deps \
+  app private-mcp
+docker compose --env-file "${secrets}/runtime.env" up -d --wait --no-deps \
+  dashboard-edge
 # A running Caddy was never stopped and stays untouched; a first install starts
 # it here so the edge still opens before the Nango stack.
 docker compose --env-file "${secrets}/runtime.env" up -d --no-deps caddy

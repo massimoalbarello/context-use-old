@@ -124,3 +124,23 @@ test("Context Use restore captures and reconciles privileged object ownership ar
   expect(failureHandler).toContain("up -d postgres aws-credential-broker");
   expect(failureHandler).not.toContain("aws-credential-broker backup");
 });
+
+test("Context Use restore does not restart the completed knowledge preparation one-shot", () => {
+  const script = restoreCommands("backups", "postgres/2026-07-30T12-34-56Z.sql.gz").join("\n");
+  const prepare = "--exit-code-from knowledge-prepare knowledge-prepare";
+  const publicWeb = "up -d --wait --no-deps public-web";
+  const authAndConfirmation = "up -d --wait --no-deps auth confirmation";
+  const appAndMcp = "up -d --wait --no-deps app private-mcp";
+  const dashboardEdge = "up -d --wait --no-deps dashboard-edge";
+  const caddyAndBackup = "up -d --remove-orphans --no-deps caddy backup";
+
+  expect(script.match(/--exit-code-from knowledge-prepare/g)).toHaveLength(1);
+  for (const start of [publicWeb, authAndConfirmation, appAndMcp, dashboardEdge, caddyAndBackup]) {
+    expect(script).toContain(start);
+  }
+  expect(script.indexOf(prepare)).toBeLessThan(script.indexOf(publicWeb));
+  expect(script.indexOf(publicWeb)).toBeLessThan(script.indexOf(authAndConfirmation));
+  expect(script.indexOf(authAndConfirmation)).toBeLessThan(script.indexOf(appAndMcp));
+  expect(script.indexOf(appAndMcp)).toBeLessThan(script.indexOf(dashboardEdge));
+  expect(script.indexOf(dashboardEdge)).toBeLessThan(script.indexOf(caddyAndBackup));
+});
