@@ -1111,7 +1111,7 @@ describe("knowledge templates", () => {
     expect(state.createdPages.filter((path) => path.endsWith("/agents"))).toEqual([]);
   });
 
-  test("resolves the two rows a knowledge reset has to recreate itself", async () => {
+  test("resolves the canonical root metadata and guide for bootstrap", async () => {
     const baseline = await knowledgeTemplateBaseline("default");
 
     expect(baseline.template).toBe("default");

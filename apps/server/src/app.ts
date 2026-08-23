@@ -480,7 +480,7 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     const principal = await ownerRequest(request, true);
     emptyObjectSchema.parse(await bodyJson(request));
     const exportPrincipal = { ownerUserId: principal.userId, sessionId: principal.sessionId };
-    const intent = await knowledgeExports.createIntent(exportPrincipal, false);
+    const intent = await knowledgeExports.createIntent(exportPrincipal);
     await Promise.allSettled(intent.discarded_export_ids.map((id) => {
       exportPreparations.delete(id);
       return storage.deleteGenerated(stagedExportKey(id));

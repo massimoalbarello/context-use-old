@@ -30,20 +30,22 @@ describeDatabase("knowledge lifecycle lock ordering", () => {
     expect(assetMutation).toBeGreaterThan(pageMutation);
   });
 
-  test("legacy reset preflights authority before taking the exclusive transition and checking v2 state", async () => {
-    const definition = (await pool.query<{ definition: string }>(
-      `SELECT pg_get_functiondef(
-         'clear_knowledge(uuid,text,text,uuid,text,integer,text,text,text,text,text,tsvector,text,text)'::regprocedure
-       ) AS definition`,
-    )).rows[0]!.definition;
-    const intentRead = definition.indexOf("FROM knowledge_export_intents");
-    const transition = definition.indexOf("pg_advisory_xact_lock(", intentRead);
-    const v2Gate = definition.indexOf("FROM public_artifact_id_reservations", transition);
-    const delegate = definition.indexOf("clear_knowledge_legacy_implementation", v2Gate);
-    expect(intentRead).toBeGreaterThan(-1);
-    expect(transition).toBeGreaterThan(intentRead);
-    expect(v2Gate).toBeGreaterThan(transition);
-    expect(delegate).toBeGreaterThan(v2Gate);
+  test("legacy knowledge reset functions and export columns are retired", async () => {
+    const functions = await pool.query<{ name: string | null }>(
+      `SELECT to_regprocedure(name)::text AS name
+       FROM unnest(ARRAY[
+         'clear_knowledge(uuid,text,text,uuid,text,integer,text,text,text,text,text,tsvector,text,text)',
+         'clear_knowledge_legacy_implementation(uuid,text,text,uuid,text,integer,text,text,text,text,text,tsvector,text,text)',
+         'complete_knowledge_export_download(uuid,text,text)'
+       ]) AS name`,
+    );
+    expect(functions.rows).toEqual([{ name: null }, { name: null }, { name: null }]);
+    const columns = await pool.query<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='knowledge_export_intents'
+         AND column_name IN ('reset_requested','download_completed_at','reset_completed_at')`,
+    );
+    expect(columns.rows).toEqual([]);
   });
 
   test("corpus inventory locks retain the legacy relation order through the narrow routing helper", async () => {

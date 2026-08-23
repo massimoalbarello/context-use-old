@@ -388,9 +388,8 @@ export type KnowledgeTemplateBaseline = {
   };
 };
 
-// Clearing the knowledge base rebuilds the bare bootstrap state inside a single
-// database transaction, which cannot read the template files. Resolve the two
-// rows that must survive here and hand them to the reset.
+// Resolve the root metadata and guide body once so bootstrap and the retained
+// template migration contract use the same canonical source files.
 export async function knowledgeTemplateBaseline(
   templateName = "default",
   templatesRoot = TEMPLATES_ROOT,
