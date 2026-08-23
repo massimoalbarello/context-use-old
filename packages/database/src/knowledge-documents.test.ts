@@ -85,6 +85,30 @@ describe("canonical knowledge document change cursor", () => {
       pageToken: "cu-page-scan-v1.0.1.0",
     })).rejects.toThrow("Provide a cursor or page token, not both");
   });
+
+  test("returns recent changes newest-first without filesystem metadata", async () => {
+    const documentId = crypto.randomUUID();
+    const calls: Array<{ sql: string; values: unknown[] | undefined }> = [];
+    const pool = {
+      async query(sql: string, values?: unknown[]) {
+        calls.push({ sql, values });
+        return { rows: [changeRow("9", documentId), changeRow("8", crypto.randomUUID())] };
+      },
+    } as unknown as Pool;
+    const documents = new KnowledgeDocumentRepository(pool, bodies);
+
+    const batch = await documents.recentChanges({
+      before: "cu-page-changes-v1.5",
+      limit: 1,
+    });
+    expect(batch).toMatchObject({
+      changes: [{ cursor: "cu-page-changes-v1.9", document_id: documentId }],
+      next_cursor: "cu-page-changes-v1.9",
+      has_more: true,
+    });
+    expect(batch.changes[0]).not.toHaveProperty("path");
+    expect(calls[0]?.values).toEqual(["5", 2]);
+  });
 });
 
 describe("canonical retained knowledge revisions", () => {

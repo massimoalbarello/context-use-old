@@ -605,6 +605,46 @@ export class KnowledgeDocumentRepository {
     };
   }
 
+  async recentChanges(options: {
+    before?: string;
+    limit?: number;
+  } = {}): Promise<KnowledgeDocumentChangeBatch> {
+    const limit = Math.min(Math.max(options.limit ?? 50, 1), 100);
+    const before = options.before ? parseChangeCursor(options.before) : null;
+    const result = await this.pool.query<KnowledgeDocumentChangeRow>(
+      `WITH cursor_position AS (
+         SELECT changed_at,change_sequence
+         FROM knowledge_page_changes
+         WHERE change_sequence=$1::bigint
+       )
+       SELECT changes.change_sequence::text AS change_sequence,
+         changes.page_id AS document_id,changes.version_id AS revision_id,
+         changes.version_number AS revision_number,
+         NULL::integer AS previous_revision_number,changes.change_kind,
+         changes.title,changes.commit_message,changes.actor_kind,
+         changes.actor_subject,changes.changed_at
+       FROM knowledge_page_changes AS changes
+       WHERE $1::bigint IS NULL OR (changes.changed_at,changes.change_sequence)<
+         (SELECT changed_at,change_sequence FROM cursor_position)
+       ORDER BY changes.changed_at DESC,changes.change_sequence DESC
+       LIMIT $2`,
+      [before?.toString() ?? null, limit + 1],
+    );
+    const hasMore = result.rows.length > limit;
+    const included = result.rows.slice(0, limit);
+    const oldest = included[included.length - 1];
+    return {
+      changes: included.map(({ change_sequence, ...change }) => ({
+        cursor: changeCursor(change_sequence),
+        ...change,
+      })),
+      next_cursor: oldest
+        ? changeCursor(oldest.change_sequence)
+        : options.before ?? changeCursor(0n),
+      has_more: hasMore,
+    };
+  }
+
   async adoptCurrent(input: AdoptKnowledgeRevisionInput): Promise<KnowledgeDocumentMetadata> {
     const targets = genericDocumentTargets(input.body_markdown);
     return transaction(this.pool, async (client) => {

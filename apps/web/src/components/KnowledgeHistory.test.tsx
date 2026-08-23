@@ -9,11 +9,11 @@ import {
 
 const change: KnowledgePageChange = {
   cursor: "cu-page-changes-v1.a",
-  page_id: "11111111-1111-4111-8111-111111111111",
-  version_id: "22222222-2222-4222-8222-222222222222",
-  version_number: 3,
+  document_id: "11111111-1111-4111-8111-111111111111",
+  revision_id: "22222222-2222-4222-8222-222222222222",
+  revision_number: 3,
+  previous_revision_number: 2,
   change_kind: "updated",
-  path: "about/intro",
   title: "Introduction",
   commit_message: "Clarify the current introduction",
   actor_kind: "mcp",
@@ -23,11 +23,10 @@ const change: KnowledgePageChange = {
 
 describe("knowledge change history row", () => {
   test("shows body-free commit metadata and keeps live pages navigable", () => {
-    const html = renderToStaticMarkup(<KnowledgeChangeRow change={change} onOpenPage={() => undefined} />);
+    const html = renderToStaticMarkup(<KnowledgeChangeRow change={change} onOpenDocument={() => undefined} />);
 
     expect(html).toContain("Updated");
     expect(html).toContain("Introduction");
-    expect(html).not.toContain("about/intro");
     expect(html).toContain("Clarify the current introduction");
     expect(html).toContain("v3");
     expect(html).toContain("<button");
@@ -37,7 +36,7 @@ describe("knowledge change history row", () => {
   test("renders deletion tombstones without a dead page action", () => {
     const html = renderToStaticMarkup(<KnowledgeChangeRow
       change={{ ...change, change_kind: "deleted", commit_message: "Permanently delete page" }}
-      onOpenPage={() => undefined}
+      onOpenDocument={() => undefined}
     />);
 
     expect(html).toContain("Deleted");
@@ -77,7 +76,7 @@ describe("knowledge change history days", () => {
     const today = new Date(group.date.getFullYear(), group.date.getMonth(), group.date.getDate(), 18);
     const html = renderToStaticMarkup(<KnowledgeChangeDay
       group={group}
-      onOpenPage={() => undefined}
+      onOpenDocument={() => undefined}
       today={today}
     />);
 

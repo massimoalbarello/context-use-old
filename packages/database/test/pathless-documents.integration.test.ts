@@ -237,6 +237,20 @@ describeDatabase("pathless private documents", () => {
       });
   });
 
+  test("lists and deletes standalone assets through stable document identities", async () => {
+    const created = await assets.create({
+      filename: "standalone.txt",
+      content_type: "text/plain",
+      size_bytes: 12,
+      sha256: "b".repeat(64),
+    });
+    createdDocumentIds.add(created.document.document_id);
+    expect(await assets.list()).toContainEqual(created.document);
+    expect(await assets.delete(created.document.document_id)).toBe(created.storage.object_key);
+    expect(await assets.get(created.document.document_id)).toBeNull();
+    expect(await assets.getForStorage(created.document.document_id)).toBeNull();
+  });
+
   test("searches and navigates the unified private catalog with stable shapes", async () => {
     const target = await knowledge.create({
       title: "Running résumé playbook",
@@ -432,13 +446,13 @@ describeDatabase("pathless private documents", () => {
       completeness_checked: false,
       complete: null,
     });
-    // The reset/bootstrap guide has not yet been hydrated into a 027 receipt,
-    // so an explicitly requested global private graph proof is conservative.
+    // A clean hypermedia database has an exact receipt for every active
+    // knowledge revision, including the bootstrap guide.
     expect((await catalog.neighborhood(target.document_id, {
       audit_global_completeness: true,
     }))?.backlinks).toMatchObject({
       completeness_checked: true,
-      complete: false,
+      complete: true,
     });
   });
 

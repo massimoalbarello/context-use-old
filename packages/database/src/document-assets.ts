@@ -127,13 +127,73 @@ export class DocumentAssetRepository {
   /** Exact private byte locator for the isolated MCP storage capability route. */
   async getForStorage(documentId: string): Promise<DocumentAssetStorageObject | null> {
     const result = await this.pool.query<DocumentAssetStorageRow>(
-      `${ASSET_STORAGE_SELECT} WHERE asset.id=$1`,
+      `${ASSET_STORAGE_SELECT} WHERE asset.id=$1 AND asset.deleted_at IS NULL`,
       [documentId],
     );
     const row = result.rows[0];
     if (!row) return null;
     const { object_key, ...asset } = row;
     return { ...normalizeAsset(asset), object_key };
+  }
+
+  async list(): Promise<DocumentAsset[]> {
+    const result = await this.pool.query<DocumentAssetDatabaseRow>(
+      `${ASSET_SELECT}
+       WHERE asset.deleted_at IS NULL
+       ORDER BY asset.created_at,asset.id`,
+    );
+    return result.rows.map(normalizeAsset);
+  }
+
+  async delete(documentId: string): Promise<string | null> {
+    return transaction(this.pool, async (client) => {
+      await client.query(
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
+      );
+      const selected = await client.query<{ s3_object_key: string }>(
+        `SELECT asset.s3_object_key
+         FROM assets asset
+         WHERE asset.id=$1 AND asset.deleted_at IS NULL
+           AND NOT EXISTS (
+             SELECT 1
+             FROM public_resources resource
+             JOIN asset_publications publication ON publication.public_id=resource.public_id
+             WHERE resource.document_id=asset.id
+           )
+         FOR UPDATE`,
+        [documentId],
+      );
+      if (!selected.rows[0]) return null;
+      const referenced = await client.query(
+        `SELECT 1
+         FROM knowledge_pages page
+         WHERE page.archived_at IS NULL AND EXISTS (
+           SELECT 1 FROM document_links link
+           WHERE link.source_revision_id=page.current_version_id
+             AND link.target_document_id=$1
+           UNION ALL
+           SELECT 1 FROM knowledge_asset_links link
+           WHERE link.source_version_id=page.current_version_id
+             AND link.target_asset_id=$1
+         )
+         LIMIT 1`,
+        [documentId],
+      );
+      if (referenced.rowCount) return null;
+      if ((await client.query(
+        `SELECT 1 FROM knowledge_export_intents
+         WHERE download_started_at IS NOT NULL AND expires_at>now() LIMIT 1`,
+      )).rowCount) return null;
+      const deleted = await client.query<{ s3_object_key: string }>(
+        `UPDATE assets SET deleted_at=now()
+         WHERE id=$1 AND deleted_at IS NULL
+         RETURNING s3_object_key`,
+        [documentId],
+      );
+      if (!deleted.rows[0]) return null;
+      await client.query("UPDATE hypermedia_documents SET updated_at=now() WHERE id=$1", [documentId]);
+      return deleted.rows[0].s3_object_key;
+    });
   }
 
   async archive(input: ArchiveDocumentAssetInput): Promise<DocumentAsset | null> {

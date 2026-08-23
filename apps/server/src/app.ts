@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import {
-  AssetRepository,
   AutomationRegistryRepository,
+  DocumentAssetRepository,
   DirectoryRepository,
   KnowledgeDocumentRepository,
   KnowledgeExportRepository,
@@ -20,7 +20,6 @@ import {
   knowledgeTemplateMigrationContract,
   mapConcurrently,
   reconcileKnowledgeTemplate,
-  wikiLinkCandidatePaths,
 } from "@context-use/database";
 import {
   KNOWLEDGE_PREPARATION_ACTION,
@@ -89,7 +88,7 @@ const dashboardDirectories = new DirectoryRepository(dashboardPool);
 const dashboardKnowledgeSettings = new KnowledgeSettingsRepository(dashboardPool);
 const dashboardAutomationRegistry = new AutomationRegistryRepository(dashboardPool);
 const pageDeletions = new PageDeletionRepository(dashboardPool);
-const dashboardAssets = new AssetRepository(dashboardPool);
+const dashboardAssets = new DocumentAssetRepository(dashboardPool);
 const pathlessPublications = new PathlessPublicationRepository(dashboardPool);
 const pathlessPublicEntrypoint = new PathlessPublicEntrypointRepository(dashboardPool);
 const knowledgeExports = new KnowledgeExportRepository(dashboardPool, markdownObjects);
@@ -97,16 +96,16 @@ const knowledgeResets = new KnowledgeResetRepository(dashboardPool, markdownObje
 const dashboardDocumentCatalog = new PrivateDocumentCatalogRepository(dashboardPool);
 
 async function dashboardAssetPublication(asset: {
-  id: string;
+  document_id: string;
   filename: string;
   content_type: string;
   size_bytes: string | number;
   content_hash: string;
   created_at: Date | string;
 }) {
-  const status = await pathlessPublications.status("asset", asset.id);
+  const status = await pathlessPublications.status("asset", asset.document_id);
   return {
-    id: asset.id,
+    id: asset.document_id,
     filename: asset.filename,
     content_type: asset.content_type,
     size_bytes: Number(asset.size_bytes),
@@ -168,7 +167,7 @@ async function ownerRequest(request: Request, mutation: boolean | "upload" = fal
   return principal;
 }
 
-function privatePageResolvers(sourcePath: string) {
+function privateDocumentResolvers() {
   return {
     document: async (id: string) => {
       const document = await dashboardDocumentCatalog.get(id);
@@ -188,17 +187,13 @@ function privatePageResolvers(sourcePath: string) {
       };
     },
     page: async (id: string) => {
-      const page = await dashboardPages.metadata(id);
-      return page ? { available: true as const, href: `/app/documents/${id}` } : { available: false as const };
+      const document = await dashboardDocumentCatalog.get(id);
+      return document?.document_kind === "knowledge" && document.lifecycle === "active"
+        ? { available: true as const, href: `/app/documents/${id}` }
+        : { available: false as const };
     },
     directory: async () => ({ available: false as const }),
-    pagePath: async (path: string) => {
-      for (const candidate of wikiLinkCandidatePaths(path, sourcePath)) {
-        const page = await dashboardPages.metadataByPath(candidate);
-        if (page) return { available: true as const, href: `/app/documents/${page.id}` };
-      }
-      return { available: false as const };
-    },
+    pagePath: async () => ({ available: false as const }),
     asset: async (id: string) => {
       const asset = await dashboardAssets.get(id);
       return asset
@@ -209,15 +204,14 @@ function privatePageResolvers(sourcePath: string) {
 }
 
 async function dashboardKnowledgeDocumentResponse(documentId: string) {
-  const [document, compatibility, pathlessStatus] = await Promise.all([
+  const [document, pathlessStatus] = await Promise.all([
     dashboardKnowledgeDocuments.get(documentId),
-    dashboardPages.metadata(documentId),
     pathlessPublications.status("page", documentId),
   ]);
-  if (!document || !compatibility) return null;
+  if (!document) return null;
   const renderedHtml = await renderMarkdown(
     document.body_markdown,
-    privatePageResolvers(compatibility.current_path),
+    privateDocumentResolvers(),
   );
   return dashboardKnowledgeDocument(document, renderedHtml, {
     pathless_published_revision_id: pathlessStatus.active
@@ -905,9 +899,12 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     const principal = await ownerRequest(request, true);
     emptyObjectSchema.parse(await bodyJson(request));
     const documentId = z.string().uuid().parse(params.id);
-    const document = await dashboardPages.metadata(documentId);
+    const [document, publication] = await Promise.all([
+      dashboardKnowledgeDocuments.get(documentId),
+      pathlessPublications.status("page", documentId),
+    ]);
     if (!document) return problem("Knowledge document not found", 404, "not_found");
-    if (!document.archived_at || document.published_version_id) {
+    if (!document.archived_at || publication.active) {
       return problem("Only archived, unpublished knowledge documents can be permanently deleted", 409, "document_not_deletable");
     }
     const intent = await pageDeletions.createIntent(documentId, {
@@ -972,7 +969,7 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     const limit = query.limit === undefined
       ? 50
       : z.coerce.number().int().min(1).max(100).parse(query.limit);
-    return json(await dashboardPages.recentChanges({
+    return json(await dashboardKnowledgeDocuments.recentChanges({
       ...(before ? { before } : {}),
       limit,
     }));
@@ -990,7 +987,7 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     if (!requestMatchesOrigin(request, config.APP_ORIGIN)) throw new SecurityError("Not found", 404);
     const principal = await authorizeDashboardRequest(request, "upload");
     if (!principal) throw new SecurityError("Dashboard session required", 401);
-    const asset = await dashboardAssets.get(z.string().uuid().parse(params.id), true);
+    const asset = await dashboardAssets.getForStorage(z.string().uuid().parse(params.id));
     if (!asset) return problem("Asset not found", 404, "not_found");
     const expectedSize = Number(asset.size_bytes);
     const suppliedSize = request.headers.get("content-length");
@@ -1003,8 +1000,8 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     if (!request.body && expectedSize !== 0) return problem("Asset size mismatch", 422, "integrity_error");
     try {
       await storage.write({
-        id: asset.id,
-        objectKey: asset.s3_object_key,
+        id: asset.document_id,
+        objectKey: asset.object_key,
         filename: asset.filename,
         contentType: asset.content_type,
         sizeBytes: expectedSize,
@@ -1018,12 +1015,12 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
   }, { parse: "none" })
   .get("/api/dashboard/assets/:id/status", async ({ request, params }) => {
     await ownerRequest(request);
-    const asset = await dashboardAssets.get(z.string().uuid().parse(params.id), true);
+    const asset = await dashboardAssets.getForStorage(z.string().uuid().parse(params.id));
     if (!asset) return problem("Asset not found", 404, "not_found");
-    const pathlessStatus = await pathlessPublications.status("asset", asset.id);
+    const pathlessStatus = await pathlessPublications.status("asset", asset.document_id);
     return json({
       content_available: await storage.verify(
-        asset.s3_object_key,
+        asset.object_key,
         Number(asset.size_bytes),
         asset.content_hash,
       ),
@@ -1035,13 +1032,13 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
   })
   .get("/api/dashboard/assets/:id/content", async ({ request, params }) => {
     await ownerRequest(request);
-    const asset = await dashboardAssets.get(z.string().uuid().parse(params.id), true);
+    const asset = await dashboardAssets.getForStorage(z.string().uuid().parse(params.id));
     if (!asset) return problem("Asset not found", 404, "not_found");
-    return assetContentResponse(request, asset, storage, true);
+    return assetContentResponse(request, asset, storage, true, asset.object_key);
   })
   .delete("/api/dashboard/assets/:id", async ({ request, params }) => {
     await ownerRequest(request, true);
-    const objectKey = await dashboardAssets.markDeleted(z.string().uuid().parse(params.id));
+    const objectKey = await dashboardAssets.delete(z.string().uuid().parse(params.id));
     if (!objectKey) return problem("Published or referenced asset cannot be deleted", 409, "asset_in_use");
     await storage.delete(objectKey);
     return json({ deleted: true });
