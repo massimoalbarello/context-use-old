@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
   IMAGE_LAYOUT_STYLES,
   publicPageStyles,
-  renderPublicIndexDocument,
   renderPublicLandingDocument,
   renderPublicPageDocument,
 } from "./public-page.ts";
@@ -56,24 +55,17 @@ describe("public page presentation", () => {
     expect(html).toContain('name="description" content="Massimo Albarello&#39;s introduction: a builder from Como."');
   });
 
-  test("adds a complete folder breadcrumb to published pages", () => {
-    const nested = renderPublicPageDocument("Como", "<p>Story</p>", "about/chapters/como");
-    const rootPage = renderPublicPageDocument("Notes", "<p>Text</p>", "notes");
+  test("does not derive navigation from a public identifier", () => {
+    const html = renderPublicPageDocument("Como", "<p>Story</p>", "about/chapters/como");
 
-    expect(nested).toContain('<nav class="knowledge-navigation" aria-label="Breadcrumb"><ol><li><a href="/">Home</a></li>');
-    expect(nested).toContain('<li><span class="breadcrumb-separator" aria-hidden="true">/</span><a href="/p/">Knowledge</a></li>');
-    expect(nested).toContain('<li><span class="breadcrumb-separator" aria-hidden="true">/</span><a href="/p/about/">About</a></li>');
-    expect(nested).toContain('<li><span class="breadcrumb-separator" aria-hidden="true">/</span><a href="/p/about/chapters/">Chapters</a></li>');
-    expect(nested).toContain('<li aria-current="page"><span class="breadcrumb-separator" aria-hidden="true">/</span>Como</li></ol></nav>');
-    expect(nested).toContain('<link rel="alternate" type="text/markdown" href="/p/about/chapters/como.md" title="Como as Markdown">');
-    expect(nested).toContain('<a href="/p/about/chapters/como.md" type="text/markdown">View as Markdown</a>');
-    expect(rootPage.match(/href="\/"/g)).toHaveLength(1);
-    expect(rootPage.match(/href="\/p\/"/g)).toHaveLength(1);
-    expect(rootPage).toContain('<li aria-current="page"><span class="breadcrumb-separator" aria-hidden="true">/</span>Notes</li>');
-    expect(rootPage.match(/href="\/p\/notes\.md"/g)).toHaveLength(2);
+    expect(html).toContain('<nav class="knowledge-navigation" aria-label="Breadcrumb"><ol><li><a href="/">Home</a></li>');
+    expect(html).toContain('<li aria-current="page"><span class="breadcrumb-separator" aria-hidden="true">/</span>Como</li></ol></nav>');
+    expect(html).not.toContain('<a href="/p/">Knowledge</a>');
+    expect(html).not.toContain('<a href="/p/about/">');
+    expect(html).not.toContain('<a href="/p/about/chapters/">');
   });
 
-  test("uses hyperlink-first navigation for pathless public pages", () => {
+  test("uses hyperlink-first navigation for public pages", () => {
     const publicId = "11111111-1111-4111-8111-111111111111";
     const html = renderPublicPageDocument(
       "Opaque public page",
@@ -85,7 +77,6 @@ describe("public page presentation", () => {
         summary: "A pathless public page.",
         canonicalPath: `/p/${publicId}`,
         entrypointPublicPath: null,
-        pathless: true,
       },
     );
 
@@ -137,48 +128,6 @@ describe("public page presentation", () => {
     expect(html).toContain('"dateModified":"2026-08-07T11:25:59.777Z"');
   });
 
-  test("renders generated public indexes from published pages and branches", () => {
-    const html = renderPublicIndexDocument({
-      path: "about/chapters",
-      title: "Life chapters",
-      default_page_path: null,
-      entries: [
-        { kind: "directory", path: "about/chapters/early-years", title: "The early years", summary: "Childhood stories and formative experiences.", published_count: 2, default_page_path: null },
-        { kind: "directory", path: "about/chapters/only-child", title: "Only child", summary: "Growing up as an only child.", published_count: 1, default_page_path: "about/chapters/only-child/story" },
-        { kind: "directory", path: "about/chapters/undocumented", title: "Undocumented", summary: "", published_count: 1, default_page_path: null },
-        { kind: "page", path: "about/chapters/como", title: "Como", summary: "Growing up at the foot of the Alps.", published_count: 1, default_page_path: null },
-      ],
-    });
-    const rootHtml = renderPublicIndexDocument({
-      path: "",
-      title: "Knowledge",
-      default_page_path: null,
-      entries: [],
-    });
-
-    expect(html).toContain('<nav class="knowledge-navigation" aria-label="Breadcrumb"><ol><li><a href="/">Home</a></li>');
-    expect(html).toContain('<li><span class="breadcrumb-separator" aria-hidden="true">/</span><a href="/p/">Knowledge</a></li>');
-    expect(html).toContain('<li><span class="breadcrumb-separator" aria-hidden="true">/</span><a href="/p/about/">About</a></li>');
-    expect(html).toContain('<li aria-current="page"><span class="breadcrumb-separator" aria-hidden="true">/</span>Life chapters</li>');
-    expect(html).toContain('<header class="public-index-header"><h1>Life chapters</h1></header>');
-    expect(html).toContain('<a href="/p/about/chapters/early-years/">The early years</a><span>— Childhood stories and formative experiences.</span>');
-    expect(html).toContain('<a href="/p/about/chapters/only-child/story">Only child</a><span>— Growing up as an only child.</span>');
-    expect(html).toContain('<a href="/p/about/chapters/undocumented/">Undocumented</a><span>— Published folder.</span>');
-    expect(html).toContain('<a href="/p/about/chapters/como">Como</a><span>— Growing up at the foot of the Alps.</span>');
-    expect(html).not.toContain("published page");
-    expect(html).not.toContain("Only explicitly published knowledge appears here.");
-    expect(html).toContain('<a href="/llms.txt" type="text/plain">AI-readable site index</a>');
-    expect(html).not.toContain("Generated index");
-    expect(html).not.toContain("Chapters index");
-    expect(rootHtml).toContain("<title>Knowledge | localhost:3000 public knowledge</title>");
-    expect(rootHtml).toContain('rel="canonical" href="http://localhost:3000/p/"');
-    expect(rootHtml).toContain('"@type":"CollectionPage"');
-    expect(rootHtml).toContain('<nav class="knowledge-navigation" aria-label="Breadcrumb"><ol><li><a href="/">Home</a></li><li aria-current="page"><span class="breadcrumb-separator" aria-hidden="true">/</span>Knowledge</li>');
-    expect(rootHtml).toContain('<header class="public-index-header"><h1>Knowledge</h1></header>');
-    expect(rootHtml).not.toContain("<p>Contents</p>");
-    expect(rootHtml).not.toContain("Knowledge index");
-  });
-
   test("renders the first-person billboard and optional introduction link", () => {
     const html = renderPublicLandingDocument({
       siteOrigin: "https://massimo.example",
@@ -205,10 +154,11 @@ describe("public page presentation", () => {
     expect(html).not.toContain("MCP");
   });
 
-  test("sends visitors to the public index when no entry point is configured", () => {
+  test("does not offer a dead directory index when no entry point is configured", () => {
     const html = renderPublicLandingDocument({ siteOrigin: "https://someone.example" });
 
-    expect(html).toContain('<a class="landing-cta" href="/p/">Explore my knowledge base');
+    expect(html).not.toContain('class="landing-cta"');
+    expect(html).not.toContain('href="/p/"');
     expect(html).toContain("A public billboard<br>for what I choose to share.");
     expect(html).toContain("<title>someone.example public knowledge</title>");
     expect(html).not.toContain('"@type":"Person"');
@@ -248,7 +198,7 @@ describe("public page presentation", () => {
     expect(publicPageStyles).toContain(".context-use-credit{");
     expect(publicPageStyles).toContain(".context-use-utilities{");
     expect(publicPageStyles).toContain(".knowledge-navigation{");
-    expect(publicPageStyles).toContain(".public-index-list{");
+    expect(publicPageStyles).not.toContain(".public-index");
     expect(publicPageStyles).toContain(".public-landing{");
     expect(publicPageStyles).toContain(":is(h1,h2,h3,h4,h5,h6)[id]{scroll-margin-top:1.5rem}");
     expect(publicPageStyles).toContain('.external-link::after{');

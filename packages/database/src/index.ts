@@ -71,12 +71,6 @@ export {
   type KnowledgeSettings,
 } from "./knowledge-settings.ts";
 export {
-  PublicResourceRepository,
-  type PublicResource,
-  type PublishedPublicResource,
-  type PublishedRouteAlias,
-} from "./public-resources.ts";
-export {
   SourceRecordRepository,
   type SourceRecordDocument,
   type SourceRecordIdentity,
