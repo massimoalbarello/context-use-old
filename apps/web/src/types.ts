@@ -55,12 +55,11 @@ export type PageVersionDiff = {
 
 export type KnowledgePageChange = {
   cursor: string;
-  page_id: string;
-  version_id: string;
-  version_number: number;
-  previous_version_number?: number | null;
+  document_id: string;
+  revision_id: string;
+  revision_number: number;
+  previous_revision_number: number | null;
   change_kind: "created" | "updated" | "archived" | "deleted";
-  path: string;
   title: string;
   commit_message: string;
   actor_kind: "dashboard" | "mcp" | null;
