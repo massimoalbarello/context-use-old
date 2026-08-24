@@ -124,7 +124,7 @@ export async function createMcpServer(
   documents: McpDocumentRepositories,
 ): Promise<McpServer> {
   const server = new McpServer(
-    { name: "context-use", version: "0.1.88" },
+    { name: "context-use", version: "0.1.89" },
     { instructions: SERVER_INSTRUCTIONS },
   );
   const actor = { kind: "mcp" as const, subject: context.clientId };
