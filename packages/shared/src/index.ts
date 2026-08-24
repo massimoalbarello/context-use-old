@@ -27,7 +27,7 @@ export const KnowledgeSummary = z
   .min(1)
   .max(320)
   .refine((value) => !/[\r\n]/.test(value), "Use a single-line summary")
-  .describe("Required one-sentence summary used in generated directory indexes and search results.");
+  .describe("Required one-sentence summary used in document discovery and search results.");
 const PageBodyMarkdown = z.string().max(2_000_000).describe(PAGE_MARKDOWN_BODY_DESCRIPTION);
 
 export const createKnowledgeDocumentSchema = z
