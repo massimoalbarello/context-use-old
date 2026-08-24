@@ -43,8 +43,13 @@ export type DocumentAssetCreateResult = {
   storage: { object_key: string };
 };
 
-export type DocumentAssetStorageObject = DocumentAsset & {
+export type DocumentAssetStorageObject = {
+  document_id: string;
   object_key: string;
+  filename: string;
+  content_type: string;
+  size_bytes: string;
+  content_hash: string;
 };
 
 export type DeletedDocumentAssetStorageObject = {
@@ -83,14 +88,22 @@ const ASSET_FROM = `
 
 const ASSET_SELECT = `SELECT ${ASSET_COLUMNS}${ASSET_FROM}`;
 const ASSET_STORAGE_SELECT = `
-  SELECT ${ASSET_COLUMNS},asset.s3_object_key AS object_key${ASSET_FROM}
+  SELECT asset.id AS document_id,asset.s3_object_key AS object_key,
+    asset.filename,asset.content_type,asset.size_bytes,asset.content_hash
+  FROM assets asset
+  JOIN hypermedia_documents document
+    ON document.id=asset.id
+   AND document.authority='knowledge'
+   AND document.representation='asset'
 `;
 
 type DocumentAssetDatabaseRow = Omit<DocumentAsset, "size_bytes" | "duration_seconds"> & {
   size_bytes: number | string;
   duration_seconds: number | string | null;
 };
-type DocumentAssetStorageRow = DocumentAssetDatabaseRow & { object_key: string };
+type DocumentAssetStorageRow = Omit<DocumentAssetStorageObject, "size_bytes"> & {
+  size_bytes: number | string;
+};
 
 function normalizeAsset(row: DocumentAssetDatabaseRow): DocumentAsset {
   return {
@@ -139,7 +152,11 @@ export class DocumentAssetRepository {
     return result.rows[0] ? normalizeAsset(result.rows[0]) : null;
   }
 
-  /** Exact private byte locator for the isolated MCP storage capability route. */
+  /**
+   * Exact private byte locator for the isolated storage capability route.
+   * Keep this projection independent of publication metadata: the storage role
+   * deliberately cannot map public identifiers back to private documents.
+   */
   async getForStorage(documentId: string): Promise<DocumentAssetStorageObject | null> {
     const result = await this.pool.query<DocumentAssetStorageRow>(
       `${ASSET_STORAGE_SELECT} WHERE asset.id=$1 AND asset.deleted_at IS NULL`,
@@ -147,8 +164,7 @@ export class DocumentAssetRepository {
     );
     const row = result.rows[0];
     if (!row) return null;
-    const { object_key, ...asset } = row;
-    return { ...normalizeAsset(asset), object_key };
+    return { ...row, size_bytes: String(row.size_bytes) };
   }
 
   /** Exact deleted byte locator used only by the isolated storage cleanup boundary. */
