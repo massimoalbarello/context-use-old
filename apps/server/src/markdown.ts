@@ -1,26 +1,16 @@
 import { randomUUID } from "node:crypto";
-import {
-  extractDocumentLinks,
-  extractDirectoryLinks,
-  extractWikiLinks,
-  normalizeInternalDocumentLinks,
-} from "@context-use/database";
+import { extractDocumentLinks } from "@context-use/database";
 import { marked, type Token } from "marked";
 import sanitizeHtml from "sanitize-html";
 import { config } from "./config.ts";
 
-export type LinkResolution = { available: true; href: string } | { available: false };
 export type AssetResolution = { available: true; href: string; contentType: string } | { available: false };
 export type DocumentResolution =
   | { available: true; representation: "page" | "record"; href: string }
   | { available: true; representation: "asset"; href: string; contentType: string }
   | { available: false };
 export type MarkdownResolvers = {
-  document?: (id: string) => Promise<DocumentResolution>;
-  page: (id: string) => Promise<LinkResolution>;
-  directory: (id: string) => Promise<LinkResolution>;
-  pagePath: (path: string) => Promise<LinkResolution>;
-  asset: (id: string) => Promise<AssetResolution>;
+  document: (id: string) => Promise<DocumentResolution>;
   publicAssetPath?: (path: string) => Promise<AssetResolution>;
 };
 
@@ -176,37 +166,14 @@ function renderAssetLink(label: string, target: Extract<DocumentResolution, { av
   return `<a href="${escapeHtml(target.href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(linkLabel)}</a>`;
 }
 
-async function resolveDocument(
-  id: string,
-  resolvers: MarkdownResolvers,
-): Promise<DocumentResolution> {
-  if (resolvers.document) return resolvers.document(id);
-  const [page, asset] = await Promise.all([
-    resolvers.page(id),
-    resolvers.asset(id),
-  ]);
-  // A generic identity must have one operational representation. Treat a
-  // collision as unavailable rather than choosing whichever repository won.
-  if (page.available && !asset.available) return { ...page, representation: "page" };
-  if (asset.available && !page.available) return { ...asset, representation: "asset" };
-  return { available: false };
-}
-
 export async function renderMarkdown(markdown: string, resolvers: MarkdownResolvers): Promise<string> {
-  // Old page versions can contain dashboard URLs. Convert them before any
-  // resolution so public output never carries a private route or page UUID.
-  const normalizedMarkdown = normalizeInternalDocumentLinks(markdown);
   const documents = new Map<string, DocumentResolution>();
-  const directories = new Map<string, LinkResolution>();
-  const wikiPages = new Map<string, LinkResolution>();
   const publicAssets = new Map<string, AssetResolution>();
   const formattedAssets = new Map<string, string>();
-  await Promise.all(extractDocumentLinks(normalizedMarkdown).map(async (id) => (
-    documents.set(id, await resolveDocument(id, resolvers))
+  await Promise.all(extractDocumentLinks(markdown).map(async (id) => (
+    documents.set(id, await resolvers.document(id))
   )));
-  await Promise.all(extractDirectoryLinks(normalizedMarkdown).map(async (id) => directories.set(id, await resolvers.directory(id))));
-  await Promise.all(extractWikiLinks(normalizedMarkdown).map(async ({ path }) => wikiPages.set(path, await resolvers.pagePath(path))));
-  const publicAssetPaths = [...normalizedMarkdown.matchAll(
+  const publicAssetPaths = [...markdown.matchAll(
     /context-use:\/\/public-asset\/([a-z0-9][a-z0-9/_-]*)/gi,
   )].map((match) => match[1]!.toLowerCase());
   await Promise.all([...new Set(publicAssetPaths)].map(async (path) => publicAssets.set(
@@ -214,7 +181,7 @@ export async function renderMarkdown(markdown: string, resolvers: MarkdownResolv
     await (resolvers.publicAssetPath?.(path) ?? Promise.resolve({ available: false as const })),
   )));
 
-  let source = normalizedMarkdown.replace(
+  let source = markdown.replace(
     /!\[([^\]\n]*)\]\(context-use:\/\/document\/([0-9a-f-]{36})(?:#[a-z0-9][a-z0-9_-]*)?\)(?:\{([^}\n]+)\})?/gi,
     (_match, label: string, id: string, rawFormatting: string | undefined) => {
       const target = documents.get(id.toLowerCase());
@@ -236,15 +203,6 @@ export async function renderMarkdown(markdown: string, resolvers: MarkdownResolv
     },
   );
   source = source.replace(
-    /\[([^\]]*)\]\(context-use:\/\/directory\/([0-9a-f-]{36})\)/gi,
-    (_match, label: string, id: string) => {
-      const target = directories.get(id.toLowerCase());
-      return target?.available
-        ? `[${label}](${target.href})`
-        : `<span class="private-reference">${escapeHtml(label || "Private directory")}</span>`;
-    },
-  );
-  source = source.replace(
     /!\[([^\]\n]*)\]\(context-use:\/\/public-asset\/([a-z0-9][a-z0-9/_-]*)\)(?:\{([^}\n]+)\})?/gi,
     (_match, label: string, path: string, rawFormatting: string | undefined) => renderAssetReference(
       label,
@@ -262,26 +220,10 @@ export async function renderMarkdown(markdown: string, resolvers: MarkdownResolv
         : `<span class="private-reference">${escapeHtml(label || "Private asset")}</span>`;
     },
   );
+  // Historical source remains immutable, but obsolete private identities are
+  // inert. Canonical routes produced by successful document resolvers remain.
   source = source.replace(
-    /(?<!!)\[\[([a-z0-9][a-z0-9/_-]*)(?:#([a-z0-9][a-z0-9_-]*))?(?:\|([^\]\n]+))?\]\]/gi,
-    (_match, rawPath: string, fragment: string | undefined, rawLabel: string | undefined) => {
-      const path = rawPath.toLowerCase();
-      const target = wikiPages.get(path);
-      const label = rawLabel?.trim()
-        || (target?.available ? path.split("/").at(-1) || "Published page" : "Private page");
-      return target?.available
-        ? `<a href="${escapeHtml(appendFragment(target.href, fragment))}">${escapeHtml(label)}</a>`
-        : `<span class="private-reference">${escapeHtml(label)}</span>`;
-    },
-  );
-
-  // Defense in depth for malformed or raw stable references outside a
-  // recognized Markdown construct. Canonical routes produced by successful
-  // private resolvers must remain intact; the public database projection
-  // separately removes legacy dashboard and asset routes before public code
-  // can read them.
-  source = source.replace(
-    /context-use:\/\/(?:document|page|directory|asset)\/[0-9a-f-]{36}/gi,
+    /context-use:\/\/(?:document|page|directory|asset)\/[0-9a-f-]{36}|\/app\/(?:pages|directories)\/[0-9a-f-]{36}/gi,
     '<span class="private-reference">Private reference</span>',
   );
 
@@ -371,9 +313,7 @@ export function publicationWarnings(markdown: string, metadata: string[] = []): 
   if (/(?:BEGIN (?:RSA |EC )?PRIVATE KEY|api[_-]?key\s*[:=]|secret\s*[:=]|bearer\s+[a-z0-9._-]{16,})/i.test(publicText)) {
     warnings.push("Possible secret material detected; review the page carefully");
   }
-  const privateReferences = extractDocumentLinks(markdown).length
-    + extractDirectoryLinks(markdown).length
-    + extractWikiLinks(markdown).length;
+  const privateReferences = extractDocumentLinks(markdown).length;
   if (privateReferences) warnings.push(`${privateReferences} context-use reference(s) have independent visibility`);
   return warnings;
 }

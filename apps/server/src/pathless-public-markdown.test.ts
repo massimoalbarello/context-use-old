@@ -12,7 +12,9 @@ describe("pathless public Markdown projection", () => {
   test("uses canonical public UUID routes and strips every private identity", () => {
     const result = projectPathlessPublicMarkdown([
       `[Page](context-use://document/${page}#details)`,
-      `![Photo](context-use://asset/${asset}){size=medium}`,
+      `![Photo](context-use://document/${asset}){size=medium}`,
+      `[Old page](context-use://page/${page})`,
+      `![Old asset](context-use://asset/${asset})`,
       `[Private](context-use://document/${privateDocument})`,
       `Literal ${source} and <script>leak ${privateDocument}</script>`,
     ].join("\n\n"), [
@@ -23,6 +25,8 @@ describe("pathless public Markdown projection", () => {
 
     expect(result.bodyMarkdown).toContain(`[Page](/p/${publicPage}#details)`);
     expect(result.bodyMarkdown).toContain(`![Photo](/a/${publicAsset}){size=medium}`);
+    expect(result.bodyMarkdown).toContain("Old page");
+    expect(result.bodyMarkdown).toContain("Old asset");
     expect(result.bodyMarkdown).toContain("Private");
     expect(result.bodyMarkdown).not.toContain(source);
     expect(result.bodyMarkdown).not.toContain(privateDocument);

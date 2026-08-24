@@ -1,29 +1,11 @@
 const UUID_PATTERN = "([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})";
 const FRAGMENT_PATTERN = "(#[a-z0-9][a-z0-9_-]*)?";
 const DOCUMENT_LINK = new RegExp(`(!?)\\[[^\\]\\n]*\\]\\(context-use:\\/\\/document\\/${UUID_PATTERN}${FRAGMENT_PATTERN}\\)`, "gi");
-const PAGE_LINK = new RegExp(`(?<!!)\\[[^\\]\\n]*\\]\\(context-use:\\/\\/document\\/${UUID_PATTERN}${FRAGMENT_PATTERN}\\)`, "gi");
-const DIRECTORY_LINK = new RegExp(`\\[[^\\]]*\\]\\(context-use:\\/\\/directory\\/${UUID_PATTERN}${FRAGMENT_PATTERN}\\)`, "gi");
-const ASSET_LINK = new RegExp(`!\\[[^\\]\\n]*\\]\\(context-use:\\/\\/document\\/${UUID_PATTERN}${FRAGMENT_PATTERN}\\)`, "gi");
-const WIKI_LINK = /(?<!!)\[\[([a-z0-9][a-z0-9/_-]*)(?:#[a-z0-9][a-z0-9_-]*)?(?:\|([^\]\n]+))?\]\]/gi;
-const LEGACY_PRIVATE_PAGE_LINK = new RegExp(
-  `(\\[[^\\]\\n]*\\]\\()\\/app\\/pages\\/${UUID_PATTERN}${FRAGMENT_PATTERN}(\\))`,
-  "gi",
-);
-const LEGACY_DOCUMENT_LINK = new RegExp(
-  `(!?\\[[^\\]\\n]*\\]\\()context-use:\\/\\/(?:page|asset|document)\\/${UUID_PATTERN}${FRAGMENT_PATTERN}(\\))`,
-  "gi",
-);
-const LEGACY_PRIVATE_DIRECTORY_LINK = new RegExp(
-  `(\\[[^\\]\\n]*\\]\\()\\/app\\/directories\\/${UUID_PATTERN}${FRAGMENT_PATTERN}(\\))`,
-  "gi",
-);
 
 // Keep the application-side guard aligned with replace_document_links. Raw
 // source persistence must not fail merely because its derived graph exceeds
 // this bounded indexing contract.
 export const MAX_DOCUMENT_LINKS_PER_REVISION = 100_000;
-
-export type WikiLink = { path: string; label: string };
 
 function escapedAt(value: string, index: number): boolean {
   let backslashes = 0;
@@ -354,7 +336,7 @@ function mergeRanges(ranges: MarkdownRange[]): MarkdownRange[] {
 }
 
 /** Transform only rendered prose, preserving code, comments and escaped link examples byte-exact. */
-export function mapMarkdownOutsideCode(
+function mapMarkdownOutsideCode(
   value: string,
   transform: (plain: string) => string,
 ): string {
@@ -375,79 +357,13 @@ export function mapMarkdownOutsideCode(
   return output + transform(value.slice(plainStart));
 }
 
-function replaceUnescapedLinks(
-  value: string,
-  pattern: RegExp,
-  replacement: (match: RegExpMatchArray) => string,
-): string {
-  let output = "";
-  let cursor = 0;
-  for (const match of value.matchAll(new RegExp(pattern.source, pattern.flags))) {
-    const start = match.index;
-    const bracket = start + match[0].indexOf("[");
-    if (escapedAt(value, bracket)) continue;
-    output += value.slice(cursor, start) + replacement(match);
-    cursor = start + match[0].length;
-  }
-  return output + value.slice(cursor);
-}
-
-/**
- * Stored hypermedia refers to document identity, never to an operational
- * representation or presentation surface. Legacy page and asset schemes remain
- * readable for immutable revisions, while every new revision uses one URI.
- */
-export function normalizeInternalDocumentLinks(markdown: string): string {
-  return mapMarkdownOutsideCode(markdown, (plain) => {
-    let normalized = replaceUnescapedLinks(
-      plain,
-      LEGACY_PRIVATE_PAGE_LINK,
-      (match) => (
-        `${match[1]}context-use://document/${match[2]!.toLowerCase()}${match[3]?.toLowerCase() ?? ""}${match[4]}`
-      ),
-    );
-    normalized = replaceUnescapedLinks(
-      normalized,
-      LEGACY_DOCUMENT_LINK,
-      (match) => (
-        `${match[1]}context-use://document/${match[2]!.toLowerCase()}${match[3]?.toLowerCase() ?? ""}${match[4]}`
-      ),
-    );
-    normalized = replaceUnescapedLinks(
-      normalized,
-      LEGACY_PRIVATE_DIRECTORY_LINK,
-      (match) => (
-        `${match[1]}context-use://directory/${match[2]!.toLowerCase()}${match[3]?.toLowerCase() ?? ""}${match[4]}`
-      ),
-    );
-    return normalized;
-  });
-}
-
-/** @deprecated Use normalizeInternalDocumentLinks. */
-export function normalizeInternalPageLinks(markdown: string): string {
-  return normalizeInternalDocumentLinks(markdown);
-}
-
 export function extractDocumentLinks(markdown: string): string[] {
   return extractOutsideCode(markdown, DOCUMENT_LINK, 2);
 }
 
-export function extractPageLinks(markdown: string): string[] {
-  return extractOutsideCode(markdown, PAGE_LINK, 1);
-}
-
-export function extractDirectoryLinks(markdown: string): string[] {
-  return extractOutsideCode(markdown, DIRECTORY_LINK, 1);
-}
-
-export function extractAssetLinks(markdown: string): string[] {
-  return extractOutsideCode(markdown, ASSET_LINK, 1);
-}
-
 function extractOutsideCode(markdown: string, pattern: RegExp, capture: number): string[] {
   const links = new Set<string>();
-  mapMarkdownOutsideCode(normalizeInternalDocumentLinks(markdown), (plain) => {
+  mapMarkdownOutsideCode(markdown, (plain) => {
     for (const match of plain.matchAll(new RegExp(pattern.source, pattern.flags))) {
       const bracket = match.index + match[0].indexOf("[");
       if (escapedAt(plain, bracket)) continue;
@@ -456,24 +372,4 @@ function extractOutsideCode(markdown: string, pattern: RegExp, capture: number):
     return plain;
   });
   return [...links];
-}
-
-export function extractWikiLinks(markdown: string): WikiLink[] {
-  const links = new Map<string, WikiLink>();
-  mapMarkdownOutsideCode(markdown, (plain) => {
-    for (const match of plain.matchAll(new RegExp(WIKI_LINK.source, WIKI_LINK.flags))) {
-      if (escapedAt(plain, match.index)) continue;
-      const path = match[1]!.toLowerCase();
-      const label = match[2]?.trim() || path.split("/").at(-1) || path;
-      if (!links.has(path)) links.set(path, { path, label });
-    }
-    return plain;
-  });
-  return [...links.values()];
-}
-
-export function wikiLinkCandidatePaths(path: string, sourcePath: string): string[] {
-  if (path.includes("/")) return [path];
-  const parent = sourcePath.split("/").slice(0, -1).join("/");
-  return parent ? [`${parent}/${path}`, path] : [path];
 }
