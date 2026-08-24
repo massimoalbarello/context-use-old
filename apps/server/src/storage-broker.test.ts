@@ -31,8 +31,8 @@ function privateAssets(
       if (!row) return null;
       const bytes = Buffer.from(row.bytes);
       return {
-        id,
-        s3_object_key: `objects/${id}`,
+        document_id: id,
+        object_key: `objects/${id}`,
         filename: row.filename,
         content_type: row.contentType,
         size_bytes: bytes.byteLength,
@@ -40,7 +40,7 @@ function privateAssets(
       };
     },
     getDeletedForStorage: async (id: string) => deleted.has(id)
-      ? { id, s3_object_key: `objects/${id}` }
+      ? { document_id: id, object_key: `objects/${id}` }
       : null,
   };
 }

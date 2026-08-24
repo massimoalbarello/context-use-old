@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { makeSignature } from "better-auth/crypto";
 import { Client, Pool } from "pg";
 import {
-  AssetRepository,
+  DocumentAssetRepository,
   PathlessStoragePublicationRepository,
 } from "@context-use/database";
 import { disposableDatabaseUrl } from "@context-use/database/disposable-database";
@@ -21,12 +21,12 @@ const requireDatabase = (): string => {
 };
 const enabled = process.env.TEST_APP_DATABASE_URL === "1";
 const testStorageRoot = enabled ? await mkdtemp(join(tmpdir(), "context-use-app-storage-")) : null;
-const testStoragePool = enabled ? new Pool({ connectionString: requireDatabase() }) : null;
+const testStoragePool = enabled ? new Pool({ connectionString: config.STORAGE_DATABASE_URL }) : null;
 const testStorage = testStorageRoot ? new FilesystemStorage(testStorageRoot) : null;
 if (enabled) {
   const storageBroker = createStorageBrokerApp({
     storage: testStorage!,
-    privateAssets: new AssetRepository(testStoragePool!),
+    privateAssets: new DocumentAssetRepository(testStoragePool!),
     pathlessPublications: new PathlessStoragePublicationRepository(testStoragePool!),
     tokens: {
       dashboard: config.STORAGE_DASHBOARD_TOKEN,
