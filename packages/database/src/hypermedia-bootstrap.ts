@@ -73,10 +73,6 @@ export class HypermediaBootstrapRepository {
               AND state.archived_at IS NULL
              WHERE registry.key=expected.key AND registry.disabled_at IS NULL
            )
-         )
-         AND EXISTS (
-           SELECT 1 FROM publication_settings settings
-           WHERE settings.singleton AND settings.updated_at IS NOT NULL
          ) AS ready`,
     );
     return result.rows[0]?.ready === true;
