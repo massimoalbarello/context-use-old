@@ -19,7 +19,6 @@ export class PageDeletionRepository {
        FROM knowledge_pages page
        WHERE page.id=$2
          AND page.archived_at IS NOT NULL
-         AND page.published_version_id IS NULL
        RETURNING id,page_id,expected_version_id,expires_at`,
       [id, pageId, principal.ownerUserId, principal.sessionId],
     );

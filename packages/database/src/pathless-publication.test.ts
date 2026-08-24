@@ -525,124 +525,50 @@ describe("pathless public read boundary", () => {
 });
 
 describe("publication confirmation family dispatch", () => {
-  test("normalizes pathless confirmation intent fields without publication evidence", async () => {
+  test("reads only pathless confirmation fields without publication evidence", async () => {
     const pathlessIntent: PublicationConfirmationIntent = {
-      intent_store: "pathless",
       id: intentId,
       action: "publish",
       target_kind: "page",
       target_id: documentId,
       version_id: revisionId,
-      public_path: null,
       owner_user_id: "context-use-owner",
       session_id: "session-1",
       challenge: "challenge",
       expires_at: new Date("2026-08-23T12:05:00.000Z"),
     };
-    const { calls, pool } = recordingPool([{
-      reserved_store: "pathless",
-      ...pathlessIntent,
-    }]);
+    const { calls, pool } = recordingPool([pathlessIntent]);
 
     expect(await new ConfirmationRepository(pool).publicationIntent(intentId))
       .toEqual(pathlessIntent);
-    expect(calls[0]!.sql).toContain("UNION ALL");
     expect(calls[0]!.sql).toContain("FROM publication_intent_id_reservations");
-    expect(calls[0]!.sql).toContain("FULL JOIN intent ON true");
-    expect(calls[0]!.sql).toContain("pathless.target_document_id AS target_id");
-    expect(calls[0]!.sql).toContain("pathless.expected_revision_id AS version_id");
+    expect(calls[0]!.sql).toContain("JOIN pathless_publication_intents");
+    expect(calls[0]!.sql).toContain("reservation.intent_store='pathless'");
+    expect(calls[0]!.sql).not.toContain("FROM publication_intents");
     expect(calls[0]!.sql).not.toContain("candidate_public_id");
     expect(calls[0]!.sql).not.toContain("candidate_artifact_id");
     expect(calls[0]!.sql).not.toContain("object_key");
     expect(calls[0]!.values).toEqual([intentId]);
   });
 
-  test("keeps the unified confirmation procedure and legacy normalized shape", async () => {
-    const legacyIntent: PublicationConfirmationIntent = {
-      intent_store: "legacy",
-      id: intentId,
-      action: "unpublish",
-      target_kind: "asset",
-      target_id: documentId,
-      version_id: null,
-      public_path: "media/portrait",
-      owner_user_id: "context-use-owner",
-      session_id: "session-legacy",
-      challenge: "challenge",
-      expires_at: new Date("2026-08-23T12:05:00.000Z"),
-    };
-    const { calls, pool } = recordingPool([{
-      reserved_store: "legacy",
-      ...legacyIntent,
-    }]);
+  test("keeps the checked confirmation procedure while hiding legacy intents", async () => {
+    const { calls, pool } = recordingPool();
     const confirmations = new ConfirmationRepository(pool);
 
-    expect(await confirmations.publicationIntent(intentId)).toEqual(legacyIntent);
+    expect(await confirmations.publicationIntent(intentId)).toBeNull();
     await confirmations.confirmPublication(intentId, {
       ownerUserId: "context-use-owner",
-      sessionId: "session-legacy",
+      sessionId: "session-1",
     }, { credentialId: "credential", expectedCounter: 4, newCounter: 5 });
 
     expect(calls[1]).toEqual({
       sql: "SELECT confirm_publication_intent($1,$2,$3,$4,$5,$6)",
-      values: [intentId, "context-use-owner", "session-legacy", "credential", 4, 5],
+      values: [intentId, "context-use-owner", "session-1", "credential", 4, 5],
     });
   });
 
-  test("fails closed on ambiguous or reservation-mismatched publication families", async () => {
-    const candidate = {
-      id: intentId,
-      action: "publish",
-      target_kind: "page",
-      target_id: documentId,
-      version_id: revisionId,
-      public_path: null,
-      owner_user_id: "context-use-owner",
-      session_id: "session-1",
-      challenge: null,
-      expires_at: new Date(),
-    };
-    const ambiguous = recordingPool([
-      { reserved_store: "legacy", intent_store: "legacy", ...candidate },
-      { reserved_store: "legacy", intent_store: "pathless", ...candidate },
-    ]);
-    await expect(new ConfirmationRepository(ambiguous.pool).publicationIntent(intentId))
-      .rejects.toThrow("ambiguous family");
-
-    const mismatched = recordingPool([{
-      reserved_store: "legacy",
-      intent_store: "pathless",
-      ...candidate,
-    }]);
-    await expect(new ConfirmationRepository(mismatched.pool).publicationIntent(intentId))
-      .rejects.toThrow("does not match its reservation");
-
-    const unreserved = recordingPool([{
-      reserved_store: null,
-      intent_store: "pathless",
-      ...candidate,
-    }]);
-    await expect(new ConfirmationRepository(unreserved.pool).publicationIntent(intentId))
-      .rejects.toThrow("does not match its reservation");
-  });
-
-  test("returns null only for an absent UUID or a legacy tombstone", async () => {
+  test("returns null when no active pathless intent is reserved", async () => {
     const absent = recordingPool();
     expect(await new ConfirmationRepository(absent.pool).publicationIntent(intentId)).toBeNull();
-
-    const tombstone = recordingPool([{
-      reserved_store: "legacy",
-      intent_store: null,
-      id: null,
-    }]);
-    expect(await new ConfirmationRepository(tombstone.pool).publicationIntent(intentId)).toBeNull();
-
-    const missingPathless = recordingPool([{
-      reserved_store: "pathless",
-      intent_store: null,
-      id: null,
-    }]);
-    await expect(new ConfirmationRepository(missingPathless.pool).publicationIntent(intentId))
-      .rejects.toThrow("has no live family");
   });
 });

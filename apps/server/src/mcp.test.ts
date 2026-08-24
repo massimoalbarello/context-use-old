@@ -127,13 +127,11 @@ describe("MCP knowledge tools", () => {
     const document = {
       document_id: documentId,
       current_revision_id: revisionId,
-      published_revision_id: null,
       public_id: null,
       revision_number: 1,
       title: "Stable document",
       summary: "A path-independent knowledge document.",
       archived_at: null,
-      legacy_published: false,
       current_link_contract: "generic_document_v1",
       pathless_search_ready: true,
       created_at: "2026-08-23T12:00:00.000Z",

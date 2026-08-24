@@ -42,7 +42,6 @@ export type PrivateDocumentCatalogItem = {
   source_record_id: string | null;
   operational_roles: PrivateDocumentOperationalRole[];
   public_id: string | null;
-  legacy_published: boolean;
   current_link_contract: "generic_document_v1" | null;
   links_indexed_at: string | null;
   pathless_search_ready: boolean;
@@ -92,6 +91,7 @@ type CatalogDatabaseRow = Omit<
   "size_bytes" | "duration_seconds" | "connection_instance_id"
     | "links_indexed_at" | "created_at" | "updated_at"
 > & {
+  legacy_published?: boolean;
   size_bytes: number | string | null;
   duration_seconds: number | string | null;
   connection_instance_id: number | string | null;
@@ -166,8 +166,9 @@ function timestamp(value: Date | string): string {
 }
 
 function normalizeCatalogItem(row: CatalogDatabaseRow): PrivateDocumentCatalogItem {
+  const { legacy_published: _legacyPublished, ...current } = row;
   return {
-    ...row,
+    ...current,
     size_bytes: row.size_bytes === null ? null : String(row.size_bytes),
     duration_seconds: row.duration_seconds === null ? null : String(row.duration_seconds),
     connection_instance_id: row.connection_instance_id === null

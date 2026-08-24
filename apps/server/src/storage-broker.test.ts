@@ -179,7 +179,6 @@ describe("storage broker capabilities", () => {
     const app = createStorageBrokerApp({
       storage,
       privateAssets: privateAssets({}),
-      publicAssets: { assetByPublicPath: async () => null },
       pathlessPublications: claims,
       tokens,
     });
@@ -253,14 +252,12 @@ describe("storage broker capabilities", () => {
     const left = createStorageBrokerApp({
       storage,
       privateAssets: privateAssets({}),
-      publicAssets: { assetByPublicPath: async () => null },
       pathlessPublications: claims,
       tokens,
     });
     const right = createStorageBrokerApp({
       storage,
       privateAssets: privateAssets({}),
-      publicAssets: { assetByPublicPath: async () => null },
       pathlessPublications: claims,
       tokens,
     });
@@ -286,9 +283,6 @@ describe("storage broker capabilities", () => {
     const app = createStorageBrokerApp({
       storage,
       privateAssets: privateAssets({}),
-      publicAssets: {
-        assetByPublicPath: async (path: string) => path === "public/asset" ? { s3_object_key: publishedKey } : null,
-      },
       tokens,
     });
 
@@ -321,7 +315,6 @@ describe("storage broker capabilities", () => {
     const app = createStorageBrokerApp({
       storage,
       privateAssets: privateAssets({}),
-      publicAssets: { assetByPublicPath: async () => null },
       pathlessPublications: claims,
       tokens,
     });
@@ -381,16 +374,6 @@ describe("storage broker capabilities", () => {
     const app = createStorageBrokerApp({
       storage,
       privateAssets: privateAssets({}),
-      publicAssets: {
-        assetByPublicPath: async () => null,
-        pageByPublicPath: async (path: string) => path === "public/page"
-          ? {
-              body_object_key: publicDocumentKey,
-              body_size_bytes: publicProjection.byteLength,
-              body_content_hash: createHash("sha256").update(publicProjection).digest("hex"),
-            }
-          : null,
-      },
       tokens,
     });
     const markdown = Buffer.from("# Private knowledge\n");
@@ -433,7 +416,6 @@ describe("storage broker capabilities", () => {
     const app = createStorageBrokerApp({
       storage,
       privateAssets: privateAssets({}),
-      publicAssets: { assetByPublicPath: async () => null },
       tokens,
     });
 
@@ -461,7 +443,6 @@ describe("storage broker capabilities", () => {
     const app = createStorageBrokerApp({
       storage,
       privateAssets: privateAssets({}),
-      publicAssets: { assetByPublicPath: async () => null },
       tokens,
     });
     const directory = await mkdtemp(join(tmpdir(), "context-use-document-bom-"));
@@ -491,7 +472,6 @@ describe("storage broker capabilities", () => {
           filename: "new.txt", contentType: "text/plain", bytes: "new",
         },
       }),
-      publicAssets: { assetByPublicPath: async () => null },
       tokens,
     });
 
@@ -541,7 +521,6 @@ describe("storage broker capabilities", () => {
     const app = createStorageBrokerApp({
       storage,
       privateAssets: privateAssets({}),
-      publicAssets: { assetByPublicPath: async () => null },
       tokens,
     });
     const payload = {
@@ -594,7 +573,6 @@ describe("storage broker capabilities", () => {
           bytes,
         },
       }),
-      publicAssets: { assetByPublicPath: async () => null },
       tokens,
     });
     const directory = await mkdtemp(join(tmpdir(), "context-use-storage-broker-"));
@@ -621,7 +599,6 @@ describe("storage broker capabilities", () => {
         [privateId]: { filename: "private.txt", contentType: "text/plain", bytes: "private" },
         [publishedId]: { filename: "published.txt", contentType: "text/plain", bytes: "published" },
       }, [privateId]),
-      publicAssets: { assetByPublicPath: async () => null },
       tokens,
     });
 
@@ -637,7 +614,6 @@ describe("storage broker capabilities", () => {
     const app = createStorageBrokerApp({
       storage,
       privateAssets: privateAssets({}),
-      publicAssets: { assetByPublicPath: async () => null },
       tokens,
     });
     const bytes = Buffer.from("complete-knowledge-export");
@@ -682,7 +658,6 @@ describe("storage broker capabilities", () => {
     const app = createStorageBrokerApp({
       storage,
       privateAssets: privateAssets({}),
-      publicAssets: { assetByPublicPath: async () => null },
       tokens,
     });
     const directory = await mkdtemp(join(tmpdir(), "context-use-generated-storage-"));
