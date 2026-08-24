@@ -433,17 +433,13 @@ export class KnowledgeDocumentRepository {
       await client.query(
         `UPDATE knowledge_pages
          SET current_version_id=$2,
-           search_vector=''::tsvector,updated_at=now()
+           archived_at=now(),search_vector=''::tsvector,updated_at=now()
          WHERE id=$1`,
         [documentId, revisionId],
       );
       await client.query(
         "SELECT register_generic_knowledge_revision($1,$2,$3::uuid[])",
         [revisionId, source.body_markdown, targets],
-      );
-      await client.query(
-        "UPDATE knowledge_pages SET archived_at=now(),updated_at=now() WHERE id=$1",
-        [documentId],
       );
       await client.query(
         "UPDATE hypermedia_documents SET updated_at=now() WHERE id=$1",
