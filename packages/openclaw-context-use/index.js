@@ -2,9 +2,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { lstat, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
+import { registerContextUseCli } from "./cli.js";
+import {
+  ATTACHMENT_TOOL_NAME,
+  PLUGIN_ID,
+} from "./setup.js";
 
-export const PLUGIN_ID = "context-use-memory";
-export const ATTACHMENT_TOOL_NAME = "context_use_attachment";
+export { ATTACHMENT_TOOL_NAME, PLUGIN_ID } from "./setup.js";
 const CURATOR_SESSION_MARKER = ":context-use-curator:";
 const TURN_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -712,7 +716,7 @@ export function createPluginState(api) {
         ...(ctx.modelProviderId ? { provider: ctx.modelProviderId } : {}),
         ...(ctx.modelId ? { model: ctx.modelId } : {}),
         lane: `context-use-memory:${agentId}`,
-        lightContext: true,
+        lightContext: false,
         deliver: false,
         idempotencyKey: `context-use-capture:${runIdentity ?? randomUUID()}`,
         ...(ctx.workspaceDir ? { cwd: ctx.workspaceDir } : {}),
@@ -796,6 +800,7 @@ const plugin = {
     });
     api.on("before_message_write", state.recordTranscriptMessage);
     api.on("agent_end", state.capture);
+    registerContextUseCli(api);
   },
 };
 
