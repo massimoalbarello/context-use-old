@@ -4,8 +4,8 @@ import { Pool } from "pg";
 import {
   ConfirmationRepository,
   DocumentAssetRepository,
+  KnowledgeDocumentRepository,
   KnowledgeExportRepository,
-  PageRepository,
 } from "../src/index.ts";
 import { disposableDatabaseUrl } from "../src/disposable-database.ts";
 import { MemoryMarkdownStore } from "./memory-markdown-store.ts";
@@ -16,12 +16,12 @@ const describeDatabase = databaseUrl ? describe : describe.skip;
 describeDatabase("passkey-bound current knowledge exports", () => {
   const pool = new Pool({ connectionString: databaseUrl, max: 1 });
   const bodies = new MemoryMarkdownStore();
-  const pages = new PageRepository(pool, bodies);
+  const documents = new KnowledgeDocumentRepository(pool, bodies);
   const assets = new DocumentAssetRepository(pool);
   const exports = new KnowledgeExportRepository(pool, bodies);
   const confirmations = new ConfirmationRepository(pool);
   const actor = { kind: "dashboard" as const, subject: "knowledge-export-test" };
-  let fixtureRoot = "";
+  const fixtureDocumentIds: string[] = [];
   const fixtureIntentIds: string[] = [];
   const fixtureAssetIds: string[] = [];
   let createdOwner = false;
@@ -54,27 +54,30 @@ describeDatabase("passkey-bound current knowledge exports", () => {
         await pool.query("DELETE FROM confirmation_challenges WHERE intent_id=$1", [fixtureIntentId]);
         await pool.query("DELETE FROM knowledge_export_intents WHERE id=$1", [fixtureIntentId]);
       }
-      if (fixtureRoot) {
+      if (fixtureDocumentIds.length) {
         await pool.query(
           `DELETE FROM knowledge_asset_links
            WHERE source_version_id IN (
-             SELECT version.id FROM knowledge_page_versions version
-             JOIN knowledge_pages page ON page.id=version.page_id
-             WHERE page.current_path LIKE $1
-           ) OR target_asset_id IN (
-             SELECT id FROM assets WHERE current_path LIKE $1
-           )`,
-          [`${fixtureRoot}/%`],
+             SELECT id FROM knowledge_page_versions WHERE page_id=ANY($1::uuid[])
+           ) OR target_asset_id=ANY($1::uuid[])`,
+          [fixtureDocumentIds],
         );
         await pool.query(
-          `DELETE FROM knowledge_page_versions WHERE page_id IN (
-             SELECT id FROM knowledge_pages WHERE current_path LIKE $1
-           )`,
-          [`${fixtureRoot}/%`],
+          `DELETE FROM document_links
+           WHERE source_revision_id IN (
+             SELECT id FROM hypermedia_document_revisions WHERE document_id=ANY($1::uuid[])
+           ) OR target_document_id=ANY($1::uuid[])`,
+          [fixtureDocumentIds],
         );
-        await pool.query("DELETE FROM knowledge_pages WHERE current_path LIKE $1", [`${fixtureRoot}/%`]);
-        await pool.query("DELETE FROM assets WHERE current_path LIKE $1", [`${fixtureRoot}/%`]);
-        await pool.query("DELETE FROM knowledge_directories WHERE current_path=$1", [fixtureRoot]);
+        await pool.query("DELETE FROM pathless_knowledge_search_chunks WHERE document_id=ANY($1::uuid[])", [fixtureDocumentIds]);
+        await pool.query("DELETE FROM pathless_knowledge_search WHERE document_id=ANY($1::uuid[])", [fixtureDocumentIds]);
+        await pool.query("DELETE FROM knowledge_revision_contracts WHERE document_id=ANY($1::uuid[])", [fixtureDocumentIds]);
+        await pool.query("DELETE FROM knowledge_page_changes WHERE page_id=ANY($1::uuid[])", [fixtureDocumentIds]);
+        await pool.query("DELETE FROM knowledge_page_versions WHERE page_id=ANY($1::uuid[])", [fixtureDocumentIds]);
+        await pool.query("DELETE FROM knowledge_pages WHERE id=ANY($1::uuid[])", [fixtureDocumentIds]);
+        await pool.query("DELETE FROM hypermedia_document_revisions WHERE document_id=ANY($1::uuid[])", [fixtureDocumentIds]);
+        await pool.query("DELETE FROM hypermedia_documents WHERE id=ANY($1::uuid[])", [fixtureDocumentIds]);
+        await pool.query("DELETE FROM publication_target_generations WHERE target_document_id=ANY($1::uuid[])", [fixtureDocumentIds]);
       }
       if (fixtureAssetIds.length) {
         await pool.query("DELETE FROM assets WHERE id=ANY($1::uuid[])", [fixtureAssetIds]);
@@ -96,31 +99,22 @@ describeDatabase("passkey-bound current knowledge exports", () => {
 
   test("exports active knowledge as of download and permits resumable same-session claims", async () => {
     const suffix = crypto.randomUUID().slice(0, 8);
-    fixtureRoot = `tests/export-${suffix}`;
-    await pool.query(
-      `INSERT INTO knowledge_directories(id,current_path,title,summary,search_vector)
-       VALUES
-         ($1,'tests','Tests','Integration test knowledge.',directory_search_vector('tests','Tests','Integration test knowledge.','')),
-         ($2,$3,'Export fixture','Knowledge used to test exports.',directory_search_vector($3,'Export fixture','Knowledge used to test exports.',''))
-       ON CONFLICT (current_path) DO NOTHING`,
-      [crypto.randomUUID(), crypto.randomUUID(), fixtureRoot],
-    );
-    const active = await pages.create({
-      path: `${fixtureRoot}/active`,
+    const active = await documents.create({
       title: "Active export page",
       summary: "The active page included in an export.",
       body_markdown: "Latest active body",
       commit_message: "Create active export fixture",
     }, actor);
-    const archived = await pages.create({
-      path: `${fixtureRoot}/archived`,
+    fixtureDocumentIds.push(active.document_id);
+    const archived = await documents.create({
       title: "Archived export page",
       summary: "An archived page excluded from an export.",
       body_markdown: "Archived body",
       commit_message: "Create archived export fixture",
     }, actor);
-    await pages.archive(archived.id, {
-      expected_version_number: 1,
+    fixtureDocumentIds.push(archived.document_id);
+    await documents.archive(archived.document_id, {
+      expected_revision_number: 1,
       commit_message: "Archive export fixture",
     }, actor);
     const asset = await assets.create({
@@ -146,22 +140,21 @@ describeDatabase("passkey-bound current knowledge exports", () => {
     });
     await expect(confirmations.claimExport(intent.id, { ...principal, sessionId: "wrong-session" })).rejects.toThrow();
 
-    await pages.update(active.id, {
-      path: `${fixtureRoot}/active`,
+    await documents.update(active.document_id, {
       title: "Active export page",
       summary: "The active page included in an export.",
       body_markdown: "Current body at download",
       commit_message: "Update after export authorization",
-      expected_version_number: 1,
+      expected_revision_number: 1,
     }, actor);
 
     await confirmations.claimExport(intent.id, principal);
     const snapshot = await exports.currentSnapshot();
-    expect(snapshot.pages.find(({ document_id }) => document_id === active.id)?.body_markdown)
+    expect(snapshot.pages.find(({ document_id }) => document_id === active.document_id)?.body_markdown)
       .toBe("Current body at download");
-    expect(snapshot.pages.find(({ document_id }) => document_id === active.id)?.summary)
+    expect(snapshot.pages.find(({ document_id }) => document_id === active.document_id)?.summary)
       .toBe("The active page included in an export.");
-    expect(snapshot.pages.some(({ document_id }) => document_id === archived.id)).toBe(false);
+    expect(snapshot.pages.some(({ document_id }) => document_id === archived.document_id)).toBe(false);
     expect(snapshot.assets.find(({ document_id }) => document_id === asset.document.document_id)).toMatchObject({
       filename: "friendly.pdf",
     });

@@ -1,15 +1,14 @@
 import {
   AutomationRegistryRepository,
+  defaultHypermediaBootstrapTemplate,
   HypermediaBootstrapRepository,
   KnowledgeSettingsRepository,
   createPool,
-  knowledgeTemplateMigrationContract,
   type HypermediaBootstrapAllocation,
   type HypermediaBootstrapDocument,
   type HypermediaBootstrapDocumentKind,
-  type KnowledgeTemplateMigrationContract,
+  type HypermediaBootstrapTemplate,
 } from "@context-use/database";
-import { pathToFileURL } from "node:url";
 import { BrokeredMarkdownObjectStore } from "./markdown-object-store.ts";
 import { BrokeredStorage } from "./storage-client.ts";
 
@@ -21,52 +20,34 @@ type BootstrapRepositories = {
   registry: Pick<AutomationRegistryRepository, "register">;
 };
 
-const BOOTSTRAP_PATHS: Record<Exclude<HypermediaBootstrapDocumentKind, "global_guide">, string> = {
-  activity_distiller_instructions: "automations/activity-distiller/instructions",
-  activity_distiller_state: "automations/activity-distiller/state",
-  diary_composer_instructions: "automations/diary-composer/instructions",
-  diary_composer_state: "automations/diary-composer/state",
-};
-
 function documentInput(
-  contract: KnowledgeTemplateMigrationContract["root_guide"]
-    | KnowledgeTemplateMigrationContract["pages"][number],
+  document: HypermediaBootstrapTemplate["documents"][HypermediaBootstrapDocumentKind],
   templateName: string,
 ) {
   return {
-    title: contract.title,
-    summary: contract.summary,
-    body_markdown: contract.body_markdown,
+    title: document.title,
+    summary: document.summary,
+    body_markdown: document.body_markdown,
     commit_message: `Install ${templateName} hypermedia bootstrap`,
   };
 }
 
 export function hypermediaBootstrapDocuments(
-  contract: KnowledgeTemplateMigrationContract,
+  template: HypermediaBootstrapTemplate,
   allocations: HypermediaBootstrapAllocation[],
 ): HypermediaBootstrapDocument[] {
   const allocationByKind = new Map(allocations.map((allocation) => [
     allocation.document_kind,
     allocation,
   ]));
-  const pageByPath = new Map(contract.pages.map((page) => [page.path, page]));
   const documents: HypermediaBootstrapDocument[] = [];
-  const guide = allocationByKind.get("global_guide");
-  if (!guide) throw new Error("Global guide bootstrap allocation is missing");
-  documents.push({
-    ...guide,
-    input: documentInput(contract.root_guide, contract.template),
-  });
-  for (const [kind, path] of Object.entries(BOOTSTRAP_PATHS) as Array<[
-    keyof typeof BOOTSTRAP_PATHS,
-    string,
-  ]>) {
+  for (const kind of Object.keys(template.documents) as HypermediaBootstrapDocumentKind[]) {
     const allocation = allocationByKind.get(kind);
-    const page = pageByPath.get(path);
-    if (!allocation || !page) {
+    const document = template.documents[kind];
+    if (!allocation || !document) {
       throw new Error(`Hypermedia bootstrap contract is incomplete: ${kind}`);
     }
-    documents.push({ ...allocation, input: documentInput(page, contract.template) });
+    documents.push({ ...allocation, input: documentInput(document, template.name) });
   }
   if (allocationByKind.size !== documents.length) {
     throw new Error("Hypermedia bootstrap returned an unexpected allocation");
@@ -76,10 +57,10 @@ export function hypermediaBootstrapDocuments(
 
 export async function applyHypermediaBootstrap(input: {
   repositories: BootstrapRepositories;
-  contract: KnowledgeTemplateMigrationContract;
+  template: HypermediaBootstrapTemplate;
   allocations: HypermediaBootstrapAllocation[];
 }): Promise<Date | string> {
-  const documents = hypermediaBootstrapDocuments(input.contract, input.allocations);
+  const documents = hypermediaBootstrapDocuments(input.template, input.allocations);
   for (const document of documents) {
     await input.repositories.bootstrap.ensureDocument(document);
   }
@@ -87,46 +68,21 @@ export async function applyHypermediaBootstrap(input: {
   await input.repositories.settings.updateGlobalGuide(
     byKind.get("global_guide")!.document_id,
   );
-  const directories = new Map(input.contract.directories.map((directory) => [
-    directory.path,
-    directory,
-  ]));
-  for (const [key, prefix] of [
-    ["activity-distiller", "activity_distiller"],
-    ["diary-composer", "diary_composer"],
-  ] as const) {
-    const name = directories.get(`automations/${key}`)?.title;
-    const instructions = byKind.get(`${prefix}_instructions`);
-    const state = byKind.get(`${prefix}_state`);
-    if (!name || !instructions || !state) {
-      throw new Error(`Hypermedia bootstrap automation contract is incomplete: ${key}`);
+  for (const automation of input.template.automations) {
+    const instructions = byKind.get(automation.instructions);
+    const state = byKind.get(automation.state);
+    if (!instructions || !state) {
+      throw new Error(`Hypermedia bootstrap automation contract is incomplete: ${automation.key}`);
     }
     await input.repositories.registry.register({
-      key,
-      name,
+      key: automation.key,
+      name: automation.name,
       instructions_document_id: instructions.document_id,
       state_document_id: state.document_id,
     });
   }
   await input.repositories.bootstrap.seedEntrypoint();
   return input.repositories.bootstrap.complete();
-}
-
-function templateName(production: boolean): string {
-  const configured = process.env.CONTEXT_USE_TEMPLATE_INSTALL?.trim() || "default";
-  if (production && configured !== "default") {
-    throw new Error("Production hypermedia bootstrap supports only the default template");
-  }
-  return configured;
-}
-
-function templatesRoot(production: boolean): URL | undefined {
-  const configured = process.env.CONTEXT_USE_DEVELOPMENT_TEMPLATE_ROOT?.trim();
-  if (!configured) return undefined;
-  if (production) {
-    throw new Error("Production hypermedia bootstrap uses only the embedded default template");
-  }
-  return pathToFileURL(configured.endsWith("/") ? configured : `${configured}/`);
 }
 
 export async function runHypermediaBootstrapCommand(): Promise<void> {
@@ -157,15 +113,13 @@ export async function runHypermediaBootstrapCommand(): Promise<void> {
       console.log(JSON.stringify({ event: "hypermedia_bootstrap_already_finalized" }));
       return;
     }
-    const name = templateName(production);
-    const contract = await knowledgeTemplateMigrationContract(name, templatesRoot(production));
     const completedAt = await applyHypermediaBootstrap({
       repositories: {
         bootstrap,
         settings: new KnowledgeSettingsRepository(pool),
         registry: new AutomationRegistryRepository(pool),
       },
-      contract,
+      template: defaultHypermediaBootstrapTemplate,
       allocations,
     });
     console.log(JSON.stringify({

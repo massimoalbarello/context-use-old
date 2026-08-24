@@ -2,9 +2,9 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Client, Pool } from "pg";
 import {
   AutomationRegistryRepository,
+  defaultHypermediaBootstrapTemplate,
   HypermediaBootstrapRepository,
   KnowledgeSettingsRepository,
-  knowledgeTemplateMigrationContract,
   markdownObjectMetadata,
   type MarkdownObjectMetadata,
   type MarkdownObjectStore,
@@ -120,11 +120,10 @@ describeBootstrap("fresh hypermedia bootstrap", () => {
     } finally {
       await admin!.query("ROLLBACK");
     }
-    const contract = await knowledgeTemplateMigrationContract();
-    const documents = hypermediaBootstrapDocuments(contract, allocations);
+    const documents = hypermediaBootstrapDocuments(defaultHypermediaBootstrapTemplate, allocations);
     const completedAt = await applyHypermediaBootstrap({
       allocations,
-      contract,
+      template: defaultHypermediaBootstrapTemplate,
       repositories: {
         bootstrap,
         settings: new KnowledgeSettingsRepository(corpus!),

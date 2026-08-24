@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  knowledgeTemplateMigrationContract,
+  defaultHypermediaBootstrapTemplate,
   type HypermediaBootstrapAllocation,
   type HypermediaBootstrapDocument,
 } from "@context-use/database";
@@ -27,8 +27,7 @@ function allocations(): HypermediaBootstrapAllocation[] {
 
 describe("hypermedia bootstrap command", () => {
   test("maps the embedded contract to five stable semantic allocations", async () => {
-    const contract = await knowledgeTemplateMigrationContract();
-    const documents = hypermediaBootstrapDocuments(contract, allocations());
+    const documents = hypermediaBootstrapDocuments(defaultHypermediaBootstrapTemplate, allocations());
 
     expect(documents.map(({ document_kind }) => document_kind)).toEqual([...kinds]);
     expect(documents[0]?.input.title).toBe("AGENTS.md");
@@ -40,13 +39,12 @@ describe("hypermedia bootstrap command", () => {
   });
 
   test("writes documents before atomically wiring operational identities and finalizing", async () => {
-    const contract = await knowledgeTemplateMigrationContract();
     const events: string[] = [];
     const written: HypermediaBootstrapDocument[] = [];
     const registrations: Array<Record<string, unknown>> = [];
     const completedAt = new Date("2026-08-24T12:00:00.000Z");
     const result = await applyHypermediaBootstrap({
-      contract,
+      template: defaultHypermediaBootstrapTemplate,
       allocations: allocations(),
       repositories: {
         bootstrap: {
@@ -99,10 +97,9 @@ describe("hypermedia bootstrap command", () => {
   });
 
   test("rejects incomplete or extra allocation sets", async () => {
-    const contract = await knowledgeTemplateMigrationContract();
-    expect(() => hypermediaBootstrapDocuments(contract, allocations().slice(0, 4)))
+    expect(() => hypermediaBootstrapDocuments(defaultHypermediaBootstrapTemplate, allocations().slice(0, 4)))
       .toThrow("diary_composer_state");
-    expect(() => hypermediaBootstrapDocuments(contract, [
+    expect(() => hypermediaBootstrapDocuments(defaultHypermediaBootstrapTemplate, [
       ...allocations(),
       { ...allocations()[0]!, document_kind: "unexpected" as never },
     ])).toThrow("unexpected allocation");
