@@ -97,7 +97,7 @@ describeDatabase("pathless publication object claims", () => {
     }
   });
 
-  test("repository claim projections quote PostgreSQL authorization fields", async () => {
+  test("repository intent claims quote PostgreSQL authorization fields", async () => {
     const page = await seedPage(client);
     const intentId = randomUUID();
     await client.query(
@@ -112,27 +112,6 @@ describeDatabase("pathless publication object claims", () => {
     expect(intentClaim.finalized).toBe(false);
     if (intentClaim.finalized) throw new Error("Expected a pending intent claim");
     expect(intentClaim.authorization.intent_id).toBe(intentId);
-
-    const assetId = randomUUID();
-    const assetPath = `claim-adoption-${randomUUID().slice(0, 8)}`;
-    await client.query(
-      `INSERT INTO assets(
-         id,current_path,public_path,filename,content_type,size_bytes,
-         content_hash,s3_object_key
-       ) VALUES ($1,$2,$2,'claim.png','image/png',11,$3,$4)`,
-      [assetId, assetPath, hash("b"), `objects/${assetId}`],
-    );
-    fixtureDocumentIds.add(assetId);
-    const adoptionId = randomUUID();
-    await client.query(
-      "SELECT * FROM begin_pathless_publication_adoption($1,'legacy_asset',$2)",
-      [adoptionId, assetId],
-    );
-
-    const adoptionClaim = await repository.claimAdoption(adoptionId, randomUUID());
-    expect(adoptionClaim.finalized).toBe(false);
-    if (adoptionClaim.finalized) throw new Error("Expected a pending adoption claim");
-    expect(adoptionClaim.authorization.adoption_id).toBe(adoptionId);
   }, 15_000);
 
   test("blocks staging and challenge issuance until the exact claim is finalized", async () => {

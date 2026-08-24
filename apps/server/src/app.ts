@@ -873,7 +873,7 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
       sessionId: principal.sessionId,
     }, intentId);
     if (intent.action === "publish") {
-      await storage.materializePublicationArtifact("pathless_intent", intent.id);
+      await storage.materializePublicationArtifact(intent.id);
     }
     const authenticationOptions = await issueConfirmationOptions("publication", intent.id);
     return json({ intent, authentication_options: authenticationOptions }, 201);

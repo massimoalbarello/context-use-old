@@ -175,8 +175,6 @@ describe("storage broker capabilities", () => {
         },
       }),
       finalizeIntent: async (token: string, receipt: unknown) => { finalized = { token, receipt }; },
-      claimAdoption: async () => { throw new Error("unexpected adoption"); },
-      finalizeAdoption: async () => { throw new Error("unexpected adoption"); },
     };
     const app = createStorageBrokerApp({
       storage,
@@ -188,7 +186,7 @@ describe("storage broker capabilities", () => {
 
     const response = await app.handle(authorized(
       tokens.dashboard,
-      `/private/publication-artifact?kind=pathless_intent&id=${intentId}`,
+      `/private/publication-artifact?id=${intentId}`,
       { method: "PUT" },
     ));
 
@@ -206,7 +204,7 @@ describe("storage broker capabilities", () => {
     });
     expect((await app.handle(authorized(
       tokens.mcp,
-      `/private/publication-artifact?kind=pathless_intent&id=${intentId}`,
+      `/private/publication-artifact?id=${intentId}`,
       { method: "PUT" },
     ))).status).toBe(404);
   });
@@ -251,8 +249,6 @@ describe("storage broker capabilities", () => {
         },
       }),
       finalizeIntent: async (_token: string, receipt: unknown) => { finalizations.push(receipt); },
-      claimAdoption: async () => { throw new Error("unexpected adoption"); },
-      finalizeAdoption: async () => { throw new Error("unexpected adoption"); },
     };
     const left = createStorageBrokerApp({
       storage,
@@ -270,7 +266,7 @@ describe("storage broker capabilities", () => {
     });
     const request = () => authorized(
       tokens.dashboard,
-      `/private/publication-artifact?kind=pathless_intent&id=${intentId}`,
+      `/private/publication-artifact?id=${intentId}`,
       { method: "PUT" },
     );
 
@@ -312,8 +308,6 @@ describe("storage broker capabilities", () => {
     const claims = {
       claimIntent: async () => { throw new Error("unexpected claim"); },
       finalizeIntent: async () => { throw new Error("unexpected finalize"); },
-      claimAdoption: async () => { throw new Error("unexpected claim"); },
-      finalizeAdoption: async () => { throw new Error("unexpected finalize"); },
       resolve: async (candidate: string) => candidate === token
         ? {
             resource_kind: "asset" as const,
