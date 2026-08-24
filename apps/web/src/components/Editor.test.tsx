@@ -39,16 +39,4 @@ describe("page version diff", () => {
       .toContain("No page-content changes in this version.");
   });
 
-  test("does not surface retained filesystem-path history", () => {
-    const diff: PageVersionDiff = {
-      page_id: "11111111-1111-4111-8111-111111111111",
-      comparison: { from_version: 1, to_version: 2 },
-      metadata_changes: [{ field: "path", before: "legacy/old", after: "legacy/new" }],
-      markdown_changes: [],
-    };
-    const html = renderToStaticMarkup(<VersionDiffContents diff={diff} />);
-    expect(html).toContain("No page-content changes");
-    expect(html).not.toContain("legacy/old");
-    expect(html).not.toContain("legacy/new");
-  });
 });

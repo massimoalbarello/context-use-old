@@ -20,16 +20,13 @@ const diffFieldLabels = {
 } as const;
 
 export function VersionDiffContents({ diff }: { diff: PageVersionDiff }) {
-  const metadataChanges = diff.metadata_changes.filter(
-    (change): change is typeof change & { field: "title" | "summary" } => change.field !== "path",
-  );
-  const hasChanges = metadataChanges.length > 0 || diff.markdown_changes.length > 0;
+  const hasChanges = diff.metadata_changes.length > 0 || diff.markdown_changes.length > 0;
   if (!hasChanges) return <p className="version-diff-empty">No page-content changes in this version.</p>;
 
   return <div className="version-diff-contents">
-    {metadataChanges.length > 0 && <section className="version-diff-section">
+    {diff.metadata_changes.length > 0 && <section className="version-diff-section">
       <h4>Page details</h4>
-      {metadataChanges.map((change) => <div className="version-diff-field" key={change.field}>
+      {diff.metadata_changes.map((change) => <div className="version-diff-field" key={change.field}>
         <strong>{diffFieldLabels[change.field]}</strong>
         {change.before !== null && <pre className="diff-value removed"><span aria-hidden="true">−</span>{change.before}</pre>}
         <pre className="diff-value added"><span aria-hidden="true">+</span>{change.after}</pre>

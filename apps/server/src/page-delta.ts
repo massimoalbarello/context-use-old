@@ -6,18 +6,10 @@ export type DocumentRevisionForDelta = {
   body_markdown: string;
 };
 
-export type PageVersionForDelta = DocumentRevisionForDelta & {
-  path: string;
-};
-
-export type PageMetadataChange = {
-  field: "path" | "title" | "summary";
+export type DocumentMetadataChange = {
+  field: "title" | "summary";
   before: string | null;
   after: string;
-};
-
-export type DocumentMetadataChange = Omit<PageMetadataChange, "field"> & {
-  field: "title" | "summary";
 };
 
 export type MarkdownChange = {
@@ -64,23 +56,6 @@ export async function markdownChanges(
   }
   finishCurrent();
   return changes;
-}
-
-export async function pageDelta(
-  previous: PageVersionForDelta | null,
-  current: PageVersionForDelta,
-): Promise<{ metadata_changes: PageMetadataChange[]; markdown_changes: MarkdownChange[] }> {
-  const metadataChanges: PageMetadataChange[] = [];
-  for (const field of ["path", "title", "summary"] as const) {
-    const before = previous?.[field] ?? null;
-    if (before !== current[field]) {
-      metadataChanges.push({ field, before, after: current[field] });
-    }
-  }
-  return {
-    metadata_changes: metadataChanges,
-    markdown_changes: await markdownChanges(previous?.body_markdown ?? "", current.body_markdown),
-  };
 }
 
 export async function documentDelta(
