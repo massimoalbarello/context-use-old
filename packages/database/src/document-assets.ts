@@ -120,9 +120,6 @@ export class DocumentAssetRepository {
     const documentId = randomUUID();
     const objectKey = `objects/${documentId}`;
     return transaction(this.pool, async (client) => {
-      await client.query(
-        "SELECT pg_advisory_xact_lock_shared(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
-      );
       const result = await client.query<DocumentAssetDatabaseRow>(
         `INSERT INTO assets(
            id,filename,content_type,size_bytes,content_hash,
@@ -193,9 +190,6 @@ export class DocumentAssetRepository {
 
   async delete(documentId: string): Promise<string | null> {
     return transaction(this.pool, async (client) => {
-      await client.query(
-        "SELECT pg_advisory_xact_lock_shared(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
-      );
       const selected = await client.query<{ s3_object_key: string }>(
         `SELECT asset.s3_object_key
          FROM assets asset
@@ -245,9 +239,6 @@ export class DocumentAssetRepository {
   async archive(input: ArchiveDocumentAssetInput): Promise<DocumentAsset | null> {
     const documentId = input.asset_id;
     return transaction(this.pool, async (client) => {
-      await client.query(
-        "SELECT pg_advisory_xact_lock_shared(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
-      );
       const selected = await client.query(
         `SELECT 1 FROM assets asset
          WHERE asset.id=$1 AND asset.deleted_at IS NULL

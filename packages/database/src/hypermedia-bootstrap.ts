@@ -62,9 +62,6 @@ export class HypermediaBootstrapRepository {
     const stored = await this.bodies.write(document.revision_id, document.input.body_markdown);
     const targets = genericDocumentTargets(document.input.body_markdown);
     await transaction(this.pool, async (client) => {
-      await client.query(
-        "SELECT pg_advisory_xact_lock_shared(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
-      );
       const allocation = await client.query(
         `SELECT 1 FROM hypermedia_bootstrap_allocations
          WHERE document_kind=$1 AND document_id=$2 AND revision_id=$3`,

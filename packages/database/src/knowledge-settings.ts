@@ -69,9 +69,6 @@ export class KnowledgeSettingsRepository {
 
   async updateGlobalGuide(documentId: string): Promise<KnowledgeSettings> {
     return transaction(this.pool, async (client) => {
-      await client.query(
-        "SELECT pg_advisory_xact_lock_shared(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
-      );
       await client.query("SELECT lock_operational_document($1)", [documentId]);
       const result = await client.query<KnowledgeSettings>(
         `UPDATE knowledge_settings

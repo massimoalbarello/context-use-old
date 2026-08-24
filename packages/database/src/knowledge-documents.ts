@@ -279,9 +279,6 @@ export class KnowledgeDocumentRepository {
     const stored = await this.storedBody(revisionId, input.body_markdown);
     return transaction(this.pool, async (client) => {
       await client.query(
-        "SELECT pg_advisory_xact_lock_shared(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
-      );
-      await client.query(
         `INSERT INTO hypermedia_documents(id,authority,representation)
          VALUES ($1,'knowledge','markdown')`,
         [documentId],
@@ -327,9 +324,6 @@ export class KnowledgeDocumentRepository {
     const targets = genericDocumentTargets(input.body_markdown);
     const stored = await this.storedBody(revisionId, input.body_markdown);
     return transaction(this.pool, async (client) => {
-      await client.query(
-        "SELECT pg_advisory_xact_lock_shared(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
-      );
       await client.query("SELECT lock_operational_document($1)", [documentId]);
       const current = await client.query<{
         version_number: number;
@@ -397,9 +391,6 @@ export class KnowledgeDocumentRepository {
     const targets = genericDocumentTargets(source.body_markdown);
     const stored = await this.storedBody(revisionId, source.body_markdown);
     return transaction(this.pool, async (client) => {
-      await client.query(
-        "SELECT pg_advisory_xact_lock_shared(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
-      );
       await client.query("SELECT lock_operational_document($1)", [documentId]);
       const current = await client.query<{
         version_number: number;

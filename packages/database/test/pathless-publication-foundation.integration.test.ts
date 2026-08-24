@@ -130,94 +130,6 @@ describeDatabase("pathless publication global namespaces", () => {
     }
   });
 
-  test("the corpus boundary reports and rejects an incomplete hypermedia cutover", async () => {
-    await client.query("BEGIN");
-    try {
-      await client.query(
-        "UPDATE pathless_publication_settings SET updated_at=NULL WHERE singleton",
-      );
-      await client.query("SET LOCAL ROLE context_use_corpus");
-      const blockers = await client.query<{
-        blocker_code: string;
-        affected_count: string;
-      }>(
-        `SELECT blocker_code,affected_count
-         FROM list_hypermedia_cutover_blockers()`,
-      );
-      expect(blockers.rows).toContainEqual({
-        blocker_code: "pathless_entrypoint_not_latched",
-        affected_count: "1",
-      });
-      expect(await sqlState(client, () => client.query(
-        "SELECT assert_hypermedia_cutover_ready()",
-      ))).toBe("55000");
-      expect(await sqlState(client, () => client.query(
-        "SELECT finalize_hypermedia_cutover()",
-      ))).toBe("55000");
-      await client.query("RESET ROLE");
-      expect((await client.query<{ finalized_at: Date | null }>(
-        "SELECT finalized_at FROM hypermedia_cutover_state WHERE singleton",
-      )).rows[0]?.finalized_at).toBeNull();
-      const retiredViews = await client.query<{ relation: string | null }>(
-        `SELECT to_regclass(name)::text AS relation
-         FROM unnest(ARRAY[
-           'published_pages','published_assets','published_directories',
-           'published_site_settings','storage_published_pages','storage_published_assets'
-         ]) AS name`,
-      );
-      expect(retiredViews.rows.every(({ relation }) => relation === null)).toBe(true);
-      for (const [role, relation] of [
-        ["context_use_dashboard", "publication_intents"],
-        ["context_use_dashboard", "public_knowledge_settings"],
-      ] as const) {
-        expect((await client.query<{ allowed: boolean }>(
-          "SELECT has_table_privilege($1,$2,'SELECT') AS allowed",
-          [role, relation],
-        )).rows[0]?.allowed).toBe(false);
-      }
-      await client.query(
-        `INSERT INTO knowledge_revision_contracts(
-           revision_id,document_id,link_contract,provenance,
-           body_content_hash,target_document_ids
-         )
-         SELECT page.current_version_id,page.id,'generic_document_v1',
-           'corpus_migration',revision.body_content_hash,'{}'::uuid[]
-         FROM knowledge_pages page
-         JOIN hypermedia_document_revisions revision
-           ON revision.id=page.current_version_id AND revision.document_id=page.id
-         WHERE page.archived_at IS NULL
-         ON CONFLICT (revision_id) DO NOTHING`,
-      );
-      await client.query(
-        `INSERT INTO pathless_knowledge_search(document_id,revision_id,search_vector)
-         SELECT page.id,page.current_version_id,''::tsvector
-         FROM knowledge_pages page
-         WHERE page.archived_at IS NULL
-         ON CONFLICT (document_id) DO NOTHING`,
-      );
-      await client.query(
-        "UPDATE pathless_publication_settings SET updated_at=now() WHERE singleton",
-      );
-      await client.query("SET LOCAL ROLE context_use_corpus");
-      const finalized = (await client.query<{ finalized_at: Date }>(
-        "SELECT finalize_hypermedia_cutover() AS finalized_at",
-      )).rows[0]!.finalized_at;
-      expect(finalized).toBeInstanceOf(Date);
-      expect((await client.query<{ finalized_at: Date }>(
-        "SELECT finalize_hypermedia_cutover() AS finalized_at",
-      )).rows[0]!.finalized_at).toEqual(finalized);
-      expect((await client.query<{ finalized_at: Date }>(
-        "SELECT finalized_at FROM hypermedia_cutover_state WHERE singleton",
-      )).rows[0]!.finalized_at).toEqual(finalized);
-      await client.query("RESET ROLE");
-      expect(await sqlState(client, () => client.query(
-        "UPDATE hypermedia_cutover_state SET finalized_at=NULL WHERE singleton",
-      ))).toBe("55000");
-    } finally {
-      await client.query("ROLLBACK");
-    }
-  });
-
   test("serializes cross-kind representation token and artifact UUID races", async () => {
     const contender = new Client({ connectionString: databaseUrl });
     const firstToken = randomToken();
@@ -636,7 +548,6 @@ describeDatabase("pathless publication global namespaces", () => {
       "publication_intent_id_reservations",
       "public_visibility_generations",
       "publication_target_generations",
-      "hypermedia_cutover_state",
     ];
     for (const table of tables) {
       expect((await client.query<{ allowed: boolean }>(

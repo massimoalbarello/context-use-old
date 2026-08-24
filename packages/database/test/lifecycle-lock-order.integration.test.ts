@@ -48,12 +48,29 @@ describeDatabase("knowledge lifecycle lock ordering", () => {
     expect(columns.rows).toEqual([]);
   });
 
-  test("corpus migration and publication adoption control planes are retired", async () => {
-    const retired = await pool.query<{ relation: string | null; routine: string | null }>(
+  test("migration, adoption and cutover control planes are retired", async () => {
+    const retired = await pool.query<{
+      relation: string | null;
+      routine: string | null;
+      cutover_state: string | null;
+      cutover_finalizer: string | null;
+      cutover_verifier: string | null;
+    }>(
       `SELECT to_regclass('public.corpus_migration_runs')::text AS relation,
          to_regprocedure('public.lock_corpus_migration_audit_tables()')::text
-           AS routine`,
+           AS routine,
+         to_regclass('public.hypermedia_cutover_state')::text AS cutover_state,
+         to_regprocedure('public.finalize_hypermedia_cutover()')::text
+           AS cutover_finalizer,
+         to_regprocedure('public.list_hypermedia_cutover_blockers()')::text
+           AS cutover_verifier`,
     );
-    expect(retired.rows[0]).toEqual({ relation: null, routine: null });
+    expect(retired.rows[0]).toEqual({
+      relation: null,
+      routine: null,
+      cutover_state: null,
+      cutover_finalizer: null,
+      cutover_verifier: null,
+    });
   });
 });
