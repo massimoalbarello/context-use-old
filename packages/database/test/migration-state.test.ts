@@ -3,6 +3,7 @@ import {
   assertMigrationState,
   configuredExistingRolePasswords,
   matchesCompletedLedger,
+  matchesReleasedV0_1_84Ledger,
   migrationLedgerDigest,
 } from "../src/migration-state.ts";
 
@@ -28,6 +29,11 @@ describe("completed ledger handoff", () => {
       completed[0]!,
       { version: "002", checksum: "modified" },
     ], { count: 2, digest })).toBe(false);
+  });
+
+  test("recognizes the released predecessor ledger through its own exact contract", () => {
+    expect(matchesReleasedV0_1_84Ledger(completed, { count: 2, digest })).toBe(true);
+    expect(matchesReleasedV0_1_84Ledger(completed.slice(0, 1), { count: 2, digest })).toBe(false);
   });
 });
 

@@ -20,6 +20,11 @@ const COMPLETED_LEDGER_CONTRACT: CompletedLedgerContract = {
   digest: "922e1b1c877eb368f6b5c6f1e7441383578d893f593c2fabc498d7967b7f4312",
 };
 
+const RELEASED_V0_1_84_LEDGER_CONTRACT: CompletedLedgerContract = {
+  count: 43,
+  digest: "bbb81d4ca447a0cc27152973b22d460df1a37b56c005fc68d0f4f2f61a9f9f27",
+};
+
 export function migrationLedgerDigest(applied: readonly AppliedMigration[]): string | null {
   if (applied.some(({ checksum }) => checksum === null)) return null;
   const ledger = [...applied]
@@ -37,6 +42,15 @@ export function migrationLedgerDigest(applied: readonly AppliedMigration[]): str
 export function matchesCompletedLedger(
   applied: readonly AppliedMigration[],
   contract: CompletedLedgerContract = COMPLETED_LEDGER_CONTRACT,
+): boolean {
+  return applied.length === contract.count
+    && migrationLedgerDigest(applied) === contract.digest;
+}
+
+/** Recognize the exact ledger shipped by v0.1.84 before applying its two baseline handoff deltas. */
+export function matchesReleasedV0_1_84Ledger(
+  applied: readonly AppliedMigration[],
+  contract: CompletedLedgerContract = RELEASED_V0_1_84_LEDGER_CONTRACT,
 ): boolean {
   return applied.length === contract.count
     && migrationLedgerDigest(applied) === contract.digest;
