@@ -222,12 +222,6 @@ async function transaction<T>(pool: Pool, work: (client: PoolClient) => Promise<
   }
 }
 
-// Compatibility labels are stable but deliberately unrelated to the private
-// document UUID. They are never returned or ranked by the pathless API.
-function compatibilityPath(): string {
-  return `pathless-page-${randomUUID()}`;
-}
-
 export class KnowledgeDocumentRepository {
   constructor(
     private readonly pool: Pool,
@@ -281,7 +275,6 @@ export class KnowledgeDocumentRepository {
   async create(input: CreateKnowledgeDocumentInput, actor: Actor): Promise<KnowledgeDocument> {
     const documentId = randomUUID();
     const revisionId = randomUUID();
-    const path = compatibilityPath();
     const targets = genericDocumentTargets(input.body_markdown);
     const stored = await this.storedBody(revisionId, input.body_markdown);
     return transaction(this.pool, async (client) => {
@@ -301,15 +294,15 @@ export class KnowledgeDocumentRepository {
           stored.body_size_bytes, stored.body_content_hash],
       );
       await client.query(
-        `INSERT INTO knowledge_pages(id,current_path,current_version_id,search_vector)
-         VALUES ($1,$2,$3,''::tsvector)`,
-        [documentId, path, revisionId],
+        `INSERT INTO knowledge_pages(id,current_version_id,search_vector)
+         VALUES ($1,$2,''::tsvector)`,
+        [documentId, revisionId],
       );
       await client.query(
         `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,path,title,summary,commit_message,actor_kind,actor_subject
-         ) VALUES ($1,$2,1,$3,$4,$5,$6,$7,$8)`,
-        [revisionId, documentId, path, input.title, input.summary,
+           id,page_id,version_number,title,summary,commit_message,actor_kind,actor_subject
+         ) VALUES ($1,$2,1,$3,$4,$5,$6,$7)`,
+        [revisionId, documentId, input.title, input.summary,
           input.commit_message, actor.kind, actor.subject],
       );
       await client.query(
@@ -339,10 +332,9 @@ export class KnowledgeDocumentRepository {
       );
       await client.query("SELECT lock_operational_document($1)", [documentId]);
       const current = await client.query<{
-        current_path: string;
         version_number: number;
       }>(
-        `SELECT page.current_path,version.version_number
+        `SELECT version.version_number
          FROM knowledge_pages page
          JOIN knowledge_page_versions version
            ON version.id=page.current_version_id AND version.page_id=page.id
@@ -365,10 +357,10 @@ export class KnowledgeDocumentRepository {
       );
       await client.query(
         `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,path,title,summary,commit_message,actor_kind,actor_subject
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-        [revisionId, documentId, revisionNumber, row.current_path,
-          input.title, input.summary, input.commit_message, actor.kind, actor.subject],
+           id,page_id,version_number,title,summary,commit_message,actor_kind,actor_subject
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [revisionId, documentId, revisionNumber, input.title, input.summary,
+          input.commit_message, actor.kind, actor.subject],
       );
       await client.query(
         `UPDATE knowledge_pages
@@ -410,12 +402,11 @@ export class KnowledgeDocumentRepository {
       );
       await client.query("SELECT lock_operational_document($1)", [documentId]);
       const current = await client.query<{
-        current_path: string;
         version_number: number;
         title: string;
         summary: string;
       }>(
-        `SELECT page.current_path,version.version_number,version.title,version.summary
+        `SELECT version.version_number,version.title,version.summary
          FROM knowledge_pages page
          JOIN knowledge_page_versions version
            ON version.id=page.current_version_id AND version.page_id=page.id
@@ -438,10 +429,10 @@ export class KnowledgeDocumentRepository {
       );
       await client.query(
         `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,path,title,summary,commit_message,actor_kind,actor_subject
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-        [revisionId, documentId, revisionNumber, row.current_path,
-          row.title, row.summary, input.commit_message, actor.kind, actor.subject],
+           id,page_id,version_number,title,summary,commit_message,actor_kind,actor_subject
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [revisionId, documentId, revisionNumber, row.title, row.summary,
+          input.commit_message, actor.kind, actor.subject],
       );
       await client.query(
         `UPDATE knowledge_pages
