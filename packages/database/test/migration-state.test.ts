@@ -6,6 +6,7 @@ import {
   matchesReleasedV0_1_84Ledger,
   migrationLedgerDigest,
 } from "../src/migration-state.ts";
+import { releasedV084DirectoryRevisionId } from "../src/released-v084-directory-upgrade.ts";
 
 const files = [{ version: "001_baseline.sql", checksum: "current-checksum" }];
 
@@ -35,6 +36,14 @@ describe("completed ledger handoff", () => {
     expect(matchesReleasedV0_1_84Ledger(completed, { count: 2, digest })).toBe(true);
     expect(matchesReleasedV0_1_84Ledger(completed.slice(0, 1), { count: 2, digest })).toBe(false);
   });
+});
+
+test("released v0.1.84 directory revisions are stable UUIDv8 identities", () => {
+  const directoryId = "4b815deb-8d1c-4d26-9b1b-8f9e405b12da";
+  expect(releasedV084DirectoryRevisionId(directoryId))
+    .toBe(releasedV084DirectoryRevisionId(directoryId.toUpperCase()));
+  expect(releasedV084DirectoryRevisionId(directoryId))
+    .toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-8[a-f0-9]{3}-8[a-f0-9]{3}-[a-f0-9]{12}$/);
 });
 
 describe("flattened migration state", () => {
