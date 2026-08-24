@@ -42,8 +42,8 @@ describe("pathless dashboard knowledge responses", () => {
       body_markdown: revision.body_markdown,
     };
     const projected = dashboardKnowledgeDocument(document, "<p>Related</p>", {
-      pathless_published_revision_id: revision.revision_id,
-      pathless_published_revision_number: revision.revision_number,
+      published_revision_id: revision.revision_id,
+      published_revision_number: revision.revision_number,
       public_url: `https://example.test/p/${revision.document_id}`,
     });
     expect(projected).toMatchObject({
@@ -52,12 +52,13 @@ describe("pathless dashboard knowledge responses", () => {
       version_number: 2,
       rendered_html: "<p>Related</p>",
       published_version_number: 2,
-      pathless_published: true,
       public_url: `https://example.test/p/${revision.document_id}`,
     });
     expect(projected).not.toHaveProperty("path");
     expect(projected).not.toHaveProperty("current_path");
     expect(projected).not.toHaveProperty("body_object_key");
+    expect(projected).not.toHaveProperty("legacy_published");
+    expect(projected).not.toHaveProperty("pathless_published");
   });
 
   test("projects revisions and computes title, summary and Markdown changes only", async () => {

@@ -121,7 +121,7 @@ export function PublicationDialog({ page, versionNumber, publishedVersionNumber,
     }
   };
 
-  const title = page.pathless_published
+  const title = page.published_version_id
     ? `Publish version v${versionNumber} instead`
     : `Publish version v${versionNumber}`;
 
@@ -130,7 +130,7 @@ export function PublicationDialog({ page, versionNumber, publishedVersionNumber,
     <span className="eyebrow">Exact, immutable snapshot</span>
     <h2 id="publication-title">{title}</h2>
     {preview && <p className="publication-explanation">
-      {page.pathless_published
+      {page.published_version_id
         ? `This will replace public v${publishedVersionNumber ?? "?"} with v${preview.version_number}.`
         : `This will make v${preview.version_number} public.`}
     </p>}

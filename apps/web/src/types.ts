@@ -10,8 +10,6 @@ export type KnowledgeDocumentPage = {
   summary: string;
   body_markdown: string;
   rendered_html: string;
-  legacy_published: boolean;
-  pathless_published: boolean;
   public_url: string | null;
   created_at: string;
   updated_at: string;
@@ -76,7 +74,7 @@ export type KnowledgePageChangeBatch = {
 export type Asset = {
   id: string;
   public_id: string | null;
-  pathless_published: boolean;
+  published: boolean;
   filename: string;
   content_type: string;
   size_bytes: number;
@@ -87,7 +85,7 @@ export type Asset = {
 export type AssetStatus = {
   content_available: boolean;
   public_url: string | null;
-  pathless_published: boolean;
+  published: boolean;
 };
 
 /**

@@ -90,7 +90,7 @@ async function dashboardAssetPublication(asset: {
     content_hash: asset.content_hash,
     created_at: asset.created_at,
     public_id: status.public_id,
-    pathless_published: status.active,
+    published: status.active,
   };
 }
 
@@ -169,10 +169,10 @@ async function dashboardKnowledgeDocumentResponse(documentId: string) {
     privateDocumentResolvers(),
   );
   return dashboardKnowledgeDocument(document, renderedHtml, {
-    pathless_published_revision_id: pathlessStatus.active
+    published_revision_id: pathlessStatus.active
       ? pathlessStatus.published_revision_id
       : null,
-    pathless_published_revision_number: pathlessStatus.active
+    published_revision_number: pathlessStatus.active
       ? pathlessStatus.published_revision_number
       : null,
     public_url: pathlessStatus.active && pathlessStatus.public_id
@@ -844,7 +844,7 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
       public_url: pathlessStatus.active && pathlessStatus.public_id
         ? `${config.ASSET_ORIGIN}/a/${pathlessStatus.public_id}`
         : null,
-      pathless_published: pathlessStatus.active,
+      published: pathlessStatus.active,
     });
   })
   .get("/api/dashboard/assets/:id/content", async ({ request, params }) => {
