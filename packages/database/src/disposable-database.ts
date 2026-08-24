@@ -4,8 +4,8 @@ import { Client } from "pg";
  * Integration suites commit their fixtures and then clean them up, in places
  * with trigger and foreign-key enforcement suspended, so the database they are
  * pointed at must be one nobody minds losing. A run against the local Compose
- * stack once deleted the owner identity the evals sign in with while leaving
- * its passkey and session behind, which broke sign-in with a foreign-key
+ * stack once deleted the owner identity while leaving its passkey and session
+ * behind, which broke sign-in with a foreign-key
  * violation rather than anything the UI could explain.
  *
  * A database opts in by carrying this setting, which survives reconnects and
@@ -35,7 +35,7 @@ export function notDisposableMessage(databaseName: string): string {
   return `TEST_DATABASE_URL points at the ${databaseName ? `"${databaseName}"` : "default"} database, ` +
     "which is not marked disposable. Integration suites create and delete owner fixtures with trigger and " +
     "foreign-key enforcement suspended, so running them against a live installation — such as the local " +
-    "Compose stack the evals sign in to — destroys real data. `bun run db:test up` starts and marks a " +
+    "Compose stack — destroys real data. `bun run db:test up` starts and marks a " +
     `throwaway server; to mark an existing one, run: ${markDisposableSql(databaseName || "your_database")}`;
 }
 

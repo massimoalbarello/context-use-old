@@ -1,12 +1,6 @@
 type StackCommand = "up" | "down" | "destroy" | "purge" | "reset" | "logs" | "status" | "url";
 type ComposeCommand = "up" | "down" | "purge" | "logs" | "status";
 
-export type LocalKnowledgeTemplate = {
-  name: string;
-  /** Container-visible directory whose children are named templates. */
-  root?: string;
-};
-
 export const LOCAL_STACK = {
   project: "context-use-dev",
   database: "context_use",
@@ -79,14 +73,9 @@ function removeDataVolume(): void {
   }
 }
 
-function resetData(restart: boolean, template: LocalKnowledgeTemplate = { name: "default" }): void {
-  const env = {
-    ...process.env,
-    CONTEXT_USE_TEMPLATE_INSTALL: template.name,
-    CONTEXT_USE_DEVELOPMENT_TEMPLATE_ROOT: template.root ?? "",
-  };
-  runDocker("down", env);
-  runCompose(["up", "--detach", "--wait", "postgres"], env);
+function resetData(restart: boolean): void {
+  runDocker("down");
+  runCompose(["up", "--detach", "--wait", "postgres"]);
   runCompose([
     "run",
     "--build",
@@ -99,13 +88,13 @@ function resetData(restart: boolean, template: LocalKnowledgeTemplate = { name: 
     "--cwd",
     "packages/database",
     "reset:development",
-  ], env);
+  ]);
   removeDataVolume();
   if (restart) {
-    runDocker("up", env);
+    runDocker("up");
     printReady();
   } else {
-    runDocker("down", env);
+    runDocker("down");
     console.log("\nKnowledge and assets were removed; owner, passkeys, and OAuth state were preserved.");
   }
 }
@@ -117,20 +106,17 @@ function printReady(): void {
   console.log(`MCP:   ${stackUrl()}/mcp`);
 }
 
-export function runStackCommand(
-  command: StackCommand,
-  options: { knowledgeTemplate?: LocalKnowledgeTemplate } = {},
-): void {
+export function runStackCommand(command: StackCommand): void {
   if (command === "url") {
     console.log(stackUrl());
     return;
   }
   if (command === "reset") {
-    resetData(true, options.knowledgeTemplate);
+    resetData(true);
     return;
   }
   if (command === "destroy") {
-    resetData(false, options.knowledgeTemplate);
+    resetData(false);
     return;
   }
   runDocker(command);

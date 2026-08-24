@@ -91,9 +91,8 @@ knowledge base. See [`docs/nango.md`](docs/nango.md).
 
 ## Documentation
 
-- [Development](docs/development.md) — running locally, tests, and bootstrap-corpus maintenance.
+- [Development](docs/development.md) — running locally, tests, and bootstrap maintenance.
 - [Data ingestion](docs/nango.md) — Nango setup, integrations, and operations.
-- [Evals](eval/README.md) — knowledge quality evaluation.
 - [Security](SECURITY.md)
 
 ## License
