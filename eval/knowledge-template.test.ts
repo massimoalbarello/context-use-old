@@ -67,7 +67,10 @@ describe("eval knowledge templates", () => {
     const deployedCompose = readFileSync(`${ROOT}/deploy/docker-compose.yml`, "utf8");
     expect(deployedCompose).not.toContain("CONTEXT_USE_DEVELOPMENT_TEMPLATE_ROOT");
 
-    const productionTemplateCommand = readFileSync(`${ROOT}/apps/server/src/template-command.ts`, "utf8");
+    const productionTemplateCommand = readFileSync(
+      `${ROOT}/apps/server/src/corpus-migration-command.ts`,
+      "utf8",
+    );
     expect(productionTemplateCommand).not.toContain("eval/templates");
     expect(productionTemplateCommand).not.toContain("/app/eval");
   });

@@ -4,6 +4,7 @@ import {
   knowledgePrepareForceTemplate,
   knowledgePreparationFailure,
   knowledgePrepareTemplateName,
+  knowledgePrepareTemplatesRoot,
   isolatedCorpusDatabaseUrl,
 } from "./corpus-migration-command.ts";
 import { CorpusMigrationBlockedError } from "./corpus-migration.ts";
@@ -90,6 +91,16 @@ describe("knowledge preparation command", () => {
     expect(() => knowledgePrepareForceTemplate("yes")).toThrow(
       "CONTEXT_USE_FORCE_TEMPLATE must be true or false",
     );
+  });
+
+  test("keeps filesystem template roots out of production preparation", () => {
+    expect(knowledgePrepareTemplatesRoot(undefined, true)).toBeUndefined();
+    expect(knowledgePrepareTemplatesRoot("  ", true)).toBeUndefined();
+    expect(() => knowledgePrepareTemplatesRoot("/tmp/templates", true)).toThrow(
+      "embedded default template",
+    );
+    expect(knowledgePrepareTemplatesRoot("/tmp/templates", false)?.href)
+      .toBe("file:///tmp/templates/");
   });
 
   test("reports exact audited blockers without serializing operational bodies or object keys", () => {
