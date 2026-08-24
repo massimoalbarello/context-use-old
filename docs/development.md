@@ -54,14 +54,15 @@ knowledge state.
 ## Bootstrap knowledge
 
 New installations receive the Git-versioned default corpus during the isolated deployment
-preparation step. That source is installation bootstrap data, not a template-management API. Once
-the bootstrap allocations are complete, redeployments skip preparation
-and every retained guide, instruction, state document, and owner document is managed through the
-same stable document identities, revisions, links, and search APIs.
+preparation step. On later deployments, that same stopped-consumer boundary compares the configured
+global guide with the release's embedded `AGENTS.md` and creates one new immutable revision when they
+differ. Matching guides are left unchanged. The automation instructions, state documents and owner
+documents are not reapplied; they remain managed through their stable document identities, revisions,
+links and search APIs. There is no template-management API.
 
 Validate changes to the shipped bootstrap corpus with its focused database and template tests.
-Do not add a dashboard or CLI path that reapplies the bootstrap documents to an
-already-initialized knowledge base.
+Do not add a dashboard or CLI path that reapplies the bootstrap corpus to an already-initialized
+knowledge base.
 
 ## Knowledge automations
 

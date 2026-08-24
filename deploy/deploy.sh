@@ -281,8 +281,8 @@ fi
 # maintenance response for these hostnames before Nango is touched at all.
 #
 # Storage is the only knowledge service running while a fresh installation
-# writes its required hypermedia documents. Existing installations replay the
-# same crash-safe bootstrap as a no-op.
+# writes its required hypermedia documents or an existing installation
+# synchronizes its configured global guide with this release.
 docker compose --env-file "${secrets}/runtime.env" up -d --wait storage
 docker compose --env-file "${secrets}/runtime.env" up \
   --force-recreate --no-deps --abort-on-container-exit \
@@ -291,9 +291,9 @@ docker compose --env-file "${secrets}/runtime.env" up \
 # them back before the dashboard, MCP, and auth services start competing for
 # the same two cores.
 docker compose --env-file "${secrets}/runtime.env" up -d --wait --no-deps public-web
-# The hypermedia bootstrap one-shot has already completed and been audited above.
-# Start its long-lived consumers without traversing `depends_on`, otherwise
-# Compose starts hypermedia-bootstrap a second time while bringing consumers up.
+# The hypermedia bootstrap and managed-guide synchronization one-shot has
+# already completed above. Start its long-lived consumers without traversing
+# `depends_on`, otherwise Compose starts the one-shot a second time.
 docker compose --env-file "${secrets}/runtime.env" up -d --wait --no-deps \
   auth confirmation
 docker compose --env-file "${secrets}/runtime.env" up -d --wait --no-deps \

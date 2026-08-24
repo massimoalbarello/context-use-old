@@ -2,6 +2,7 @@ import {
   AutomationRegistryRepository,
   defaultHypermediaBootstrapTemplate,
   HypermediaBootstrapRepository,
+  KnowledgeDocumentRepository,
   KnowledgeSettingsRepository,
   createPool,
   type HypermediaBootstrapAllocation,
@@ -18,6 +19,22 @@ type BootstrapRepositories = {
   >;
   settings: Pick<KnowledgeSettingsRepository, "updateGlobalGuide">;
   registry: Pick<AutomationRegistryRepository, "register">;
+};
+
+type GuideSynchronizationRepositories = {
+  settings: Pick<KnowledgeSettingsRepository, "globalGuide">;
+  documents: Pick<KnowledgeDocumentRepository, "get" | "update">;
+};
+
+export type GlobalGuideSynchronization = {
+  document_id: string;
+  revision_number: number;
+  updated: boolean;
+};
+
+const MANAGED_GUIDE_ACTOR = {
+  kind: "dashboard" as const,
+  subject: "context-use-managed-global-guide/v1",
 };
 
 function documentInput(
@@ -84,6 +101,46 @@ export async function applyHypermediaBootstrap(input: {
   return input.repositories.bootstrap.complete();
 }
 
+export async function synchronizeGlobalGuide(input: {
+  repositories: GuideSynchronizationRepositories;
+  guide: HypermediaBootstrapTemplate["documents"]["global_guide"];
+  templateName: string;
+}): Promise<GlobalGuideSynchronization> {
+  const configured = await input.repositories.settings.globalGuide();
+  if (!configured) {
+    throw new Error("The configured global guide is unavailable after hypermedia bootstrap");
+  }
+  const current = await input.repositories.documents.get(configured.document_id);
+  if (!current || current.archived_at) {
+    throw new Error("The configured global guide document could not be loaded");
+  }
+  if (current.current_revision_id !== configured.current_revision_id) {
+    throw new Error("The configured global guide changed during synchronization");
+  }
+  if (current.title === input.guide.title
+      && current.summary === input.guide.summary
+      && current.body_markdown === input.guide.body_markdown) {
+    return {
+      document_id: current.document_id,
+      revision_number: current.revision_number,
+      updated: false,
+    };
+  }
+  const updated = await input.repositories.documents.update(current.document_id, {
+    title: input.guide.title,
+    summary: input.guide.summary,
+    body_markdown: input.guide.body_markdown,
+    commit_message: `Synchronize ${input.templateName} managed global guide`,
+    expected_revision_number: current.revision_number,
+  }, MANAGED_GUIDE_ACTOR);
+  if (!updated) throw new Error("The configured global guide disappeared during synchronization");
+  return {
+    document_id: updated.document_id,
+    revision_number: updated.revision_number,
+    updated: true,
+  };
+}
+
 export async function runHypermediaBootstrapCommand(): Promise<void> {
   const corpusDatabaseUrl = process.env.CORPUS_DATABASE_URL;
   if (!corpusDatabaseUrl) throw new Error("CORPUS_DATABASE_URL is required");
@@ -107,15 +164,28 @@ export async function runHypermediaBootstrapCommand(): Promise<void> {
     const storage = new BrokeredStorage({ socketPath, token });
     const bodies = new BrokeredMarkdownObjectStore(storage);
     const bootstrap = new HypermediaBootstrapRepository(pool, bodies);
+    const settings = new KnowledgeSettingsRepository(pool);
+    const knowledgeDocuments = new KnowledgeDocumentRepository(pool, bodies);
     const allocations = await bootstrap.begin();
     if (!allocations.length) {
-      console.log(JSON.stringify({ event: "hypermedia_bootstrap_already_finalized" }));
+      const synchronization = await synchronizeGlobalGuide({
+        repositories: { settings, documents: knowledgeDocuments },
+        guide: defaultHypermediaBootstrapTemplate.documents.global_guide,
+        templateName: defaultHypermediaBootstrapTemplate.name,
+      });
+      console.log(JSON.stringify({
+        event: synchronization.updated
+          ? "managed_global_guide_updated"
+          : "managed_global_guide_current",
+        document_id: synchronization.document_id,
+        revision_number: synchronization.revision_number,
+      }));
       return;
     }
     const completedAt = await applyHypermediaBootstrap({
       repositories: {
         bootstrap,
-        settings: new KnowledgeSettingsRepository(pool),
+        settings,
         registry: new AutomationRegistryRepository(pool),
       },
       template: defaultHypermediaBootstrapTemplate,

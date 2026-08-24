@@ -4,6 +4,7 @@ import {
   AutomationRegistryRepository,
   defaultHypermediaBootstrapTemplate,
   HypermediaBootstrapRepository,
+  KnowledgeDocumentRepository,
   KnowledgeSettingsRepository,
   markdownObjectMetadata,
   type MarkdownObjectMetadata,
@@ -14,6 +15,7 @@ import { developmentResetSql } from "../../../packages/database/src/reset-develo
 import {
   applyHypermediaBootstrap,
   hypermediaBootstrapDocuments,
+  synchronizeGlobalGuide,
 } from "./hypermedia-bootstrap-command.ts";
 
 const enabled = process.env.TEST_HYPERMEDIA_BOOTSTRAP_ISOLATED === "1";
@@ -145,5 +147,38 @@ describeBootstrap("fresh hypermedia bootstrap", () => {
       entrypoint_latched: true,
     });
     expect(objects.size).toBe(5);
+
+    const settings = new KnowledgeSettingsRepository(corpus!);
+    const knowledgeDocuments = new KnowledgeDocumentRepository(corpus!, bodies);
+    const current = await synchronizeGlobalGuide({
+      repositories: { settings, documents: knowledgeDocuments },
+      guide: defaultHypermediaBootstrapTemplate.documents.global_guide,
+      templateName: defaultHypermediaBootstrapTemplate.name,
+    });
+    expect(current).toMatchObject({ revision_number: 1, updated: false });
+
+    const changedGuide = {
+      ...defaultHypermediaBootstrapTemplate.documents.global_guide,
+      body_markdown: `${defaultHypermediaBootstrapTemplate.documents.global_guide.body_markdown}\nManaged upgrade.\n`,
+    };
+    const updated = await synchronizeGlobalGuide({
+      repositories: { settings, documents: knowledgeDocuments },
+      guide: changedGuide,
+      templateName: defaultHypermediaBootstrapTemplate.name,
+    });
+    expect(updated).toMatchObject({
+      document_id: current.document_id,
+      revision_number: 2,
+      updated: true,
+    });
+    expect(await knowledgeDocuments.get(current.document_id)).toMatchObject({
+      revision_number: 2,
+      body_markdown: changedGuide.body_markdown,
+    });
+    expect(await synchronizeGlobalGuide({
+      repositories: { settings, documents: knowledgeDocuments },
+      guide: changedGuide,
+      templateName: defaultHypermediaBootstrapTemplate.name,
+    })).toMatchObject({ revision_number: 2, updated: false });
   }, 15_000);
 });
