@@ -132,6 +132,8 @@ jobs:
         run: |
           bun run db:initialize
           bun run db:test mark
+          TEST_HYPERMEDIA_BOOTSTRAP_ISOLATED=1 \
+            bun test apps/server/src/hypermedia-bootstrap.integration.test.ts
           TEST_AUTH_BOUNDARY_ISOLATED=1 \
             bun test apps/server/src/auth-boundary.integration.test.ts
           TEST_CORPUS_MIGRATION_ISOLATED=1 \

@@ -1,5 +1,11 @@
 export { createPool } from "./pool.ts";
 export {
+  HypermediaBootstrapRepository,
+  type HypermediaBootstrapAllocation,
+  type HypermediaBootstrapDocument,
+  type HypermediaBootstrapDocumentKind,
+} from "./hypermedia-bootstrap.ts";
+export {
   assertMarkdownObject,
   MAX_KNOWLEDGE_PAGE_BYTES,
   MAX_MARKDOWN_DOCUMENT_BYTES,
