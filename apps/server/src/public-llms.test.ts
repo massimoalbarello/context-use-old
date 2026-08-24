@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { PublicPage } from "@context-use/database";
+import type { PublicPageContent } from "./public-content.ts";
 import { renderLlmsFullTxt, renderLlmsTxt, renderPublicPageMarkdown } from "./public-llms.ts";
 
 const options = {
@@ -7,16 +7,16 @@ const options = {
   assetOrigin: "https://assets.massimo.example/ignored-path",
 };
 
-const pages: PublicPage[] = [
+const pages: PublicPageContent[] = [
   {
-    public_path: "about/projects/one",
+    public_id: "about/projects/one",
     title: "Project [One]",
     summary: "A project\nwith a concise summary.",
     body_markdown: "Project body.",
     last_edited_at: "2026-07-26T09:00:00.000Z",
   },
   {
-    public_path: "about/intro",
+    public_id: "about/intro",
     title: "Intro",
     summary: "Massimo's public introduction.",
     body_markdown: [
@@ -102,8 +102,8 @@ describe("public LLM context", () => {
 
   test("redacts private routes and identifiers again at the text boundary", () => {
     const uuid = "11111111-1111-4111-8111-111111111111";
-    const privatePage: PublicPage = {
-      public_path: "notes/privacy",
+    const privatePage: PublicPageContent = {
+      public_id: "notes/privacy",
       title: "Privacy",
       summary: "Public text with private references removed.",
       body_markdown: [

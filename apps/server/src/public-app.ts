@@ -22,6 +22,7 @@ import {
   renderPublicLandingDocument,
   renderPublicPageDocument,
 } from "./public-page.ts";
+import type { PublicPageContent } from "./public-content.ts";
 import { requestMatchesOrigin, securityHeaders } from "./security.ts";
 import { BrokeredStorage } from "./storage-client.ts";
 import { assetContentResponse } from "./asset-content.ts";
@@ -61,20 +62,12 @@ const unavailableResolvers = {
   },
 };
 
-type PublicPage = {
-  public_path: string;
-  title: string;
-  summary: string;
-  body_markdown: string;
-  last_edited_at: string | Date;
-};
-
 function pathlessPublicPage(
   page: Awaited<ReturnType<PathlessPublicRepository["pages"]>>[number],
   bodyMarkdown = "",
-): PublicPage {
+): PublicPageContent {
   return {
-    public_path: page.public_id,
+    public_id: page.public_id,
     title: page.public_title,
     summary: page.public_summary,
     body_markdown: bodyMarkdown,
@@ -82,7 +75,7 @@ function pathlessPublicPage(
   };
 }
 
-async function pathlessPublishedPages(full: boolean): Promise<PublicPage[]> {
+async function pathlessPublishedPages(full: boolean): Promise<PublicPageContent[]> {
   const pages = await pathlessPublicData.pages();
   if (!full) return pages.map((page) => pathlessPublicPage(page));
   return mapConcurrently(pages, 8, async (page) => pathlessPublicPage(
@@ -94,7 +87,7 @@ async function pathlessPublishedPages(full: boolean): Promise<PublicPage[]> {
 async function pathlessPublicEntrypoint(): Promise<{
   state: "unassigned" | "inactive" | "active";
   publicPath: string | null;
-  introduction: PublicPage | null;
+  introduction: PublicPageContent | null;
 }> {
   const route = await pathlessPublicData.entrypoint();
   if (route.state !== "active" || route.route_kind === "asset") {
@@ -110,7 +103,7 @@ async function pathlessPublicEntrypoint(): Promise<{
     state: "active",
     publicPath: route.public_id,
     introduction: {
-      public_path: route.public_id,
+      public_id: route.public_id,
       title: route.public_title,
       summary: route.public_summary,
       body_markdown: bodyMarkdown,
@@ -141,7 +134,7 @@ async function pathlessPageResponse(
     return notFound();
   }
   const page = {
-    public_path: publicId,
+    public_id: publicId,
     title: route.public_title,
     summary: route.public_summary,
     body_markdown: bodyMarkdown,
