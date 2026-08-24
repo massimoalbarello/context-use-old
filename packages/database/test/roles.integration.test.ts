@@ -4,7 +4,6 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { PageRepository } from "../src/index.ts";
 import { disposableDatabaseUrl } from "../src/disposable-database.ts";
 import { MemoryMarkdownStore } from "./memory-markdown-store.ts";
-import { LegacyPublicProjectionReader } from "./legacy-public-projection-reader.ts";
 
 const adminUrl = await disposableDatabaseUrl();
 const describeDatabase = adminUrl ? describe : describe.skip;
@@ -754,18 +753,11 @@ describeDatabase("PostgreSQL security roles", () => {
       `SELECT relname,pg_get_userbyid(relowner) AS owner
        FROM pg_class
        WHERE relnamespace='public'::regnamespace
-         AND relname IN (
-           'published_page_sources','published_pages','published_directories','published_assets',
-           'storage_published_assets'
-         )
+         AND relname IN ('published_page_sources')
        ORDER BY relname`,
     );
     expect(views.rows).toEqual([
-      { relname: "published_assets", owner: "context_use_projection_owner" },
-      { relname: "published_directories", owner: "context_use_projection_owner" },
       { relname: "published_page_sources", owner: "context_use_projection_owner" },
-      { relname: "published_pages", owner: "context_use_projection_owner" },
-      { relname: "storage_published_assets", owner: "context_use_projection_owner" },
     ]);
 
     expect((await admin.query<{ allowed: boolean }>(
@@ -1352,49 +1344,26 @@ describeDatabase("PostgreSQL security roles", () => {
       );
       expect(result.rows[0]?.allowed).toBe(false);
     }
-    for (const relation of ["published_pages", "published_directories", "published_assets", "published_site_settings"]) {
-      const result = await admin.query<{ allowed: boolean }>(
-        "SELECT has_table_privilege('context_use_public', $1, 'SELECT') AS allowed",
-        [relation],
-      );
-      expect(result.rows[0]?.allowed).toBe(false);
-    }
+    const retiredViews = await admin.query<{ relation: string | null }>(
+      `SELECT to_regclass(name)::text AS relation
+       FROM unnest(ARRAY[
+         'published_pages','published_directories','published_assets',
+         'published_site_settings','storage_published_pages','storage_published_assets'
+       ]) AS name`,
+    );
+    expect(retiredViews.rows.every(({ relation }) => relation === null)).toBe(true);
     for (const relation of ["pathless_public_pages", "pathless_public_assets"]) {
       expect((await admin.query<{ allowed: boolean }>(
         "SELECT has_table_privilege('context_use_public',$1,'SELECT') AS allowed",
         [relation],
       )).rows[0]?.allowed).toBe(true);
     }
-    for (const relation of ["published_page_sources", "storage_published_assets"]) {
+    for (const relation of ["published_page_sources"]) {
       expect((await admin.query<{ allowed: boolean }>(
         "SELECT has_table_privilege('context_use_public',$1,'SELECT') AS allowed",
         [relation],
       )).rows[0]?.allowed).toBe(false);
     }
-    const publicPageColumns = await admin.query<{ column_name: string }>(
-      `SELECT column_name FROM information_schema.columns
-       WHERE table_schema='public' AND table_name='published_pages'
-       ORDER BY ordinal_position`,
-    );
-    expect(publicPageColumns.rows.map(({ column_name }) => column_name)).toEqual([
-      "public_path", "title", "summary", "body_markdown", "last_edited_at",
-    ]);
-    const publicDirectoryColumns = await admin.query<{ column_name: string }>(
-      `SELECT column_name FROM information_schema.columns
-       WHERE table_schema='public' AND table_name='published_directories'
-       ORDER BY ordinal_position`,
-    );
-    expect(publicDirectoryColumns.rows.map(({ column_name }) => column_name)).toEqual([
-      "path", "title", "summary",
-    ]);
-    const publicAssetColumns = await admin.query<{ column_name: string }>(
-      `SELECT column_name FROM information_schema.columns
-       WHERE table_schema='public' AND table_name='published_assets'
-       ORDER BY ordinal_position`,
-    );
-    expect(publicAssetColumns.rows.map(({ column_name }) => column_name)).toEqual([
-      "public_path", "filename", "content_type", "size_bytes",
-    ]);
     for (const column of ["singleton", "entrypoint_page_id"]) {
       expect((await admin.query<{ allowed: boolean }>(
         "SELECT has_column_privilege('context_use_corpus','public_knowledge_settings',$1,'SELECT') AS allowed",
@@ -1437,16 +1406,7 @@ describeDatabase("PostgreSQL security roles", () => {
       "SELECT has_table_privilege('context_use_storage','assets','SELECT') AS allowed",
     )).rows[0]?.allowed).toBe(false);
     expect((await admin.query<{ allowed: boolean }>(
-      "SELECT has_table_privilege('context_use_storage','storage_published_assets','SELECT') AS allowed",
-    )).rows[0]?.allowed).toBe(false);
-    expect((await admin.query<{ allowed: boolean }>(
-      "SELECT has_table_privilege('context_use_storage','storage_published_pages','SELECT') AS allowed",
-    )).rows[0]?.allowed).toBe(false);
-    expect((await admin.query<{ allowed: boolean }>(
       "SELECT has_table_privilege('context_use_storage','hypermedia_document_revisions','UPDATE') AS allowed",
-    )).rows[0]?.allowed).toBe(false);
-    expect((await admin.query<{ allowed: boolean }>(
-      "SELECT has_table_privilege('context_use_storage','published_assets','SELECT') AS allowed",
     )).rows[0]?.allowed).toBe(false);
     for (const privilege of ["INSERT", "UPDATE", "DELETE"]) {
       expect((await admin.query<{ allowed: boolean }>(
@@ -1468,54 +1428,6 @@ describeDatabase("PostgreSQL security roles", () => {
        WHERE table_schema='public' AND table_name='knowledge_page_versions'
          AND column_name='body_markdown'`,
     )).rowCount).toBe(0);
-  });
-
-  test("the projection owner can inspect retired asset projections without exposing private assets", async () => {
-    const publishedAssetId = randomUUID();
-    const privateAssetId = randomUUID();
-    const intentId = randomUUID();
-    const suffix = randomUUID().slice(0, 8);
-    const publishedPath = `tests/${suffix}/nested/public-asset`;
-    const privatePath = `tests/${suffix}/nested/private-asset`;
-    await admin.query("BEGIN");
-    try {
-      await ensureOwnerPasskey();
-      await admin.query(
-        `INSERT INTO assets(id,current_path,filename,content_type,size_bytes,content_hash,s3_object_key)
-         VALUES
-           ($1,$2,'public.png','image/png',1,$3,$4),
-           ($5,$6,'private.png','image/png',1,$3,$7)`,
-        [publishedAssetId, publishedPath, "a".repeat(64), `objects/${publishedAssetId}`, privateAssetId, privatePath, `objects/${privateAssetId}`],
-      );
-      await admin.query(
-        `INSERT INTO publication_intents(
-           id,action,target_kind,target_id,public_path,owner_user_id,session_id,
-           expires_at
-         ) VALUES ($1,'publish','asset',$2,$3,'context-use-owner','session',now()+interval '5 minutes')`,
-        [intentId, publishedAssetId, publishedPath],
-      );
-
-      await admin.query("SET LOCAL ROLE context_use_projection_owner");
-      const publicAssets = new LegacyPublicProjectionReader(admin as unknown as Pool);
-      expect(await publicAssets.assetByPublicPath(publishedPath)).toBeNull();
-      expect(await publicAssets.assetByPublicPath(privatePath)).toBeNull();
-      await admin.query("RESET ROLE");
-
-      await issueChallenge("publication", intentId);
-      await admin.query("SET LOCAL ROLE context_use_confirmation");
-      await admin.query("SELECT confirm_publication_intent($1,'context-use-owner','session','test-credential',0,1)", [intentId]);
-      await admin.query("RESET ROLE");
-
-      await admin.query("SET LOCAL ROLE context_use_projection_owner");
-      expect(await publicAssets.assetByPublicPath(publishedPath)).toMatchObject({
-        public_path: publishedPath,
-        filename: "public.png",
-      });
-      expect(await publicAssets.assetByPublicPath(privatePath)).toBeNull();
-      await expectDenied("SELECT * FROM assets");
-    } finally {
-      await admin.query("ROLLBACK");
-    }
   });
 
   test("service roles cannot archive or delete an object while it is published", async () => {
@@ -1887,20 +1799,15 @@ describeDatabase("PostgreSQL security roles", () => {
     }
   });
 
-  test("the projection owner retains reconciled legacy metadata for provenance", async () => {
+  test("the projection owner retains only reconciled legacy source provenance", async () => {
     const privatePageId = randomUUID();
     const privateVersionId = randomUUID();
     const parentPageId = randomUUID();
     const parentVersionId = randomUUID();
     const childPageId = randomUUID();
     const childVersionId = randomUUID();
-    const privateAssetId = randomUUID();
-    const publishedAssetId = randomUUID();
     await admin.query("BEGIN");
     try {
-      const workDirectory = await admin.query<{ id: string }>(
-        "SELECT id FROM knowledge_directories WHERE current_path='profile/work'",
-      );
       await admin.query(
         `INSERT INTO knowledge_pages(id,current_path,current_version_id)
          VALUES ($1,'profile/private-work',$2)`,
@@ -1937,101 +1844,40 @@ describeDatabase("PostgreSQL security roles", () => {
          )`,
         [childVersionId, childPageId],
       );
-      await admin.query(
-        `INSERT INTO assets(
-           id,current_path,public_path,filename,content_type,size_bytes,
-           content_hash,s3_object_key
-         ) VALUES (
-           $1,'media/public-image','media/public-image','public.png','image/png',1,
-           $2,$3
-         )`,
-        [publishedAssetId, "a".repeat(64), `objects/${publishedAssetId}`],
-      );
-      const generation = (await admin.query<{ generation: string }>(
-        "SELECT generation::text FROM public_projection_state WHERE singleton",
-      )).rows[0]!.generation;
-      for (const [pageId, versionId] of [
-        [parentPageId, parentVersionId],
-        [childPageId, childVersionId],
-      ]) {
-        const artifactId = randomUUID();
-        await admin.query(
-          `INSERT INTO published_page_artifacts(
-             page_id,version_id,projection_generation,artifact_id,body_object_key,
-             body_size_bytes,body_content_hash
-           ) VALUES ($1,$2,$3,$4,$5,1,$6)`,
-          [pageId, versionId, generation, artifactId,
-            `documents/public/${artifactId}.md`, "a".repeat(64)],
-        );
-      }
-      await admin.query(
-        "UPDATE public_knowledge_settings SET entrypoint_page_id=$1 WHERE singleton",
-        [parentPageId],
-      );
-
       await admin.query("SET LOCAL ROLE context_use_projection_owner");
-      const webpage = await admin.query<{
+      const source = await admin.query<{
+        id: string;
         public_path: string;
+        published_version_id: string;
+        path: string;
         title: string;
         summary: string;
         body_markdown: string;
-        last_edited_at: Date;
+        version_created_at: Date;
       }>(
-        "SELECT public_path,title,summary,body_markdown,last_edited_at FROM published_pages WHERE public_path='profile/work/project'",
+        "SELECT * FROM published_page_sources WHERE id=$1",
+        [childPageId],
+      );
+      const privateSource = await admin.query(
+        "SELECT 1 FROM published_page_sources WHERE id=$1",
+        [privatePageId],
       );
       const canProjectPrivateBodies = await admin.query<{ allowed: boolean }>(
         "SELECT has_function_privilege('context_use_projection_owner','project_public_markdown(text)','EXECUTE') AS allowed",
       );
-      const publicKnowledge = new LegacyPublicProjectionReader(admin as unknown as Pool);
-      const siteSettings = await publicKnowledge.settings();
-      const rootIndex = await publicKnowledge.directoryIndex("");
-      const profileIndex = await publicKnowledge.directoryIndex("profile");
-      const workIndex = await publicKnowledge.directoryIndex("profile/work");
-      const missingIndex = await publicKnowledge.directoryIndex("profile/private");
       await admin.query("RESET ROLE");
-      expect(Object.keys(webpage.rows[0]!).sort()).toEqual(["body_markdown", "last_edited_at", "public_path", "summary", "title"]);
-      expect(webpage.rows[0]?.last_edited_at).toBeInstanceOf(Date);
-      expect(webpage.rows[0]?.summary).toBe("A public project fixture.");
-      expect(webpage.rows[0]?.body_markdown).toBeNull();
-      expect(canProjectPrivateBodies.rows[0]?.allowed).toBe(true);
-      expect(siteSettings).toEqual({ entrypoint_public_path: "profile" });
-      expect(rootIndex?.entries).toContainEqual({
-        kind: "directory",
-        path: "profile",
-        title: "Profile",
-        summary: "Fixtures under profile.",
-        published_count: 1,
-        default_page_path: null,
-      });
-      expect(rootIndex?.title).toBe("Knowledge");
-      expect(rootIndex?.summary).toBe("The root of the owner's private, progressively discoverable knowledge base.");
-      expect(rootIndex?.default_page_path).toBeNull();
-      expect(profileIndex).toEqual({
-        path: "profile",
-        title: "Profile",
-        summary: "Fixtures under profile.",
-        default_page_path: null,
-        entries: [{
-          kind: "directory",
-          path: "profile/work",
-          title: "Work",
-          summary: "Fixtures under profile/work.",
-          published_count: 1,
-          default_page_path: "profile/work/project",
-        }],
-      });
-      expect(workIndex?.title).toBe("Work");
-      expect(workIndex?.summary).toBe("Fixtures under profile/work.");
-      expect(workIndex?.default_page_path).toBe("profile/work/project");
-      expect(workIndex?.entries).toEqual([{
-        kind: "page",
+      expect(source.rows[0]).toMatchObject({
+        id: childPageId,
+        public_path: "profile/work/project",
+        published_version_id: childVersionId,
         path: "profile/work/project",
         title: "Project",
         summary: "A public project fixture.",
-        published_count: 1,
-        default_page_path: null,
-      }]);
-      expect(missingIndex).toBeNull();
+        body_markdown: null,
+        version_created_at: expect.any(Date),
+      });
+      expect(privateSource.rowCount).toBe(0);
+      expect(canProjectPrivateBodies.rows[0]?.allowed).toBe(true);
     } finally {
       await admin.query("ROLLBACK");
     }
