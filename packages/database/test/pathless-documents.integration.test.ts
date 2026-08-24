@@ -93,8 +93,12 @@ describeDatabase("pathless private documents", () => {
     // The storage locator is an explicit internal handoff.
     expect(asset.storage.object_key).toBe(`objects/${asset.document.document_id}`);
     expect(await assets.getForStorage(asset.document.document_id)).toEqual({
-      ...asset.document,
+      document_id: asset.document.document_id,
       object_key: asset.storage.object_key,
+      filename: asset.document.filename,
+      content_type: asset.document.content_type,
+      size_bytes: asset.document.size_bytes,
+      content_hash: asset.document.content_hash,
     });
 
     const dangling = randomUUID();

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Client, Pool } from "pg";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { KnowledgeDocumentRepository } from "../src/index.ts";
+import { DocumentAssetRepository, KnowledgeDocumentRepository } from "../src/index.ts";
 import { disposableDatabaseUrl } from "../src/disposable-database.ts";
 import { MemoryMarkdownStore } from "./memory-markdown-store.ts";
 
@@ -1373,6 +1373,9 @@ describeDatabase("PostgreSQL security roles", () => {
       "SELECT has_table_privilege('context_use_storage','assets','SELECT') AS allowed",
     )).rows[0]?.allowed).toBe(false);
     expect((await admin.query<{ allowed: boolean }>(
+      "SELECT has_table_privilege('context_use_storage','public_resources','SELECT') AS allowed",
+    )).rows[0]?.allowed).toBe(false);
+    expect((await admin.query<{ allowed: boolean }>(
       "SELECT has_table_privilege('context_use_storage','hypermedia_document_revisions','UPDATE') AS allowed",
     )).rows[0]?.allowed).toBe(false);
     for (const privilege of ["INSERT", "UPDATE", "DELETE"]) {
@@ -1386,6 +1389,33 @@ describeDatabase("PostgreSQL security roles", () => {
         "SELECT has_table_privilege('context_use_public',$1,'SELECT') AS allowed",
         [relation],
       )).rows[0]?.allowed).toBe(false);
+    }
+  });
+
+  test("storage role can authorize a canonical private asset write", async () => {
+    const assetId = randomUUID();
+    const objectKey = `objects/${assetId}`;
+    const contentHash = createHash("sha256").update("storage").digest("hex");
+    await admin.query("BEGIN");
+    try {
+      await admin.query(
+        `INSERT INTO assets(
+           id,filename,content_type,size_bytes,content_hash,s3_object_key
+         ) VALUES ($1,'storage.txt','text/plain',7,$2,$3)`,
+        [assetId, contentHash, objectKey],
+      );
+      await admin.query("SET LOCAL ROLE context_use_storage");
+      const assets = new DocumentAssetRepository(admin as unknown as Pool);
+      expect(await assets.getForStorage(assetId)).toEqual({
+        document_id: assetId,
+        object_key: objectKey,
+        filename: "storage.txt",
+        content_type: "text/plain",
+        size_bytes: "7",
+        content_hash: contentHash,
+      });
+    } finally {
+      await admin.query("ROLLBACK");
     }
   });
 
