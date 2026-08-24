@@ -256,9 +256,13 @@ if [ -n "${CONTEXT_USE_RECOVERY_BACKUP_KEY}" ]; then
   # least-privilege routine/view ownership contract outside pg_dump before the
   # restore, then the explicit post-restore reconciliation pass consumes it.
   docker compose --env-file "${secrets}/runtime.env" --profile migration run --rm \
+    -e MIGRATOR_MAX_VERSION=035_hydrate_ready_corpus_knowledge.sql \
+    -e MIGRATOR_ALLOW_APPLIED_LATER=true \
     -e MIGRATOR_PREPARE_RESTORE_OWNERSHIP=true migrate
 else
-  docker compose --env-file "${secrets}/runtime.env" --profile migration run --rm migrate
+  docker compose --env-file "${secrets}/runtime.env" --profile migration run --rm \
+    -e MIGRATOR_MAX_VERSION=035_hydrate_ready_corpus_knowledge.sql \
+    -e MIGRATOR_ALLOW_APPLIED_LATER=true migrate
 fi
 if [ -n "${CONTEXT_USE_RECOVERY_BACKUP_KEY}" ]; then
   export PGPASSWORD="$(get_secret POSTGRES_PASSWORD)"
@@ -282,6 +286,8 @@ if [ -n "${CONTEXT_USE_RECOVERY_BACKUP_KEY}" ]; then
     psql -X --single-transaction -v ON_ERROR_STOP=1 -U postgres -d context_use \
     -c 'CREATE TEMP TABLE context_use_restore_contract_snapshot AS SELECT context_use_deployment_internal.restore_contract_fingerprint() AS fingerprint; SELECT context_use_deployment_internal.reset_default_acls_for_restore(); CREATE TEMP TABLE context_use_restore_guard(complete boolean PRIMARY KEY); CREATE TEMP TABLE context_use_restore_guard_required(complete boolean NOT NULL REFERENCES context_use_restore_guard(complete) DEFERRABLE INITIALLY DEFERRED); INSERT INTO context_use_restore_guard_required VALUES (true); DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION pg_database_owner; GRANT USAGE ON SCHEMA public TO PUBLIC' -f -
   docker compose --env-file "${secrets}/runtime.env" --profile migration run --rm \
+    -e MIGRATOR_MAX_VERSION=035_hydrate_ready_corpus_knowledge.sql \
+    -e MIGRATOR_ALLOW_APPLIED_LATER=true \
     -e MIGRATOR_RECONCILE_RESTORE_OWNERSHIP=true migrate
   ensure_restore_compatibility_role
   docker compose --env-file "${secrets}/runtime.env" exec -T -e PGPASSWORD postgres \
@@ -301,6 +307,12 @@ docker compose --env-file "${secrets}/runtime.env" up -d --wait storage
 docker compose --env-file "${secrets}/runtime.env" up \
   --force-recreate --no-deps --abort-on-container-exit \
   --exit-code-from knowledge-prepare knowledge-prepare
+# Compatibility data must remain available until the resumable preparation
+# above has permanently finalized the hypermedia cutover. Apply every later
+# contraction migration only after that gate succeeds. On subsequent deploys
+# the bounded pass above validates the complete applied history and becomes a
+# no-op, while this full pass likewise has no pending work.
+docker compose --env-file "${secrets}/runtime.env" --profile migration run --rm migrate
 # Public pages are the availability priority once preparation succeeds. Bring
 # them back before the dashboard, MCP, and auth services start competing for
 # the same two cores.

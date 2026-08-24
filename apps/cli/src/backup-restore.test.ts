@@ -92,9 +92,10 @@ test("Context Use restore captures and reconciles privileged object ownership ar
   const pendingCheck = "to_regnamespace('context_use_deployment_internal') IS NOT NULL";
   const safetyBackup = "run --rm backup once";
   const stop = "stop caddy dashboard-edge app auth private-mcp public-web confirmation storage";
-  const capture = "--profile migration run --rm -e MIGRATOR_PREPARE_RESTORE_OWNERSHIP=true migrate";
+  const compatibility = "-e MIGRATOR_MAX_VERSION=035_hydrate_ready_corpus_knowledge.sql -e MIGRATOR_ALLOW_APPLIED_LATER=true";
+  const capture = `${compatibility} -e MIGRATOR_PREPARE_RESTORE_OWNERSHIP=true migrate`;
   const restore = "backup fetch 'postgres/2026-07-30T12-34-56Z.sql.gz'";
-  const reconcile = "--profile migration run --rm -e MIGRATOR_RECONCILE_RESTORE_OWNERSHIP=true migrate";
+  const reconcile = `${compatibility} -e MIGRATOR_RECONCILE_RESTORE_OWNERSHIP=true migrate`;
 
   expect(script.indexOf(stopBackup)).toBeLessThan(script.indexOf(pendingCheck));
   expect(script.indexOf(pendingCheck)).toBeLessThan(script.indexOf(safetyBackup));
@@ -128,6 +129,7 @@ test("Context Use restore captures and reconciles privileged object ownership ar
 test("Context Use restore does not restart the completed knowledge preparation one-shot", () => {
   const script = restoreCommands("backups", "postgres/2026-07-30T12-34-56Z.sql.gz").join("\n");
   const prepare = "--exit-code-from knowledge-prepare knowledge-prepare";
+  const contract = "--profile migration run --rm migrate";
   const publicWeb = "up -d --wait --no-deps public-web";
   const authAndConfirmation = "up -d --wait --no-deps auth confirmation";
   const appAndMcp = "up -d --wait --no-deps app private-mcp";
@@ -138,7 +140,8 @@ test("Context Use restore does not restart the completed knowledge preparation o
   for (const start of [publicWeb, authAndConfirmation, appAndMcp, dashboardEdge, caddyAndBackup]) {
     expect(script).toContain(start);
   }
-  expect(script.indexOf(prepare)).toBeLessThan(script.indexOf(publicWeb));
+  expect(script.indexOf(prepare)).toBeLessThan(script.indexOf(contract, script.indexOf(prepare)));
+  expect(script.indexOf(contract, script.indexOf(prepare))).toBeLessThan(script.indexOf(publicWeb));
   expect(script.indexOf(publicWeb)).toBeLessThan(script.indexOf(authAndConfirmation));
   expect(script.indexOf(authAndConfirmation)).toBeLessThan(script.indexOf(appAndMcp));
   expect(script.indexOf(appAndMcp)).toBeLessThan(script.indexOf(dashboardEdge));

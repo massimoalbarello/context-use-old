@@ -76,6 +76,21 @@ describe("staged migration ceiling", () => {
     )).toThrow("older than already-applied migration(s): 027_pathless_contract.sql");
   });
 
+  test("allows a bounded compatibility pass after later contraction migrations", () => {
+    expect(migrationsThroughVersion(
+      stagedFiles,
+      [
+        { version: "001_baseline.sql", checksum: "checksum-001" },
+        { version: "027_pathless_contract.sql", checksum: "checksum-027" },
+      ],
+      "026_audited_corpus.sql",
+      true,
+    ).map(({ version }) => version)).toEqual([
+      "001_baseline.sql",
+      "026_audited_corpus.sql",
+    ]);
+  });
+
   test("validates every applied checksum before limiting new migrations", () => {
     const applied = [
       { version: "001_baseline.sql", checksum: "checksum-001" },

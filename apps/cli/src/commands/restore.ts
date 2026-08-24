@@ -9,8 +9,9 @@ export function restoreCommands(bucket: string, key: string): string[] {
   if (!/^postgres\/[0-9TZ-]+\.sql\.gz$/.test(key)) throw new Error("Invalid backup key");
   const compose = "docker compose --env-file /data/context-use/secrets/runtime.env";
   const database = `${compose} exec -T -e PGPASSWORD postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d context_use`;
-  const prepareOwnership = `${compose} --profile migration run --rm -e MIGRATOR_PREPARE_RESTORE_OWNERSHIP=true migrate`;
-  const reconcileOwnership = `${compose} --profile migration run --rm -e MIGRATOR_RECONCILE_RESTORE_OWNERSHIP=true migrate`;
+  const compatibilityMigrations = "-e MIGRATOR_MAX_VERSION=035_hydrate_ready_corpus_knowledge.sql -e MIGRATOR_ALLOW_APPLIED_LATER=true";
+  const prepareOwnership = `${compose} --profile migration run --rm ${compatibilityMigrations} -e MIGRATOR_PREPARE_RESTORE_OWNERSHIP=true migrate`;
+  const reconcileOwnership = `${compose} --profile migration run --rm ${compatibilityMigrations} -e MIGRATOR_RECONCILE_RESTORE_OWNERSHIP=true migrate`;
   const contractSnapshot = "CREATE TEMP TABLE context_use_restore_contract_snapshot AS SELECT context_use_deployment_internal.restore_contract_fingerprint() AS fingerprint; SELECT context_use_deployment_internal.reset_default_acls_for_restore(); ";
   const restoreDatabase = `${database} --single-transaction `
     + `-c '${contractSnapshot}CREATE TEMP TABLE context_use_restore_guard(complete boolean PRIMARY KEY); `
@@ -45,6 +46,7 @@ export function restoreCommands(bucket: string, key: string): string[] {
     `${database} -c 'DROP OWNED BY ${compatibilityRole}; DROP ROLE IF EXISTS ${compatibilityRole}'`,
     `${compose} up -d --wait storage`,
     `${compose} up --force-recreate --no-deps --abort-on-container-exit --exit-code-from knowledge-prepare knowledge-prepare`,
+    `${compose} --profile migration run --rm migrate`,
     // The one-shot succeeded above; explicit no-dependency starts keep Compose
     // from traversing back through it while restoring the long-lived services.
     `${compose} up -d --wait --no-deps public-web`,

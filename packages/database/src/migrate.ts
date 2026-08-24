@@ -41,6 +41,7 @@ const migrations = await Promise.all(files.map(async (version) => {
     checksum: createHash("sha256").update(sql).digest("hex"),
   };
 }));
+const allowAppliedLater = process.env.MIGRATOR_ALLOW_APPLIED_LATER === "true";
 const targetMigrations = migrationsThroughVersion(migrations, [], process.env.MIGRATOR_MAX_VERSION);
 
 const client = new Client({ connectionString: migrationUrl });
@@ -100,6 +101,7 @@ try {
       migrations,
       applied.rows,
       process.env.MIGRATOR_MAX_VERSION,
+      allowAppliedLater,
     );
     await client.query("ALTER TABLE schema_migrations ALTER COLUMN checksum SET NOT NULL");
     for (const migration of migrationsToApply) {
