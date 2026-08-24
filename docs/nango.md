@@ -6,7 +6,8 @@ base. Each sync transforms provider responses into a provider-agnostic record co
 are discarded. The full contract is in
 [`nango-integrations/SYNC_GUIDELINES.md`](../nango-integrations/SYNC_GUIDELINES.md).
 
-The private Context Use MCP exposes `sync_source_record_batch` as the single downstream sync surface.
+The private Context Use MCP exposes the stable `read_source_records` tool, titled
+**Sync source record batch**, as the single downstream sync surface.
 It returns one source record by default across every connection with one opaque `next_checkpoint`
 cursor, preventing unrelated records from collectively overflowing ordinary agent-tool output
 limits. It applies a rolling 30-day freshness window based on when a record was last updated at

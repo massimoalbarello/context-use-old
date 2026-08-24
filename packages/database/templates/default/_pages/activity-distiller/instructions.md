@@ -29,7 +29,7 @@ checkpoint or reports a failure.
 
 ### 2. Read one working set
 
-Call `sync_source_record_batch` once with the saved checkpoint and **no `limit`**.
+Call `read_source_records` once with the saved checkpoint and **no `limit`**.
 
 Each run processes exactly one bounded working set. `has_more`, never the number of returned
 records, says whether a later fresh run has more source work to resume.

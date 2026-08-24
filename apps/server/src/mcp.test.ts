@@ -30,6 +30,7 @@ async function mcpRequest(serverOrPromise: McpServer | Promise<McpServer>, body:
       result?: {
         tools?: Array<{
           name: string;
+          title?: string;
           description?: string;
           annotations?: { readOnlyHint?: boolean };
           inputSchema?: { properties?: Record<string, { default?: unknown; description?: string }> };
@@ -123,7 +124,7 @@ const rootGuidanceReceipt = createKnowledgeGuideReceipt({
 
 
 describe("MCP knowledge tools", () => {
-  test("defaults source syncs to one harness-safe record", async () => {
+  test("advertises bounded source reads as a non-read-only sync", async () => {
     const calls: unknown[] = [];
     const sourceRecords: SourceRecordReader = {
       async read(input) {
@@ -141,8 +142,9 @@ describe("MCP knowledge tools", () => {
       method: "tools/list",
       params: {},
     });
-    const tool = listed.result?.tools?.find(({ name }) => name === "sync_source_record_batch");
-    expect(listed.result?.tools?.some(({ name }) => name === "read_source_records")).toBe(false);
+    const tool = listed.result?.tools?.find(({ name }) => name === "read_source_records");
+    expect(listed.result?.tools?.some(({ name }) => name === "sync_source_record_batch")).toBe(false);
+    expect(tool?.title).toBe("Sync source record batch");
     expect(tool?.description).toContain("at most one record");
     expect(tool?.inputSchema?.properties?.limit?.default).toBe(1);
     expect(tool?.annotations?.readOnlyHint).toBe(false);
@@ -151,7 +153,7 @@ describe("MCP knowledge tools", () => {
       jsonrpc: "2.0",
       id: 2,
       method: "tools/call",
-      params: { name: "sync_source_record_batch", arguments: {} },
+      params: { name: "read_source_records", arguments: {} },
     });
     expect(calls).toEqual([{ checkpoint: undefined, limit: 1 }]);
     expect(read.result?.structuredContent).toEqual({
