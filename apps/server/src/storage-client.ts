@@ -195,13 +195,10 @@ export class BrokeredStorage implements ObjectStorage {
     if (!response.ok) throw new Error(`Generated storage deletion failed (${response.status})`);
   }
 
-  async materializePublicationArtifact(
-    allocationKind: "pathless_intent" | "pathless_adoption",
-    allocationId: string,
-  ): Promise<void> {
+  async materializePublicationArtifact(allocationId: string): Promise<void> {
     if (this.options.publicOnly) throw new Error("Published storage is read-only");
     const response = await this.request(
-      `/private/publication-artifact?kind=${allocationKind}&id=${encodeURIComponent(allocationId)}`,
+      `/private/publication-artifact?id=${encodeURIComponent(allocationId)}`,
       { method: "PUT" },
     );
     if (!response.ok) {

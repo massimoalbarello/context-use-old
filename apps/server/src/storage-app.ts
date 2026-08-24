@@ -8,8 +8,6 @@ import {
   PathlessStoragePublicationRepository,
   createPool,
   extractDocumentLinks,
-  type PathlessPublicationAdoptionArtifactReceipt,
-  type PathlessPublicationAdoptionWriteAuthorization,
   type PathlessPublicationObjectClaim,
   type PathlessPublicationWriteAuthorization,
 } from "@context-use/database";
@@ -158,7 +156,7 @@ async function generatedObjectResponse(
 }
 
 type PathlessPublicationClaims = Pick<PathlessStoragePublicationRepository,
-  "claimIntent" | "finalizeIntent" | "claimAdoption" | "finalizeAdoption">
+  "claimIntent" | "finalizeIntent">
   & Partial<Pick<PathlessStoragePublicationRepository, "resolve">>;
 
 function exactNumber(value: number | string, maximum: number): number {
@@ -171,7 +169,7 @@ function exactNumber(value: number | string, maximum: number): number {
 
 async function verifiedSourceBody(
   storage: ObjectStorageBackend,
-  authorization: PathlessPublicationWriteAuthorization | PathlessPublicationAdoptionWriteAuthorization,
+  authorization: PathlessPublicationWriteAuthorization,
 ): Promise<BodyInit> {
   const size = exactNumber(authorization.source_body_size_bytes, 5_000_000_000);
   if (!await storage.verify(
@@ -188,15 +186,12 @@ function sameUuidSet(left: string[], right: string[]): boolean {
 
 async function writeClaimedArtifact(input: {
   storage: ObjectStorageBackend;
-  claim:
-    | PathlessPublicationObjectClaim<PathlessPublicationWriteAuthorization>
-    | PathlessPublicationObjectClaim<PathlessPublicationAdoptionWriteAuthorization>;
-  allocationKind: "pathless_intent" | "pathless_adoption";
+  claim: PathlessPublicationObjectClaim<PathlessPublicationWriteAuthorization>;
 }): Promise<{
   claimToken: string;
-  receipt: PathlessPublicationArtifactReceipt | PathlessPublicationAdoptionArtifactReceipt | null;
+  receipt: PathlessPublicationArtifactReceipt | null;
 }> {
-  const { storage, claim, allocationKind } = input;
+  const { storage, claim } = input;
   if (claim.finalized) {
     const size = exactNumber(claim.body_size_bytes, 5_000_000_000);
     if (!await storage.verify(claim.body_object_key, size, claim.body_content_hash)) {
@@ -206,12 +201,8 @@ async function writeClaimedArtifact(input: {
   }
 
   const authorization = claim.authorization;
-  const page = "target_kind" in authorization
-    ? authorization.target_kind === "page"
-    : authorization.resource_kind === "page";
-  const project = page && (
-    "target_kind" in authorization || authorization.adoption_kind === "directory_hub"
-  );
+  const page = authorization.target_kind === "page";
+  const project = page;
   let body: ReadableStream<Uint8Array> | null;
   let sizeBytes: number;
   let contentHash: string;
@@ -257,9 +248,8 @@ async function writeClaimedArtifact(input: {
     throw new Error("Conditional publication artifact write did not retain the exact bytes");
   }
 
-  if (allocationKind === "pathless_intent") {
-    const target = authorization as PathlessPublicationWriteAuthorization;
-    const receipt: PathlessPublicationArtifactReceipt = target.target_kind === "page"
+  const target = authorization;
+  const receipt: PathlessPublicationArtifactReceipt = target.target_kind === "page"
       ? {
         intent_id: target.intent_id,
         target_kind: "page",
@@ -285,66 +275,21 @@ async function writeClaimedArtifact(input: {
           ? {}
           : { public_duration_seconds: target.public_duration_seconds }),
       };
-    return { claimToken: claim.claim_token, receipt };
-  }
-
-  const target = authorization as PathlessPublicationAdoptionWriteAuthorization;
-  const receipt: PathlessPublicationAdoptionArtifactReceipt = target.resource_kind === "page"
-    ? {
-      adoption_id: target.adoption_id,
-      adoption_kind: target.adoption_kind,
-      body_size_bytes: sizeBytes,
-      body_content_hash: contentHash,
-      public_title: target.public_title,
-      public_summary: target.public_summary,
-      public_last_edited_at: target.public_last_edited_at,
-      projected_target_public_ids: target.projected_target_public_ids,
-      observed_public_uuid_tokens: observedPublicIds,
-      projection_receipt_hash: target.projection_receipt_hash,
-    }
-    : {
-      adoption_id: target.adoption_id,
-      adoption_kind: "legacy_asset",
-      body_size_bytes: sizeBytes,
-      body_content_hash: contentHash,
-      public_filename: target.public_filename,
-      public_content_type: target.public_content_type,
-      ...(target.public_width === null ? {} : { public_width: target.public_width }),
-      ...(target.public_height === null ? {} : { public_height: target.public_height }),
-      ...(target.public_duration_seconds === null
-        ? {}
-        : { public_duration_seconds: target.public_duration_seconds }),
-      projection_receipt_hash: target.projection_receipt_hash,
-    };
   return { claimToken: claim.claim_token, receipt };
 }
 
 export async function materializePathlessPublicationArtifact(input: {
   storage: ObjectStorageBackend;
   claims: PathlessPublicationClaims;
-  allocationKind: "pathless_intent" | "pathless_adoption";
   allocationId: string;
 }): Promise<void> {
-  const claim = input.allocationKind === "pathless_intent"
-    ? await input.claims.claimIntent(input.allocationId)
-    : await input.claims.claimAdoption(input.allocationId);
+  const claim = await input.claims.claimIntent(input.allocationId);
   const written = await writeClaimedArtifact({
     storage: input.storage,
     claim,
-    allocationKind: input.allocationKind,
   });
   if (!written.receipt) return;
-  if (input.allocationKind === "pathless_intent") {
-    await input.claims.finalizeIntent(
-      written.claimToken,
-      written.receipt as PathlessPublicationArtifactReceipt,
-    );
-  } else {
-    await input.claims.finalizeAdoption(
-      written.claimToken,
-      written.receipt as PathlessPublicationAdoptionArtifactReceipt,
-    );
-  }
+  await input.claims.finalizeIntent(written.claimToken, written.receipt);
 }
 
 export function createStorageBrokerApp(input: {
@@ -462,13 +407,10 @@ export function createStorageBrokerApp(input: {
     if (privateCapability(request, tokens) !== "dashboard" || !pathlessPublications) {
       return denied();
     }
-    const allocationKind = z.enum(["pathless_intent", "pathless_adoption"])
-      .parse(query.kind);
     const allocationId = z.string().uuid().parse(query.id);
     await materializePathlessPublicationArtifact({
       storage,
       claims: pathlessPublications,
-      allocationKind,
       allocationId,
     });
     return new Response(null, { status: 204 });
