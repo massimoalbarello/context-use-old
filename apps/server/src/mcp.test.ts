@@ -123,7 +123,7 @@ const rootGuidanceReceipt = createKnowledgeGuideReceipt({
 
 
 describe("MCP knowledge tools", () => {
-  test("defaults source reads to one harness-safe record", async () => {
+  test("defaults source syncs to one harness-safe record", async () => {
     const calls: unknown[] = [];
     const sourceRecords: SourceRecordReader = {
       async read(input) {
@@ -141,15 +141,17 @@ describe("MCP knowledge tools", () => {
       method: "tools/list",
       params: {},
     });
-    const tool = listed.result?.tools?.find(({ name }) => name === "read_source_records");
+    const tool = listed.result?.tools?.find(({ name }) => name === "sync_source_record_batch");
+    expect(listed.result?.tools?.some(({ name }) => name === "read_source_records")).toBe(false);
     expect(tool?.description).toContain("at most one record");
     expect(tool?.inputSchema?.properties?.limit?.default).toBe(1);
+    expect(tool?.annotations?.readOnlyHint).toBe(false);
 
     const read = await mcpRequest(serverWith(undefined, { sourceRecords }), {
       jsonrpc: "2.0",
       id: 2,
       method: "tools/call",
-      params: { name: "read_source_records", arguments: {} },
+      params: { name: "sync_source_record_batch", arguments: {} },
     });
     expect(calls).toEqual([{ checkpoint: undefined, limit: 1 }]);
     expect(read.result?.structuredContent).toEqual({

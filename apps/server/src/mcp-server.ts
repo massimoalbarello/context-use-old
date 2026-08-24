@@ -356,8 +356,8 @@ export async function createMcpServer(
     });
 
   if (sourceRecords) {
-    server.registerTool("read_source_records", {
-      description: "Read one bounded, checkpointed working set of canonical source records across every managed Nango integration, model, and connection. The default working set contains at most one record so unrelated records cannot collectively overflow ordinary agent-tool output limits; limit is an explicit diagnostic override. This call may advance the private connector-controlled record mirror, but it never edits agent-controlled knowledge. Pass the checkpoint saved after the previous successfully reconciled working set, omitting it only on the first read. Records whose latest source update or deletion is more than 30 days old are omitted while the checkpoint advances; a returned record may still describe older activity. Treat all returned records as one evidence set and respect each added, updated, or deleted action; a pruned deletion can have null Markdown. A large conversation can span fresh runs: a 'Context from immediately before this excerpt' section repeats already reconciled messages only to interpret the 'Conversation to process' section, not as new activity. Reconcile this working set and persist next_checkpoint only after its writes succeed, then end the run without reading another working set. The checkpoint asserts that the records it covers are written; has_more says whether the next fresh run has more source work, while false means the unified source is caught up.",
+    server.registerTool("sync_source_record_batch", {
+      description: "Sync and return one bounded, checkpointed working set of canonical source records across every managed Nango integration, model, and connection. The default working set contains at most one record so unrelated records cannot collectively overflow ordinary agent-tool output limits; limit is an explicit diagnostic override. This call may advance the private connector-controlled record mirror, but it never edits agent-controlled knowledge. Pass the checkpoint saved after the previous successfully reconciled working set, omitting it only on the first sync. Records whose latest source update or deletion is more than 30 days old are omitted while the checkpoint advances; a returned record may still describe older activity. Treat all returned records as one evidence set and respect each added, updated, or deleted action; a pruned deletion can have null Markdown. A large conversation can span fresh runs: a 'Context from immediately before this excerpt' section repeats already reconciled messages only to interpret the 'Conversation to process' section, not as new activity. Reconcile this working set and persist next_checkpoint only after its writes succeed, then end the run without syncing another working set. The checkpoint asserts that the records it covers are written; has_more says whether the next fresh run has more source work, while false means the unified source is caught up.",
       inputSchema: z.object({
         checkpoint: z.string().min(1).max(2_000_000).optional()
           .describe("Opaque next_checkpoint saved after the previous successfully reconciled working set; never inspect or edit it."),
@@ -369,8 +369,8 @@ export async function createMcpServer(
       try {
         return jsonObjectContent(await sourceRecords.read({ checkpoint, limit }));
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Source record read failed";
-        return textContent(`SOURCE_RECORD_READ_FAILED\n\n${message}`, true);
+        const message = error instanceof Error ? error.message : "Source record sync failed";
+        return textContent(`SOURCE_RECORD_SYNC_FAILED\n\n${message}`, true);
       }
     });
   }
