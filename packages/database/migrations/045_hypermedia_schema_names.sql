@@ -245,6 +245,126 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION complete_hypermedia_bootstrap()
+RETURNS timestamptz
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path=pg_catalog,public
+SET jit=off
+AS $$
+DECLARE
+  bootstrap_completed_at timestamptz;
+  guide_id uuid;
+  activity_instructions_id uuid;
+  activity_state_id uuid;
+  diary_instructions_id uuid;
+  diary_state_id uuid;
+BEGIN
+  PERFORM pg_advisory_xact_lock(
+    hashtextextended('context-use:hypermedia-bootstrap',0)
+  );
+  IF (SELECT count(*) FROM hypermedia_bootstrap_allocations)<>5 THEN
+    RAISE EXCEPTION 'hypermedia bootstrap allocation set is incomplete'
+      USING ERRCODE='55000';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM hypermedia_bootstrap_allocations
+    WHERE completed_at IS NULL
+  ) THEN
+    SELECT max(completed_at) INTO bootstrap_completed_at
+    FROM hypermedia_bootstrap_allocations;
+    RETURN bootstrap_completed_at;
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM hypermedia_bootstrap_allocations
+    WHERE completed_at IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'hypermedia bootstrap allocation state is inconsistent'
+      USING ERRCODE='55000';
+  END IF;
+
+  SELECT document_id INTO guide_id FROM hypermedia_bootstrap_allocations
+  WHERE document_kind='global_guide';
+  SELECT document_id INTO activity_instructions_id
+  FROM hypermedia_bootstrap_allocations
+  WHERE document_kind='activity_distiller_instructions';
+  SELECT document_id INTO activity_state_id
+  FROM hypermedia_bootstrap_allocations
+  WHERE document_kind='activity_distiller_state';
+  SELECT document_id INTO diary_instructions_id
+  FROM hypermedia_bootstrap_allocations
+  WHERE document_kind='diary_composer_instructions';
+  SELECT document_id INTO diary_state_id
+  FROM hypermedia_bootstrap_allocations
+  WHERE document_kind='diary_composer_state';
+
+  IF guide_id IS NULL OR activity_instructions_id IS NULL
+     OR activity_state_id IS NULL OR diary_instructions_id IS NULL
+     OR diary_state_id IS NULL THEN
+    RAISE EXCEPTION 'hypermedia bootstrap allocation set is incomplete'
+      USING ERRCODE='55000';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM hypermedia_bootstrap_allocations allocation
+    LEFT JOIN knowledge_pages page
+      ON page.id=allocation.document_id
+     AND page.current_version_id=allocation.revision_id
+     AND page.archived_at IS NULL
+    LEFT JOIN hypermedia_documents document
+      ON document.id=allocation.document_id
+     AND document.authority='knowledge'
+     AND document.representation='markdown'
+    LEFT JOIN knowledge_revision_contracts contract
+      ON contract.document_id=allocation.document_id
+     AND contract.revision_id=allocation.revision_id
+     AND contract.link_contract='generic_document_v1'
+    LEFT JOIN knowledge_search search
+      ON search.document_id=allocation.document_id
+     AND search.revision_id=allocation.revision_id
+    WHERE page.id IS NULL OR document.id IS NULL
+      OR contract.revision_id IS NULL OR search.document_id IS NULL
+  ) THEN
+    RAISE EXCEPTION 'hypermedia bootstrap documents are incomplete'
+      USING ERRCODE='55000';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM knowledge_settings
+    WHERE singleton AND global_guide_document_id=guide_id
+  ) OR NOT EXISTS (
+    SELECT 1 FROM automation_registry
+    WHERE key='activity-distiller' AND disabled_at IS NULL
+      AND instructions_document_id=activity_instructions_id
+      AND state_document_id=activity_state_id
+  ) OR NOT EXISTS (
+    SELECT 1 FROM automation_registry
+    WHERE key='diary-composer' AND disabled_at IS NULL
+      AND instructions_document_id=diary_instructions_id
+      AND state_document_id=diary_state_id
+  ) THEN
+    RAISE EXCEPTION 'hypermedia bootstrap operational settings are incomplete'
+      USING ERRCODE='55000';
+  END IF;
+
+  UPDATE publication_settings
+  SET updated_at=clock_timestamp()
+  WHERE singleton AND updated_at IS NULL;
+  IF NOT EXISTS (
+    SELECT 1 FROM publication_settings
+    WHERE singleton AND updated_at IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'hypermedia bootstrap publication settings are incomplete'
+      USING ERRCODE='55000';
+  END IF;
+
+  UPDATE hypermedia_bootstrap_allocations
+  SET completed_at=clock_timestamp()
+  WHERE completed_at IS NULL;
+  SELECT max(completed_at) INTO bootstrap_completed_at
+  FROM hypermedia_bootstrap_allocations;
+  RETURN bootstrap_completed_at;
+END;
+$$;
+
 DO $rename_catalog$
 DECLARE item record; renamed text;
 BEGIN
