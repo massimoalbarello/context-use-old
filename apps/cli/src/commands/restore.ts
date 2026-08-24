@@ -45,7 +45,7 @@ export function restoreCommands(bucket: string, key: string): string[] {
     ensureCompatibilityRole,
     `${database} -c 'DROP OWNED BY ${compatibilityRole}; DROP ROLE IF EXISTS ${compatibilityRole}'`,
     `${compose} up -d --wait storage`,
-    `${compose} up --force-recreate --no-deps --abort-on-container-exit --exit-code-from knowledge-prepare knowledge-prepare`,
+    `${compose} up --force-recreate --no-deps --abort-on-container-exit --exit-code-from hypermedia-bootstrap hypermedia-bootstrap`,
     `${compose} --profile migration run --rm migrate`,
     // The one-shot succeeded above; explicit no-dependency starts keep Compose
     // from traversing back through it while restoring the long-lived services.

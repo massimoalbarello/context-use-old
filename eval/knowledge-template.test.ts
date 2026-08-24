@@ -68,7 +68,7 @@ describe("eval knowledge templates", () => {
     expect(deployedCompose).not.toContain("CONTEXT_USE_DEVELOPMENT_TEMPLATE_ROOT");
 
     const productionTemplateCommand = readFileSync(
-      `${ROOT}/apps/server/src/corpus-migration-command.ts`,
+      `${ROOT}/apps/server/src/hypermedia-bootstrap-command.ts`,
       "utf8",
     );
     expect(productionTemplateCommand).not.toContain("eval/templates");

@@ -191,7 +191,7 @@ export async function setup(options: { instanceType?: string } = {}): Promise<vo
   await prepareCompute(config, data, compute);
   await ensureRuntimeParameters(config, data, compute);
   if (await pauseForManualDns(config, compute)) return;
-  await deploy(config, compute, manifest, { installTemplate: "default" });
+  await deploy(config, compute, manifest);
   await ensureNangoApiKeys(config, data, compute.instance_id);
   await refreshNangoPipelineRuntime(config, compute);
   p.outro(`context-use is ready. Create the owner passkey:\n${await ownerSetupUrl(config)}\n\nThen open https://${config.nangoHostname}; it uses the same passkey session.`);

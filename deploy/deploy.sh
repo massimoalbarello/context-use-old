@@ -305,7 +305,7 @@ fi
 docker compose --env-file "${secrets}/runtime.env" up -d --wait storage
 docker compose --env-file "${secrets}/runtime.env" up \
   --force-recreate --no-deps --abort-on-container-exit \
-  --exit-code-from knowledge-prepare knowledge-prepare
+  --exit-code-from hypermedia-bootstrap hypermedia-bootstrap
 # Apply later contraction migrations only after the bootstrap has permanently
 # finalized the hypermedia state.
 docker compose --env-file "${secrets}/runtime.env" --profile migration run --rm migrate
@@ -315,7 +315,7 @@ docker compose --env-file "${secrets}/runtime.env" --profile migration run --rm 
 docker compose --env-file "${secrets}/runtime.env" up -d --wait --no-deps public-web
 # The hypermedia bootstrap one-shot has already completed and been audited above.
 # Start its long-lived consumers without traversing `depends_on`, otherwise
-# Compose starts knowledge-prepare a second time while bringing consumers up.
+# Compose starts hypermedia-bootstrap a second time while bringing consumers up.
 docker compose --env-file "${secrets}/runtime.env" up -d --wait --no-deps \
   auth confirmation
 docker compose --env-file "${secrets}/runtime.env" up -d --wait --no-deps \
@@ -351,7 +351,7 @@ docker compose --env-file "${secrets}/runtime.env" up -d --wait \
 # migration, and set default grants for relations created between releases.
 docker compose --env-file "${secrets}/runtime.env" --profile nango-init run --rm nango-db-init
 # Start only the remaining long-lived services. A bare `compose up` would also
-# restart the completed knowledge-prepare one-shot without observing its exit.
+# restart the completed hypermedia-bootstrap one-shot without observing its exit.
 docker compose --env-file "${secrets}/runtime.env" up -d --remove-orphans \
   confirmation backup nango-backup
 # Compose does not recreate a service when only bind-mounted file contents
