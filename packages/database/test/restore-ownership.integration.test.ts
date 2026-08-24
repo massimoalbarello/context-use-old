@@ -5,7 +5,6 @@ import { Client } from "pg";
 import { RESTORE_OWNERSHIP_SCHEMA } from "../src/restore-ownership.ts";
 
 const serverUrl = process.env.TEST_RESTORE_OWNERSHIP_DATABASE_URL;
-const historicalServerUrl = process.env.TEST_RESTORE_OWNERSHIP_HISTORICAL_DATABASE_URL;
 const describeDatabase = serverUrl ? describe : describe.skip;
 const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
 
@@ -377,7 +376,7 @@ describeDatabase("pg_dump ownership reconciliation", () => {
     }
   });
 
-  test("same-version and historical no-owner restores recover every least-privilege owner", async () => {
+  test("same-version no-owner restores recover every least-privilege owner", async () => {
     const migrationAdmin = await targetClient.query<{ role_name: string }>(
       "SELECT current_user::text AS role_name",
     );
@@ -543,7 +542,7 @@ describeDatabase("pg_dump ownership reconciliation", () => {
     await processResult(migrate, { environment: prepareEnvironment });
     await restoreDatabase(target.toString(), dumpBytes);
     await targetClient.query(
-      "GRANT SELECT (body_markdown) ON public.published_page_sources TO context_use_dashboard",
+      "GRANT SELECT (document_id) ON public.private_document_catalog TO context_use_dashboard",
     );
     const viewAclRejected = await processFailure(migrate, reconcileEnvironment);
     expect(viewAclRejected).toContain("Restore ownership target ACL changed");
@@ -631,79 +630,6 @@ describeDatabase("pg_dump ownership reconciliation", () => {
       [compatibilityRole],
     );
     expect(placeholderAfter.rows[0]?.exists).toBe(false);
-
-    if (historicalServerUrl) {
-      const historicalPrepared = await processResult(migrate, { environment: prepareEnvironment });
-      expect(historicalPrepared.stdout).toContain(`Prepared ${expected.length} routine/view ownerships for restore`);
-      await targetClient.query(ensureCompatibilityRoleSql);
-      compatibilityRoleFixtureCreated = true;
-      const historicalDump = await dumpDatabase(historicalServerUrl);
-      await restoreDatabase(target.toString(), historicalDump);
-      await expectRestoredPublicSchema(targetClient);
-      await targetClient.query(`
-        GRANT USAGE ON SCHEMA public TO ${compatibilityRole};
-        GRANT SELECT ON public.published_page_sources TO ${compatibilityRole};
-        GRANT EXECUTE ON FUNCTION public.project_public_markdown(text) TO ${compatibilityRole};
-        ALTER DEFAULT PRIVILEGES FOR ROLE ${compatibilityRole}
-          GRANT SELECT ON TABLES TO PUBLIC;
-      `);
-      const historicalCompatibilityDefaults = await targetClient.query<{ count: string }>(`
-        SELECT count(*)::text
-        FROM pg_catalog.pg_default_acl AS defaults
-        JOIN pg_catalog.pg_roles AS role ON role.oid=defaults.defaclrole
-        WHERE role.rolname=$1
-      `, [compatibilityRole]);
-      expect(historicalCompatibilityDefaults.rows[0]?.count).toBe("1");
-      const restoredVersions = await targetClient.query<{ version: string }>(
-        "SELECT version FROM schema_migrations ORDER BY version",
-      );
-      expect(restoredVersions.rows.some(({ version }) => version === "027_pathless_document_contract.sql")).toBe(true);
-      expect(restoredVersions.rows.some(({ version }) => version === "028_pathless_publication_artifacts.sql")).toBe(false);
-      expect(restoredVersions.rows.some(({ version }) => version === "029_pathless_publication_api.sql")).toBe(false);
-
-      const upgraded = await processResult(migrate, { environment: reconcileEnvironment });
-      expect(upgraded.stdout).toContain("Applied 028_pathless_publication_artifacts.sql");
-      expect(upgraded.stdout).toContain("Applied 029_pathless_publication_api.sql");
-      expect(upgraded.stdout).toContain(`Reconciled ${expected.length} restored routine/view ownerships`);
-      const upgradedOwnership = new Map(
-        (await catalogOwnership(targetClient)).map((object) => [objectKey(object), object]),
-      );
-      for (const object of expected) {
-        expect(upgradedOwnership.get(objectKey(object))?.owner_role_name).toBe(object.owner_role_name);
-      }
-      const upgradedContract = await targetClient.query<{ contract: string | null }>(
-        "SELECT pg_catalog.to_regnamespace($1)::text AS contract",
-        [RESTORE_OWNERSHIP_SCHEMA],
-      );
-      expect(upgradedContract.rows[0]?.contract).toBeNull();
-      const scrubbedCompatibility = await targetClient.query<{
-        schema_usage: boolean;
-        view_select: boolean;
-        function_execute: boolean;
-        default_acl_count: string;
-      }>(`
-        SELECT pg_catalog.has_schema_privilege($1,'public','USAGE') AS schema_usage,
-          pg_catalog.has_table_privilege($1,'public.published_page_sources','SELECT') AS view_select,
-          pg_catalog.has_function_privilege(
-            $1,'public.project_public_markdown(text)','EXECUTE'
-          ) AS function_execute,
-          (
-            SELECT count(*)::text
-            FROM pg_catalog.pg_default_acl AS defaults
-            JOIN pg_catalog.pg_roles AS role ON role.oid=defaults.defaclrole
-            WHERE role.rolname=$1
-          ) AS default_acl_count
-      `, [compatibilityRole]);
-      expect(scrubbedCompatibility.rows).toEqual([{
-        schema_usage: false,
-        view_select: false,
-        function_execute: false,
-        default_acl_count: "0",
-      }]);
-      await targetClient.query(ensureCompatibilityRoleSql);
-      await targetClient.query(`DROP OWNED BY ${compatibilityRole}; DROP ROLE ${compatibilityRole}`);
-      compatibilityRoleFixtureCreated = false;
-    }
 
     await processResult(migrate, { environment: prepareEnvironment });
     await targetClient.query(`

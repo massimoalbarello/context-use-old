@@ -22,16 +22,6 @@ const adminUrl = await disposableDatabaseUrl();
 const corpusUrl = process.env.CORPUS_DATABASE_URL;
 const admin = enabled ? new Client({ connectionString: adminUrl }) : null;
 const corpus = enabled && corpusUrl ? new Pool({ connectionString: corpusUrl }) : null;
-let baselineDirectories: Array<{
-  id: string;
-  current_path: string;
-  version_number: number;
-  title: string;
-  summary: string;
-  search_vector: string;
-  created_at: Date | string;
-  updated_at: Date | string;
-}> = [];
 const objects = new Map<string, string>();
 const bodies: MarkdownObjectStore = {
   async write(revisionId, markdown) {
@@ -54,12 +44,6 @@ describeBootstrap("fresh hypermedia bootstrap", () => {
   beforeAll(async () => {
     if (!corpusUrl) throw new Error("CORPUS_DATABASE_URL is required");
     await admin!.connect();
-    baselineDirectories = (await admin!.query(
-      `SELECT id,current_path,version_number,title,summary,
-         search_vector::text AS search_vector,created_at,updated_at
-       FROM knowledge_directories
-       ORDER BY length(current_path),current_path`,
-    )).rows;
     await admin!.query(developmentResetSql());
   });
 
@@ -67,17 +51,6 @@ describeBootstrap("fresh hypermedia bootstrap", () => {
     try {
       await corpus?.end();
       await admin?.query(developmentResetSql());
-      for (const directory of baselineDirectories.filter(({ current_path }) => current_path)) {
-        await admin?.query(
-          `INSERT INTO knowledge_directories(
-             id,current_path,version_number,title,summary,
-             search_vector,created_at,updated_at
-           ) VALUES ($1,$2,$3,$4,$5,$6::tsvector,$7,$8)`,
-          [directory.id, directory.current_path, directory.version_number,
-            directory.title, directory.summary, directory.search_vector,
-            directory.created_at, directory.updated_at],
-        );
-      }
     } finally {
       await admin?.end();
     }

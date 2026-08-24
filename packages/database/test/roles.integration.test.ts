@@ -14,22 +14,16 @@ describeDatabase("PostgreSQL security roles", () => {
   beforeAll(async () => {
     admin = new Client({ connectionString: adminUrl });
     await admin.connect();
-    for (const [path, title] of [["test", "Test"], ["tests", "Tests"], ["profile", "Profile"], ["profile/work", "Work"]]) {
-      await admin.query(
-        `INSERT INTO knowledge_directories(id,current_path,title,summary,search_vector)
-         VALUES ($1,$2,$3,$4,directory_search_vector($2,$3,$4,''))
-         ON CONFLICT (current_path) DO NOTHING`,
-        [randomUUID(), path, title, `Fixtures under ${path}.`],
-      );
-    }
-    if (!(await admin.query("SELECT 1 FROM knowledge_pages WHERE current_path='agents'")).rowCount) {
+    if (!(await admin.query(
+      "SELECT 1 FROM knowledge_settings WHERE singleton AND global_guide_document_id IS NOT NULL",
+    )).rowCount) {
       const pageId = randomUUID();
       const versionId = randomUUID();
       await admin.query("BEGIN");
       await admin.query("SET CONSTRAINTS ALL DEFERRED");
       await admin.query(
-        `INSERT INTO knowledge_pages(id,current_path,current_version_id,search_vector)
-         VALUES ($1,'agents',$2,page_search_vector('agents','AGENTS.md','Test root guide.','Test'))`,
+        `INSERT INTO knowledge_pages(id,current_version_id,search_vector)
+         VALUES ($1,$2,''::tsvector)`,
         [pageId, versionId],
       );
       await admin.query(
@@ -40,11 +34,15 @@ describeDatabase("PostgreSQL security roles", () => {
       );
       await admin.query(
         `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,path,title,summary,commit_message,actor_kind,actor_subject
-         ) VALUES ($1,$2,1,'agents','AGENTS.md','Test root guide.','Create test guide','dashboard','context-use-template/default')`,
+           id,page_id,version_number,title,summary,commit_message,actor_kind,actor_subject
+         ) VALUES ($1,$2,1,'AGENTS.md','Test root guide.','Create test guide','dashboard','context-use-template/default')`,
         [versionId, pageId],
       );
       await admin.query("COMMIT");
+      await admin.query(
+        "UPDATE knowledge_settings SET global_guide_document_id=$1,updated_at=now() WHERE singleton",
+        [pageId],
+      );
     }
   });
 
@@ -98,19 +96,17 @@ describeDatabase("PostgreSQL security roles", () => {
     return value;
   }
 
-  test("MCP and dashboard roles cannot update publication columns", async () => {
-    for (const role of ["context_use_mcp", "context_use_dashboard"]) {
-      const privilege = await admin.query<{ allowed: boolean }>(
-        "SELECT has_column_privilege($1, 'knowledge_pages', 'published_version_id', 'UPDATE') AS allowed",
-        [role],
-      );
-      expect(privilege.rows[0]?.allowed).toBe(false);
-      const path = await admin.query<{ allowed: boolean }>(
-        "SELECT has_column_privilege($1, 'knowledge_pages', 'public_path', 'UPDATE') AS allowed",
-        [role],
-      );
-      expect(path.rows[0]?.allowed).toBe(false);
-    }
+  test("filesystem-era knowledge columns and tables are absent", async () => {
+    const obsolete = await admin.query(
+      `SELECT table_name,column_name FROM information_schema.columns
+       WHERE table_schema='public' AND (
+         table_name IN ('knowledge_directories','legacy_public_directory_prefixes')
+         OR (table_name IN ('knowledge_pages','knowledge_page_versions',
+           'knowledge_page_changes','assets') AND column_name=ANY($1::text[]))
+       )`,
+      [["current_path", "parent_path", "path", "public_path", "published_version_id"]],
+    );
+    expect(obsolete.rows).toEqual([]);
   });
 
   test("the MCP role can update and archive ordinary knowledge through the checked writer", async () => {
@@ -288,7 +284,6 @@ describeDatabase("PostgreSQL security roles", () => {
       "version_id",
       "version_number",
       "change_kind",
-      "path",
       "title",
       "commit_message",
       "actor_kind",
@@ -343,14 +338,14 @@ describeDatabase("PostgreSQL security roles", () => {
     await admin.query("BEGIN");
     try {
       await admin.query(
-        `INSERT INTO knowledge_pages(id,current_path,current_version_id,archived_at)
-         VALUES ($1,'test/dashboard-deletion-intent',$2,now())`,
+        `INSERT INTO knowledge_pages(id,current_version_id,archived_at)
+         VALUES ($1,$2,now())`,
         [pageId, versionId],
       );
       await admin.query(
         `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,path,title,summary,commit_message,actor_kind,actor_subject
-         ) VALUES ($1,$2,1,'test/dashboard-deletion-intent','Delete','A page deletion fixture.','Create fixture','dashboard','owner')`,
+           id,page_id,version_number,title,summary,commit_message,actor_kind,actor_subject
+         ) VALUES ($1,$2,1,'Delete','A page deletion fixture.','Create fixture','dashboard','owner')`,
         [versionId, pageId],
       );
       const insert = `INSERT INTO page_deletion_intents(
@@ -406,9 +401,9 @@ describeDatabase("PostgreSQL security roles", () => {
         )).rows[0]?.allowed).toBe(false);
       }
     }
-    expect((await admin.query<{ allowed: boolean }>(
-      "SELECT has_table_privilege('context_use_confirmation','publication_intents','SELECT') AS allowed",
-    )).rows[0]?.allowed).toBe(false);
+    expect((await admin.query<{ relation: string | null }>(
+      "SELECT to_regclass('publication_intents')::text AS relation",
+    )).rows[0]?.relation).toBeNull();
   });
 
   test("the retired reset owner is inert", async () => {
@@ -540,7 +535,6 @@ describeDatabase("PostgreSQL security roles", () => {
     }
 
     for (const [relation, column] of [
-      ["public_projection_state", "generation"],
       ["published_page_artifacts", "body_object_key"],
       ["published_page_artifacts", "body_content_hash"],
     ]) {
@@ -566,7 +560,7 @@ describeDatabase("PostgreSQL security roles", () => {
     const insertFixture = async (
       documentId: string,
       revisionId: string,
-      path: string,
+      _fixtureLabel: string,
       title: string,
     ): Promise<void> => {
       await admin.query(
@@ -584,15 +578,15 @@ describeDatabase("PostgreSQL security roles", () => {
       );
       await admin.query(
         `INSERT INTO knowledge_pages(
-           id,current_path,current_version_id,search_vector
-         ) VALUES ($1,$2,$3,page_search_vector($2,$4,'Role fixture.',$5))`,
-        [documentId, path, revisionId, title, body],
+           id,current_version_id,search_vector
+         ) VALUES ($1,$2,''::tsvector)`,
+        [documentId, revisionId],
       );
       await admin.query(
         `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,path,title,summary,commit_message,actor_kind,actor_subject
-         ) VALUES ($1,$2,1,$3,$4,'Role fixture.','Create pathless role fixture','dashboard','owner')`,
-        [revisionId, documentId, path, title],
+           id,page_id,version_number,title,summary,commit_message,actor_kind,actor_subject
+         ) VALUES ($1,$2,1,$3,'Role fixture.','Create pathless role fixture','dashboard','owner')`,
+        [revisionId, documentId, title],
       );
     };
 
@@ -704,12 +698,9 @@ describeDatabase("PostgreSQL security roles", () => {
     try {
       await admin.query("SET CONSTRAINTS ALL DEFERRED");
       await admin.query(
-        `INSERT INTO knowledge_pages(id,current_path,current_version_id,search_vector)
-         VALUES (
-           $1,$2,$3,
-           page_search_vector($2,'Automation instructions','Private automation instructions.','Test')
-         )`,
-        [pageId, `test/dashboard-automation-${suffix}`, versionId],
+        `INSERT INTO knowledge_pages(id,current_version_id,search_vector)
+         VALUES ($1,$2,''::tsvector)`,
+        [pageId, versionId],
       );
       await admin.query(
          `INSERT INTO hypermedia_document_revisions(
@@ -721,12 +712,12 @@ describeDatabase("PostgreSQL security roles", () => {
       );
       await admin.query(
         `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,path,title,summary,commit_message,actor_kind,actor_subject
+           id,page_id,version_number,title,summary,commit_message,actor_kind,actor_subject
          ) VALUES (
-           $1,$2,1,$3,'Automation instructions','Private automation instructions.',
+           $1,$2,1,'Automation instructions','Private automation instructions.',
            'Create dashboard registration fixture','dashboard','owner'
          )`,
-        [versionId, pageId, `test/dashboard-automation-${suffix}`],
+        [versionId, pageId],
       );
 
       await admin.query("SET LOCAL ROLE context_use_dashboard");
@@ -750,22 +741,12 @@ describeDatabase("PostgreSQL security roles", () => {
       `SELECT relname,pg_get_userbyid(relowner) AS owner
        FROM pg_class
        WHERE relnamespace='public'::regnamespace
-         AND relname IN ('published_page_sources')
+         AND relname IN ('private_document_catalog')
        ORDER BY relname`,
     );
     expect(views.rows).toEqual([
-      { relname: "published_page_sources", owner: "context_use_projection_owner" },
+      { relname: "private_document_catalog", owner: "context_use_projection_owner" },
     ]);
-
-    expect((await admin.query<{ allowed: boolean }>(
-      "SELECT has_function_privilege('context_use_public','project_public_markdown(text)','EXECUTE') AS allowed",
-    )).rows[0]?.allowed).toBe(false);
-    for (const role of ["context_use_auth", "context_use_dashboard", "context_use_mcp", "context_use_confirmation", "context_use_storage", "context_use_backup"]) {
-      expect((await admin.query<{ allowed: boolean }>(
-        "SELECT has_function_privilege($1,'project_public_markdown(text)','EXECUTE') AS allowed",
-        [role],
-      )).rows[0]?.allowed).toBe(false);
-    }
 
     const procedures = await admin.query<{ proname: string; owner: string; security_definer: boolean }>(
       `SELECT proname,pg_get_userbyid(proowner) AS owner,prosecdef AS security_definer
@@ -778,12 +759,10 @@ describeDatabase("PostgreSQL security roles", () => {
            'confirm_knowledge_export_intent',
            'confirm_page_deletion_intent',
            'claim_knowledge_export_download',
-           'delete_empty_knowledge_directory',
            'lock_automation_registry_for_operational_retarget',
            'prevent_automation_document_role_reuse',
            'prune_page_versions',
-           'remove_owner_passkey',
-           'project_public_markdown'
+           'remove_owner_passkey'
          )
        ORDER BY proname`,
     );
@@ -793,17 +772,14 @@ describeDatabase("PostgreSQL security roles", () => {
       { proname: "confirm_page_deletion_intent", owner: "context_use_boundary_owner", security_definer: true },
       { proname: "confirm_publication_intent", owner: "context_use_boundary_owner", security_definer: true },
       { proname: "consume_confirmation_challenge", owner: "context_use_boundary_owner", security_definer: true },
-      { proname: "delete_empty_knowledge_directory", owner: "context_use_boundary_owner", security_definer: true },
       { proname: "issue_confirmation_challenge", owner: "context_use_boundary_owner", security_definer: true },
       { proname: "lock_automation_registry_for_operational_retarget", owner: "context_use_boundary_owner", security_definer: true },
       { proname: "prevent_automation_document_role_reuse", owner: "context_use_boundary_owner", security_definer: true },
-      { proname: "project_public_markdown", owner: "context_use_projection_owner", security_definer: true },
       { proname: "prune_page_versions", owner: "context_use_boundary_owner", security_definer: true },
       { proname: "remove_owner_passkey", owner: "context_use_boundary_owner", security_definer: true },
     ]);
 
     for (const [relation, column] of [
-      ["knowledge_directories", "title"],
       ["knowledge_page_versions", "commit_message"],
       ["assets", "s3_object_key"],
     ]) {
@@ -814,9 +790,7 @@ describeDatabase("PostgreSQL security roles", () => {
     }
     for (const [relation, column] of [
       ["confirmation_challenges", "challenge"],
-      ["knowledge_page_versions", "path"],
       ["knowledge_pages", "archived_at"],
-      ["assets", "current_path"],
       ["knowledge_export_intents", "expires_at"],
       ["passkey", "counter"],
     ]) {
@@ -904,8 +878,6 @@ describeDatabase("PostgreSQL security roles", () => {
       "guard_legacy_alias_namespace",
       "guard_private_uuid_columns",
       "guard_public_resource_identity",
-      "invalidate_pathless_asset_publication_on_legacy_drift",
-      "invalidate_pathless_page_publication_on_legacy_drift",
       "lock_public_uuid_namespace",
       "protect_active_pathless_asset_publication",
       "protect_active_pathless_page_publication",
@@ -1066,51 +1038,7 @@ describeDatabase("PostgreSQL security roles", () => {
 
   });
 
-  test("dashboard and MCP can invoke only the guarded directory deletion capability", async () => {
-    for (const role of ["context_use_dashboard", "context_use_mcp"]) {
-      expect((await admin.query<{ allowed: boolean }>(
-        "SELECT has_table_privilege($1,'knowledge_directories','DELETE') AS allowed",
-        [role],
-      )).rows[0]?.allowed).toBe(false);
-      expect((await admin.query<{ allowed: boolean }>(
-        "SELECT has_function_privilege($1,'delete_empty_knowledge_directory(uuid,integer)','EXECUTE') AS allowed",
-        [role],
-      )).rows[0]?.allowed).toBe(true);
-
-      const id = randomUUID();
-      const path = `tests/guarded-delete-${role.replace("context_use_", "")}-${id.slice(0, 8)}`;
-      await admin.query("BEGIN");
-      try {
-        await admin.query(
-          `INSERT INTO knowledge_directories(id,current_path,title,summary,search_vector)
-           VALUES ($1,$2,'Guarded delete','',directory_search_vector($2,'Guarded delete','',''))`,
-          [id, path],
-        );
-        await admin.query(`SET LOCAL ROLE ${role}`);
-        await expectDenied("DELETE FROM knowledge_directories WHERE id=$1", [id]);
-        const result = await admin.query<{ result: { status: string; id: string } }>(
-          "SELECT delete_empty_knowledge_directory($1,1) AS result",
-          [id],
-        );
-        expect(result.rows[0]?.result).toMatchObject({ status: "deleted", id });
-        await admin.query("RESET ROLE");
-        await admin.query("COMMIT");
-      } catch (error) {
-        await admin.query("ROLLBACK");
-        throw error;
-      }
-      expect((await admin.query("SELECT 1 FROM knowledge_directories WHERE id=$1", [id])).rowCount).toBe(0);
-    }
-
-    for (const role of ["context_use_auth", "context_use_public", "context_use_confirmation", "context_use_storage", "context_use_backup"]) {
-      expect((await admin.query<{ allowed: boolean }>(
-        "SELECT has_function_privilege($1,'delete_empty_knowledge_directory(uuid,integer)','EXECUTE') AS allowed",
-        [role],
-      )).rows[0]?.allowed).toBe(false);
-    }
-  });
-
-  test("passkey procedures reject null principals and credentials", async () => {
+    test("passkey procedures reject null principals and credentials", async () => {
     const exportIntentId = randomUUID();
     await admin.query("BEGIN");
     try {
@@ -1165,14 +1093,14 @@ describeDatabase("PostgreSQL security roles", () => {
       const pageId = randomUUID();
       const versionId = randomUUID();
       await admin.query(
-        `INSERT INTO knowledge_pages(id,current_path,current_version_id,archived_at)
-         VALUES ($1,'test/deletion-intent-constraints',$2,now())`,
+        `INSERT INTO knowledge_pages(id,current_version_id,archived_at)
+         VALUES ($1,$2,now())`,
         [pageId, versionId],
       );
       await admin.query(
         `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,path,title,summary,commit_message,actor_kind,actor_subject
-         ) VALUES ($1,$2,1,'test/deletion-intent-constraints','Delete','A deletion constraint fixture.','Create fixture','dashboard','owner')`,
+           id,page_id,version_number,title,summary,commit_message,actor_kind,actor_subject
+         ) VALUES ($1,$2,1,'Delete','A deletion constraint fixture.','Create fixture','dashboard','owner')`,
         [versionId, pageId],
       );
       await expectDenied(
@@ -1207,16 +1135,16 @@ describeDatabase("PostgreSQL security roles", () => {
     try {
       await ensureOwnerPasskey();
       await admin.query(
-        `INSERT INTO knowledge_pages(id,current_path,current_version_id,archived_at)
-         VALUES ($1,'test/permanent-page-deletion',$2,now())`,
+        `INSERT INTO knowledge_pages(id,current_version_id,archived_at)
+         VALUES ($1,$2,now())`,
         [pageId, currentVersionId],
       );
       await admin.query(
         `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,path,title,summary,commit_message,actor_kind,actor_subject
+           id,page_id,version_number,title,summary,commit_message,actor_kind,actor_subject
          ) VALUES
-           ($1,$3,1,'test/permanent-page-deletion','Delete me','A permanently deleted page fixture.','Create fixture','dashboard','owner'),
-           ($2,$3,2,'test/permanent-page-deletion','Delete me','A permanently deleted page fixture.','Archive fixture','dashboard','owner')`,
+           ($1,$3,1,'Delete me','A permanently deleted page fixture.','Create fixture','dashboard','owner'),
+           ($2,$3,2,'Delete me','A permanently deleted page fixture.','Archive fixture','dashboard','owner')`,
         [firstVersionId, currentVersionId, pageId],
       );
       await admin.query(
@@ -1249,11 +1177,11 @@ describeDatabase("PostgreSQL security roles", () => {
       expect((await admin.query("SELECT 1 FROM knowledge_page_versions WHERE page_id=$1", [pageId])).rowCount).toBe(0);
       expect((await admin.query("SELECT 1 FROM page_deletion_intents WHERE id=$1", [intentId])).rowCount).toBe(0);
       expect((await admin.query("SELECT counter FROM passkey WHERE id='test-passkey'")).rows[0]?.counter).toBe(1);
-      expect((await admin.query<{ change_kind: string; path: string }>(
-        `SELECT change_kind,path FROM knowledge_page_changes
+      expect((await admin.query<{ change_kind: string }>(
+        `SELECT change_kind FROM knowledge_page_changes
          WHERE page_id=$1 AND change_kind='deleted'`,
         [pageId],
-      )).rows).toEqual([{ change_kind: "deleted", path: "test/permanent-page-deletion" }]);
+      )).rows).toEqual([{ change_kind: "deleted" }]);
     } finally {
       await admin.query("ROLLBACK");
     }
@@ -1261,13 +1189,11 @@ describeDatabase("PostgreSQL security roles", () => {
 
   test("the private guide body is represented only by immutable object metadata", async () => {
     expect((await admin.query(
-      "SELECT 1 FROM knowledge_pages WHERE current_path='about/intro'",
-    )).rowCount).toBe(0);
-    expect((await admin.query(
       `SELECT 1
-       FROM knowledge_pages page
+       FROM knowledge_settings settings
+       JOIN knowledge_pages page ON page.id=settings.global_guide_document_id
        JOIN knowledge_page_versions version ON version.id=page.current_version_id
-       WHERE page.current_path='agents' AND page.archived_at IS NULL
+       WHERE settings.singleton AND page.archived_at IS NULL
          AND version.title='AGENTS.md'
          AND EXISTS (
            SELECT 1 FROM hypermedia_document_revisions object
@@ -1276,35 +1202,8 @@ describeDatabase("PostgreSQL security roles", () => {
     )).rowCount).toBe(1);
   });
 
-  test("the root AGENTS.md page cannot be moved, archived, or permanently deleted", async () => {
-    const guide = await admin.query<{ id: string }>(
-      "SELECT id FROM knowledge_pages WHERE current_path='agents'",
-    );
-    const guideId = guide.rows[0]!.id;
-    await admin.query("BEGIN");
-    try {
-      for (const role of ["context_use_dashboard", "context_use_mcp"]) {
-        await admin.query(`SET LOCAL ROLE ${role}`);
-        await expectDenied(
-          "UPDATE knowledge_pages SET current_path='test/moved-root-guide' WHERE id=$1",
-          [guideId],
-        );
-        await expectDenied(
-          "UPDATE knowledge_pages SET archived_at=now() WHERE id=$1",
-          [guideId],
-        );
-        await admin.query("RESET ROLE");
-      }
-      await admin.query("SET LOCAL ROLE context_use_boundary_owner");
-      await expectDenied("DELETE FROM knowledge_pages WHERE id=$1", [guideId]);
-      await admin.query("RESET ROLE");
-    } finally {
-      await admin.query("ROLLBACK");
-    }
-  });
-
-  test("public role can see only pathless publication views, not legacy projections or private tables", async () => {
-    for (const relation of ["knowledge_directories", "knowledge_pages", "assets"]) {
+  test("public role can see only publication views, not private tables", async () => {
+    for (const relation of ["knowledge_pages", "assets"]) {
       const result = await admin.query<{ allowed: boolean }>(
         "SELECT has_table_privilege('context_use_public', $1, 'SELECT') AS allowed",
         [relation],
@@ -1325,12 +1224,9 @@ describeDatabase("PostgreSQL security roles", () => {
         [relation],
       )).rows[0]?.allowed).toBe(true);
     }
-    for (const relation of ["published_page_sources"]) {
-      expect((await admin.query<{ allowed: boolean }>(
-        "SELECT has_table_privilege('context_use_public',$1,'SELECT') AS allowed",
-        [relation],
-      )).rows[0]?.allowed).toBe(false);
-    }
+    expect((await admin.query<{ relation: string | null }>(
+      "SELECT to_regclass('public.published_page_sources')::text AS relation",
+    )).rows[0]?.relation).toBeNull();
     for (const column of ["singleton", "entrypoint_page_id"]) {
       expect((await admin.query<{ allowed: boolean }>(
         "SELECT has_column_privilege('context_use_corpus','public_knowledge_settings',$1,'SELECT') AS allowed",
@@ -1351,16 +1247,15 @@ describeDatabase("PostgreSQL security roles", () => {
         [column],
       )).rows[0]?.allowed).toBe(true);
     }
-    for (const relation of ["knowledge_directories", "knowledge_pages", "knowledge_page_versions"]) {
+    for (const relation of ["knowledge_pages", "knowledge_page_versions"]) {
       expect((await admin.query<{ allowed: boolean }>(
         "SELECT has_table_privilege('context_use_storage',$1,'SELECT') AS allowed",
         [relation],
       )).rows[0]?.allowed).toBe(false);
     }
     for (const [relation, columns] of [
-      ["knowledge_directories", ["id", "current_path"]],
-      ["knowledge_pages", ["id", "published_version_id", "public_path", "archived_at", "created_at", "updated_at"]],
-      ["knowledge_page_versions", ["id", "page_id", "version_number", "path", "title", "summary", "created_at"]],
+      ["knowledge_pages", ["id", "current_version_id", "archived_at", "created_at", "updated_at"]],
+      ["knowledge_page_versions", ["id", "page_id", "version_number", "title", "summary", "created_at"]],
     ] as const) {
       for (const column of columns) {
         expect((await admin.query<{ allowed: boolean }>(
@@ -1384,7 +1279,7 @@ describeDatabase("PostgreSQL security roles", () => {
         [privilege],
       )).rows[0]?.allowed).toBe(false);
     }
-    for (const relation of ["knowledge_pages", "knowledge_directories"]) {
+    for (const relation of ["knowledge_pages"]) {
       expect((await admin.query<{ allowed: boolean }>(
         "SELECT has_table_privilege('context_use_public',$1,'SELECT') AS allowed",
         [relation],
@@ -1427,79 +1322,14 @@ describeDatabase("PostgreSQL security roles", () => {
     )).rowCount).toBe(0);
   });
 
-  test("service roles cannot archive or delete an object while it is published", async () => {
-    const pageId = randomUUID();
-    const versionId = randomUUID();
-    const assetId = randomUUID();
-    const suffix = randomUUID().slice(0, 8);
-    await admin.query("BEGIN");
-    try {
-      await admin.query(
-        `INSERT INTO knowledge_directories(id,current_path,title,summary,search_vector)
-         VALUES ($1,$2,'Lifecycle fixture','A directory for publication lifecycle tests.',directory_search_vector($2,'Lifecycle fixture','A directory for publication lifecycle tests.',''))`,
-        [randomUUID(), `tests/${suffix}`],
-      );
-      await admin.query(
-        `INSERT INTO knowledge_pages(id,current_path,current_version_id,published_version_id,public_path)
-         VALUES ($1,$2,$3,$3,$2)`,
-        [pageId, `tests/${suffix}/published-page`, versionId],
-      );
-      await admin.query(
-        `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,path,title,summary,commit_message,actor_kind,actor_subject
-         ) VALUES ($1,$2,1,$3,'Published lifecycle','A published lifecycle fixture.','Create','dashboard','owner')`,
-        [versionId, pageId, `tests/${suffix}/published-page`],
-      );
-      await admin.query(
-        `INSERT INTO assets(
-           id,current_path,public_path,filename,content_type,size_bytes,
-           content_hash,s3_object_key
-         ) VALUES ($1,$2,$2,'published.txt','text/plain',1,$3,$4)`,
-        [assetId, `tests/${suffix}/published-asset`, "b".repeat(64), `objects/${assetId}`],
-      );
-
-      for (const role of ["context_use_dashboard", "context_use_mcp"]) {
-        await admin.query(`SET LOCAL ROLE ${role}`);
-        await expectDenied("UPDATE knowledge_pages SET archived_at=now() WHERE id=$1", [pageId]);
-        await admin.query("RESET ROLE");
-      }
-      await admin.query("SET LOCAL ROLE context_use_dashboard");
-      await expectDenied("UPDATE assets SET deleted_at=now() WHERE id=$1", [assetId]);
-      await admin.query("RESET ROLE");
-
-      // Once the passkey-owned visibility fields have been cleared, ordinary
-      // private lifecycle operations are valid again.
-      await admin.query(
-        "UPDATE knowledge_pages SET published_version_id=NULL,public_path=NULL WHERE id=$1",
-        [pageId],
-      );
-      await admin.query(
-        "UPDATE assets SET public_path=NULL WHERE id=$1",
-        [assetId],
-      );
-      await admin.query("SET LOCAL ROLE context_use_dashboard");
-      expect((await admin.query(
-        "UPDATE knowledge_pages SET archived_at=now() WHERE id=$1",
-        [pageId],
-      )).rowCount).toBe(1);
-      expect((await admin.query(
-        "UPDATE assets SET deleted_at=now() WHERE id=$1",
-        [assetId],
-      )).rowCount).toBe(1);
-      await admin.query("RESET ROLE");
-    } finally {
-      await admin.query("ROLLBACK");
-    }
-  });
-
   test("MCP can create and archive assets without editing immutable metadata or deleting rows", async () => {
-    for (const column of ["id", "current_path", "filename", "content_type", "size_bytes", "content_hash", "s3_object_key", "width", "height", "duration_seconds"]) {
+    for (const column of ["id", "filename", "content_type", "size_bytes", "content_hash", "s3_object_key", "width", "height", "duration_seconds"]) {
       expect((await admin.query<{ allowed: boolean }>(
         "SELECT has_column_privilege('context_use_mcp', 'assets', $1, 'INSERT') AS allowed",
         [column],
       )).rows[0]?.allowed).toBe(true);
     }
-    for (const column of ["public_path", "deleted_at"]) {
+    for (const column of ["deleted_at"]) {
       expect((await admin.query<{ allowed: boolean }>(
         "SELECT has_column_privilege('context_use_mcp', 'assets', $1, 'INSERT') AS allowed",
         [column],
@@ -1508,7 +1338,7 @@ describeDatabase("PostgreSQL security roles", () => {
     expect((await admin.query<{ allowed: boolean }>(
       "SELECT has_column_privilege('context_use_mcp', 'assets', 'deleted_at', 'UPDATE') AS allowed",
     )).rows[0]?.allowed).toBe(true);
-    for (const column of ["current_path", "public_path", "filename", "content_type", "size_bytes", "content_hash", "s3_object_key"]) {
+    for (const column of ["filename", "content_type", "size_bytes", "content_hash", "s3_object_key"]) {
       expect((await admin.query<{ allowed: boolean }>(
         "SELECT has_column_privilege('context_use_mcp', 'assets', $1, 'UPDATE') AS allowed",
         [column],
@@ -1548,12 +1378,9 @@ describeDatabase("PostgreSQL security roles", () => {
       provenance_columns: "0",
     });
 
-    expect((await admin.query<{ allowed: boolean }>(
-      "SELECT has_any_column_privilege('context_use_mcp','publication_intents','INSERT') AS allowed",
-    )).rows[0]?.allowed).toBe(false);
-    expect((await admin.query<{ allowed: boolean }>(
-      "SELECT has_any_column_privilege('context_use_dashboard','publication_intents','INSERT') AS allowed",
-    )).rows[0]?.allowed).toBe(false);
+    expect((await admin.query<{ relation: string | null }>(
+      "SELECT to_regclass('publication_intents')::text AS relation",
+    )).rows[0]?.relation).toBeNull();
   });
 
   test("application-level knowledge restore is absent", async () => {
@@ -1639,102 +1466,6 @@ describeDatabase("PostgreSQL security roles", () => {
     }
   });
 
-  test("confirmation challenges are isolated, globally unique, and single-use", async () => {
-    const sharedId = randomUUID();
-    const pageId = randomUUID();
-    const versionId = randomUUID();
-    const publicationChallenge = challenge();
-    const exportChallenge = challenge();
-    await admin.query("BEGIN");
-    try {
-      await ensureOwnerPasskey();
-      await admin.query(
-        `INSERT INTO knowledge_pages(id,current_path,current_version_id)
-         VALUES ($1,'test/challenge-isolation',$2)`,
-        [pageId, versionId],
-      );
-      await admin.query(
-        `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,path,title,summary,commit_message,actor_kind,actor_subject
-         ) VALUES (
-           $1,$2,1,'test/challenge-isolation','Challenge isolation','A confirmation challenge isolation fixture.',
-           'Create fixture','dashboard','owner'
-         )`,
-        [versionId, pageId],
-      );
-      await admin.query(
-        `INSERT INTO publication_intents(
-           id,action,target_kind,target_id,version_id,public_path,owner_user_id,
-           session_id,expires_at
-         ) VALUES (
-           $1,'publish','page',$2,$3,'test/challenge-isolation',
-           'context-use-owner','session',now()+interval '5 minutes'
-         )`,
-        [sharedId, pageId, versionId],
-      );
-      await admin.query(
-        `INSERT INTO knowledge_export_intents(id,owner_user_id,session_id,expires_at)
-         VALUES ($1,'context-use-owner','session',now()+interval '5 minutes')`,
-        [sharedId],
-      );
-
-      await admin.query("SET LOCAL ROLE context_use_dashboard");
-      await expectDenied(
-        "SELECT issue_confirmation_challenge('publication',$1,$2)",
-        [sharedId, publicationChallenge],
-      );
-      await expectDenied(
-        "INSERT INTO confirmation_challenges(intent_kind,intent_id,challenge) VALUES ('publication',$1,$2)",
-        [sharedId, publicationChallenge],
-      );
-      await admin.query("RESET ROLE");
-
-      await issueChallenge("publication", sharedId, publicationChallenge);
-      await admin.query("SET LOCAL ROLE context_use_confirmation");
-      await expectDenied(
-        "SELECT issue_confirmation_challenge('publication',$1,$2)",
-        [sharedId, challenge()],
-      );
-      await expectDenied(
-        "SELECT issue_confirmation_challenge('knowledge_export',$1,$2)",
-        [sharedId, publicationChallenge],
-      );
-      await admin.query(
-        "SELECT issue_confirmation_challenge('knowledge_export',$1,$2)",
-        [sharedId, exportChallenge],
-      );
-      await expectDenied(
-        "SELECT confirm_knowledge_export_intent($1,'context-use-owner','session','test-credential',99,100)",
-        [sharedId],
-      );
-      await admin.query(
-        "SELECT confirm_publication_intent($1,'context-use-owner','session','test-credential',0,1)",
-        [sharedId],
-      );
-      await expectDenied(
-        "SELECT confirm_publication_intent($1,'context-use-owner','session','test-credential',1,2)",
-        [sharedId],
-      );
-      await expectDenied(
-        "SELECT confirm_knowledge_export_intent($1,'context-use-owner','session','test-credential',0,1)",
-        [sharedId],
-      );
-      await admin.query(
-        "SELECT confirm_knowledge_export_intent($1,'context-use-owner','session','test-credential',1,2)",
-        [sharedId],
-      );
-      await admin.query("RESET ROLE");
-
-      expect((await admin.query(
-        "SELECT 1 FROM confirmation_challenges WHERE intent_id=$1",
-        [sharedId],
-      )).rowCount).toBe(0);
-      expect((await admin.query("SELECT counter FROM passkey WHERE id='test-passkey'")).rows[0]?.counter).toBe(2);
-    } finally {
-      await admin.query("ROLLBACK");
-    }
-  });
-
   test("audit history is not stored", async () => {
     const result = await admin.query<{ security_audit: string | null; publication_audit: string | null }>(
       `SELECT to_regclass('security_audit_events')::text AS security_audit,
@@ -1757,152 +1488,4 @@ describeDatabase("PostgreSQL security roles", () => {
     }
   });
 
-  test("the projection owner retains only reconciled legacy source provenance", async () => {
-    const privatePageId = randomUUID();
-    const privateVersionId = randomUUID();
-    const parentPageId = randomUUID();
-    const parentVersionId = randomUUID();
-    const childPageId = randomUUID();
-    const childVersionId = randomUUID();
-    await admin.query("BEGIN");
-    try {
-      await admin.query(
-        `INSERT INTO knowledge_pages(id,current_path,current_version_id)
-         VALUES ($1,'profile/private-work',$2)`,
-        [privatePageId, privateVersionId],
-      );
-      await admin.query(
-        `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,path,title,summary,commit_message,actor_kind,actor_subject
-         ) VALUES ($1,$2,1,'profile/private-work','PRIVATE-CANARY title','A private work fixture.','Create private page','dashboard','owner')`,
-        [privateVersionId, privatePageId],
-      );
-      await admin.query(
-        `INSERT INTO knowledge_pages(id,current_path,current_version_id,published_version_id,public_path)
-         VALUES ($1,'profile-home',$2,$2,'profile')`,
-        [parentPageId, parentVersionId],
-      );
-      await admin.query(
-        `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,path,title,summary,commit_message,actor_kind,actor_subject
-         ) VALUES ($1,$2,1,'profile-home','Profile','A public profile fixture.','Create public parent','dashboard','owner')`,
-        [parentVersionId, parentPageId],
-      );
-      await admin.query(
-        `INSERT INTO knowledge_pages(id,current_path,current_version_id,published_version_id,public_path)
-         VALUES ($1,'profile/work/project',$2,$2,'profile/work/project')`,
-        [childPageId, childVersionId],
-      );
-      await admin.query(
-        `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,path,title,summary,commit_message,actor_kind,actor_subject
-         ) VALUES (
-           $1,$2,1,'profile/work/project','Project','A public project fixture.',
-           'Create public child','dashboard','owner'
-         )`,
-        [childVersionId, childPageId],
-      );
-      await admin.query("SET LOCAL ROLE context_use_projection_owner");
-      const source = await admin.query<{
-        id: string;
-        public_path: string;
-        published_version_id: string;
-        path: string;
-        title: string;
-        summary: string;
-        body_markdown: string;
-        version_created_at: Date;
-      }>(
-        "SELECT * FROM published_page_sources WHERE id=$1",
-        [childPageId],
-      );
-      const privateSource = await admin.query(
-        "SELECT 1 FROM published_page_sources WHERE id=$1",
-        [privatePageId],
-      );
-      const canProjectPrivateBodies = await admin.query<{ allowed: boolean }>(
-        "SELECT has_function_privilege('context_use_projection_owner','project_public_markdown(text)','EXECUTE') AS allowed",
-      );
-      await admin.query("RESET ROLE");
-      expect(source.rows[0]).toMatchObject({
-        id: childPageId,
-        public_path: "profile/work/project",
-        published_version_id: childVersionId,
-        path: "profile/work/project",
-        title: "Project",
-        summary: "A public project fixture.",
-        body_markdown: null,
-        version_created_at: expect.any(Date),
-      });
-      expect(privateSource.rowCount).toBe(0);
-      expect(canProjectPrivateBodies.rows[0]?.allowed).toBe(true);
-    } finally {
-      await admin.query("ROLLBACK");
-    }
-  });
-
-  test("publication procedure is the only successful private-to-public transition", async () => {
-    const pageId = randomUUID();
-    const versionId = randomUUID();
-    const intentId = randomUUID();
-    const mismatchedIntentId = randomUUID();
-    await admin.query("BEGIN");
-    try {
-      await ensureOwnerPasskey();
-      await admin.query(
-        `INSERT INTO knowledge_pages(id,current_path,current_version_id) VALUES ($1,'test/security-boundary',$2)`,
-        [pageId, versionId],
-      );
-      await admin.query(
-        `INSERT INTO knowledge_page_versions(id,page_id,version_number,path,title,summary,commit_message,actor_kind,actor_subject)
-         VALUES ($1,$2,1,'test/security-boundary','Boundary','A publication boundary fixture.','Create fixture','dashboard','test-owner')`,
-        [versionId, pageId],
-      );
-      await admin.query(
-        `INSERT INTO publication_intents(id,action,target_kind,target_id,version_id,public_path,owner_user_id,session_id,expires_at)
-         VALUES ($1,'publish','page',$2,$3,'test/security-boundary','context-use-owner','session',now()+interval '5 minutes')`,
-        [intentId, pageId, versionId],
-      );
-      await admin.query(
-        `INSERT INTO publication_intents(id,action,target_kind,target_id,version_id,public_path,owner_user_id,session_id,expires_at)
-         VALUES ($1,'publish','page',$2,$3,'test/forged-path','context-use-owner','session',now()+interval '5 minutes')`,
-        [mismatchedIntentId, pageId, versionId],
-      );
-
-      for (const role of ["context_use_dashboard", "context_use_mcp"]) {
-        await admin.query(`SET LOCAL ROLE ${role}`);
-        await expectDenied("UPDATE knowledge_pages SET public_path='bypass' WHERE id=$1", [pageId]);
-        await admin.query("RESET ROLE");
-      }
-
-      await issueChallenge("publication", intentId);
-      await issueChallenge("publication", mismatchedIntentId);
-      await admin.query("SET LOCAL ROLE context_use_confirmation");
-      await expectDenied(
-        "SELECT confirm_publication_intent($1,NULL,'session','test-credential',0,1)",
-        [intentId],
-      );
-      await expectDenied(
-        "SELECT confirm_publication_intent($1,'context-use-owner',NULL,'test-credential',0,1)",
-        [intentId],
-      );
-      await expectDenied(
-        "SELECT confirm_publication_intent($1,'context-use-owner','session',NULL,0,1)",
-        [intentId],
-      );
-      await expectDenied(
-        "SELECT confirm_publication_intent($1,'context-use-owner','session','test-credential',0,1)",
-        [mismatchedIntentId],
-      );
-      await admin.query("SELECT confirm_publication_intent($1,'context-use-owner','session','test-credential',0,1)", [intentId]);
-      await expectDenied("UPDATE knowledge_pages SET current_path='confirmation-cannot-edit' WHERE id=$1", [pageId]);
-      await admin.query("RESET ROLE");
-
-      const published = await admin.query("SELECT 1 FROM published_page_sources WHERE id=$1 AND published_version_id=$2", [pageId, versionId]);
-      expect(published.rowCount).toBe(1);
-      await expect(admin.query("SELECT confirm_publication_intent($1,'context-use-owner','session','test-credential',1,2)", [intentId])).rejects.toThrow();
-    } finally {
-      await admin.query("ROLLBACK");
-    }
-  });
 });

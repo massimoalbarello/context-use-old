@@ -41,13 +41,12 @@ function storageRepository(client: Client): PathlessStoragePublicationRepository
 async function seedPage(client: Client) {
   const pageId = randomUUID();
   const revisionId = randomUUID();
-  const path = `claim-page-${randomUUID().slice(0, 8)}`;
   await client.query("BEGIN");
   await client.query("SET CONSTRAINTS ALL DEFERRED");
   try {
     await client.query(
-      "INSERT INTO knowledge_pages(id,current_path,current_version_id) VALUES ($1,$2,$3)",
-      [pageId, path, revisionId],
+      "INSERT INTO knowledge_pages(id,current_version_id) VALUES ($1,$2)",
+      [pageId, revisionId],
     );
     await client.query(
       `INSERT INTO hypermedia_document_revisions(
@@ -58,14 +57,14 @@ async function seedPage(client: Client) {
     );
     await client.query(
       `INSERT INTO knowledge_page_versions(
-         id,page_id,version_number,path,title,summary,commit_message,
+         id,page_id,version_number,title,summary,commit_message,
          actor_kind,actor_subject,created_at
        ) VALUES (
-         $1,$2,1,$3,'Claimed page','A claimed publication fixture.',
+         $1,$2,1,'Claimed page','A claimed publication fixture.',
          'Create claim fixture','dashboard','context-use-owner',
          '2026-08-23 12:34:56.123456+00'
        )`,
-      [revisionId, pageId, path],
+      [revisionId, pageId],
     );
     await client.query(
       `INSERT INTO knowledge_revision_contracts(

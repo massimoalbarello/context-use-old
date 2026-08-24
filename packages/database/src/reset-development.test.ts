@@ -53,11 +53,8 @@ describe("development data reset", () => {
     expect(developmentResetSql()).toContain("hypermedia_bootstrap_allocations");
   });
 
-  test("recreates the root required by the default template", () => {
-    expect(developmentResetSql()).toContain("INSERT INTO knowledge_directories");
-    expect(developmentResetSql()).toContain("gen_random_uuid(),''");
+  test("recreates canonical singleton settings for bootstrap", () => {
     expect(developmentResetSql()).toContain("INSERT INTO knowledge_settings(singleton)");
-    expect(developmentResetSql()).toContain("INSERT INTO public_projection_state(singleton)");
     expect(developmentResetSql()).toContain("INSERT INTO pathless_publication_settings(");
     expect(developmentResetSql()).toContain("VALUES (true,NULL,NULL)");
   });

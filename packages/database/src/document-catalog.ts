@@ -82,7 +82,7 @@ export type PrivateDocumentNeighborhood = {
 // knowledge revision has an application-attested generic receipt whose
 // materialized graph is exact, and every source-record current revision has a
 // completed zero-edge index. The default bounded neighborhood read reports
-// `completeness_checked=false` and `complete=null`; a later cutover must still
+// `completeness_checked=false` and `complete=null`; a full verification must
 // independently hydrate and parse bodies under its locks.
 
 type CatalogDatabaseRow = Omit<
@@ -90,7 +90,6 @@ type CatalogDatabaseRow = Omit<
   "size_bytes" | "duration_seconds" | "connection_instance_id"
     | "links_indexed_at" | "created_at" | "updated_at"
 > & {
-  legacy_published?: boolean;
   size_bytes: number | string | null;
   duration_seconds: number | string | null;
   connection_instance_id: number | string | null;
@@ -165,9 +164,8 @@ function timestamp(value: Date | string): string {
 }
 
 function normalizeCatalogItem(row: CatalogDatabaseRow): PrivateDocumentCatalogItem {
-  const { legacy_published: _legacyPublished, ...current } = row;
   return {
-    ...current,
+    ...row,
     size_bytes: row.size_bytes === null ? null : String(row.size_bytes),
     duration_seconds: row.duration_seconds === null ? null : String(row.duration_seconds),
     connection_instance_id: row.connection_instance_id === null

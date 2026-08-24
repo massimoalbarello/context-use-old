@@ -353,8 +353,8 @@ describeApplication("HTTP credential and OAuth boundary", () => {
          FROM pathless_publication_settings WHERE singleton`,
       )).rows[0];
       await client.query(
-        "INSERT INTO knowledge_pages(id,current_path,current_version_id) VALUES ($1,$2,$3)",
-        [pageId, `pathless-route-${publicId}`, revisionId],
+        "INSERT INTO knowledge_pages(id,current_version_id) VALUES ($1,$2)",
+        [pageId, revisionId],
       );
       await client.query(
         `INSERT INTO public_resources(public_id,document_id,original_document_id,resource_kind)

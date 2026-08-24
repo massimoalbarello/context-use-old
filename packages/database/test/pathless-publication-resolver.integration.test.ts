@@ -120,22 +120,21 @@ async function seedActivePage(
   const legacyArtifactId = randomUUID();
   const representationToken = hash(`page-token:${artifactId}`);
   const contentHash = hash(`page-body:${artifactId}`);
-  const path = `resolver-page-${randomUUID().slice(0, 8)}`;
   const objectKey = `documents/public/${artifactId}.md`;
 
   await client.query("SET LOCAL session_replication_role=replica");
   await client.query(
-    `INSERT INTO knowledge_pages(id,current_path,current_version_id)
-     VALUES ($1,$2,$3)`,
-    [pageId, path, revisionId],
+    `INSERT INTO knowledge_pages(id,current_version_id)
+     VALUES ($1,$2)`,
+    [pageId, revisionId],
   );
   await client.query(
     `INSERT INTO knowledge_page_versions(
-       id,page_id,version_number,path,title,summary,
+       id,page_id,version_number,title,summary,
        commit_message,actor_kind,actor_subject
-     ) VALUES ($1,$2,1,$3,'Resolver page','A safe resolver fixture.',
+     ) VALUES ($1,$2,1,'Resolver page','A safe resolver fixture.',
        'Create resolver fixture','dashboard','context-use-owner')`,
-    [revisionId, pageId, path],
+    [revisionId, pageId],
   );
   await client.query(
     `INSERT INTO public_resources(
@@ -262,13 +261,12 @@ async function addAssetArtifact(
 async function seedActiveAsset(client: Client): Promise<AssetFixture> {
   const assetId = randomUUID();
   const publicId = randomUUID();
-  const path = `resolver-asset-${randomUUID().slice(0, 8)}`;
   await client.query("SET LOCAL session_replication_role=replica");
   await client.query(
     `INSERT INTO assets(
-       id,current_path,filename,content_type,size_bytes,content_hash,s3_object_key
-     ) VALUES ($1,$2,'resolver.png','image/png',31,$3,$4)`,
-    [assetId, path, hash(`source:${assetId}`), `objects/${assetId}`],
+       id,filename,content_type,size_bytes,content_hash,s3_object_key
+     ) VALUES ($1,'resolver.png','image/png',31,$2,$3)`,
+    [assetId, hash(`source:${assetId}`), `objects/${assetId}`],
   );
   await client.query(
     `INSERT INTO public_resources(
@@ -841,9 +839,9 @@ describeDatabase("pathless public entrypoint and resolvers", () => {
       const barePageId = randomUUID();
       await client.query("SET LOCAL session_replication_role=replica");
       await client.query(
-        `INSERT INTO knowledge_pages(id,current_path,current_version_id)
-         VALUES ($1,$2,$3)`,
-        [barePageId, `unmapped-entry-${randomUUID().slice(0, 8)}`, randomUUID()],
+        `INSERT INTO knowledge_pages(id,current_version_id)
+         VALUES ($1,$2)`,
+        [barePageId, randomUUID()],
       );
       await client.query("SET LOCAL session_replication_role=origin");
       await client.query(

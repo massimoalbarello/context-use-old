@@ -31,9 +31,9 @@ describeDatabase("path-independent document substrate", () => {
     try {
       await admin.query("SET CONSTRAINTS ALL DEFERRED");
       await admin.query(
-        `INSERT INTO knowledge_pages(id,current_path,current_version_id,search_vector)
-         VALUES ($1,$2,$3,page_search_vector($2,'Fixture','Fixture summary.','Fixture body.'))`,
-        [pageId, path, revisionId],
+        `INSERT INTO knowledge_pages(id,current_version_id,search_vector)
+         VALUES ($1,$2,''::tsvector)`,
+        [pageId, revisionId],
       );
       await admin.query(
          `INSERT INTO hypermedia_document_revisions(
@@ -43,9 +43,9 @@ describeDatabase("path-independent document substrate", () => {
       );
       await admin.query(
         `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,path,title,summary,commit_message,actor_kind,actor_subject
-         ) VALUES ($1,$2,1,$3,'Fixture','Fixture summary.','Create fixture','dashboard','test')`,
-        [revisionId, pageId, path],
+           id,page_id,version_number,title,summary,commit_message,actor_kind,actor_subject
+         ) VALUES ($1,$2,1,'Fixture','Fixture summary.','Create fixture','dashboard','test')`,
+        [revisionId, pageId],
       );
       await admin.query("COMMIT");
     } catch (error) {
@@ -59,10 +59,10 @@ describeDatabase("path-independent document substrate", () => {
     const id = randomUUID();
     await admin.query(
        `INSERT INTO assets(
-         id,current_path,filename,content_type,size_bytes,content_hash,s3_object_key
-       ) VALUES ($1::uuid,$2,'fixture.bin','application/octet-stream',0,$3,
+         id,filename,content_type,size_bytes,content_hash,s3_object_key
+       ) VALUES ($1::uuid,'fixture.bin','application/octet-stream',0,$2,
          'objects/'||($1::uuid)::text)`,
-      [id, path, "0".repeat(64)],
+      [id, "0".repeat(64)],
     );
     return { id, path };
   }
@@ -90,26 +90,26 @@ describeDatabase("path-independent document substrate", () => {
     );
     await expect(admin.query(
       `INSERT INTO assets(
-         id,current_path,filename,content_type,size_bytes,content_hash,s3_object_key
-       ) VALUES ($1::uuid,$2,'collision.bin','application/octet-stream',0,$3,
+         id,filename,content_type,size_bytes,content_hash,s3_object_key
+       ) VALUES ($1::uuid,'collision.bin','application/octet-stream',0,$2,
          'objects/'||($1::uuid)::text)`,
-      [collidingId, `substrate-collision-${randomUUID()}`, "0".repeat(64)],
+      [collidingId, "0".repeat(64)],
     )).rejects.toThrow("asset identity collides");
 
     const page = await createPage(`substrate-identity-page-${randomUUID()}`);
     await expect(admin.query(
       `INSERT INTO assets(
-         id,current_path,filename,content_type,size_bytes,content_hash,s3_object_key
-       ) VALUES ($1::uuid,$2,'page-collision.bin','application/octet-stream',0,$3,
+         id,filename,content_type,size_bytes,content_hash,s3_object_key
+       ) VALUES ($1::uuid,'page-collision.bin','application/octet-stream',0,$2,
          'objects/'||($1::uuid)::text)`,
-      [page.pageId, `substrate-page-collision-${randomUUID()}`, "0".repeat(64)],
+      [page.pageId, "0".repeat(64)],
     )).rejects.toThrow("asset identity collides");
 
     for (const documentId of [asset.id, collidingId]) {
       await expect(admin.query(
-        `INSERT INTO knowledge_pages(id,current_path,current_version_id,search_vector)
-         VALUES ($1,$2,$3,''::tsvector)`,
-        [documentId, `substrate-page-identity-${randomUUID()}`, randomUUID()],
+        `INSERT INTO knowledge_pages(id,current_version_id,search_vector)
+         VALUES ($1,$2,''::tsvector)`,
+        [documentId, randomUUID()],
       )).rejects.toThrow("knowledge page identity collides");
     }
 
@@ -245,10 +245,10 @@ describeDatabase("path-independent document substrate", () => {
       );
       await admin.query(
         `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,path,title,summary,commit_message,actor_kind,actor_subject
-         ) VALUES ($1,$2,2,$3,'Fixture revised','Fixture summary.',
+           id,page_id,version_number,title,summary,commit_message,actor_kind,actor_subject
+         ) VALUES ($1,$2,2,'Fixture revised','Fixture summary.',
            'Revise fixture','dashboard','test')`,
-        [secondRevisionId, source.pageId, source.path],
+        [secondRevisionId, source.pageId],
       );
       await admin.query(
         `UPDATE knowledge_pages
@@ -405,10 +405,6 @@ describeDatabase("path-independent document substrate", () => {
         [guide.pageId],
       )).rejects.toThrow("configured global knowledge guide");
       await expect(admin.query(
-        "UPDATE knowledge_pages SET current_path=$2 WHERE id=$1",
-        [guide.pageId, `substrate-moved-guide-${randomUUID()}`],
-      )).rejects.toThrow("configured global knowledge guide");
-      await expect(admin.query(
         "DELETE FROM knowledge_pages WHERE id=$1",
         [guide.pageId],
       )).rejects.toThrow("configured global knowledge guide");
@@ -504,91 +500,6 @@ describeDatabase("path-independent document substrate", () => {
     }
   });
 
-  test("public IDs and exact aliases persist without indexing private paths", async () => {
-    const first = await createPage(`substrate-public-${randomUUID()}`);
-    expect((await admin.query(
-      "SELECT 1 FROM public_resources WHERE document_id=$1",
-      [first.pageId],
-    )).rowCount).toBe(0);
-
-    await admin.query(
-      `UPDATE knowledge_pages
-       SET published_version_id=$2,public_path=$3,updated_at=now()
-       WHERE id=$1`,
-      [first.pageId, first.revisionId, first.path],
-    );
-    const resource = await admin.query<{ public_id: string }>(
-      "SELECT public_id FROM public_resources WHERE document_id=$1",
-      [first.pageId],
-    );
-    const publicId = resource.rows[0]!.public_id;
-    const aliases = await admin.query<{ alias_path: string; route_kind: string }>(
-      `SELECT alias_path,route_kind::text
-       FROM public_route_aliases alias
-       WHERE public_id=$1
-       ORDER BY alias.route_kind`,
-      [publicId],
-    );
-    expect(aliases.rows).toEqual([
-      { alias_path: `/p/${first.path}`, route_kind: "page" },
-      { alias_path: `/p/${first.path}.md`, route_kind: "markdown" },
-    ]);
-    expect(publicId).not.toBe(first.pageId);
-
-    await admin.query(
-      `UPDATE knowledge_pages
-       SET published_version_id=NULL,public_path=NULL,updated_at=now()
-       WHERE id=$1`,
-      [first.pageId],
-    );
-    expect((await admin.query(
-      "SELECT 1 FROM public_route_aliases WHERE public_id=$1",
-      [publicId],
-    )).rowCount).toBe(2);
-    expect((await admin.query(
-      "SELECT 1 FROM published_route_aliases WHERE public_id=$1",
-      [publicId],
-    )).rowCount).toBe(0);
-
-    const second = await createPage(`substrate-public-${randomUUID()}`);
-    await expect(admin.query(
-      `UPDATE knowledge_pages
-       SET published_version_id=$2,public_path=$3,updated_at=now()
-       WHERE id=$1`,
-      [second.pageId, second.revisionId, first.path],
-    )).rejects.toThrow("public route alias is permanently assigned");
-  });
-
-  test("asset deletion tombstones public identity and preserves its alias", async () => {
-    const asset = await createAsset(`substrate-public-asset-${randomUUID()}`);
-    await admin.query("UPDATE assets SET public_path=current_path WHERE id=$1", [asset.id]);
-    const resource = await admin.query<{ public_id: string }>(
-      "SELECT public_id FROM public_resources WHERE document_id=$1",
-      [asset.id],
-    );
-    const publicId = resource.rows[0]!.public_id;
-    expect((await admin.query(
-      `SELECT 1 FROM public_route_aliases
-       WHERE public_id=$1 AND alias_path=$2 AND route_kind='asset'`,
-      [publicId, `/a/${asset.path}`],
-    )).rowCount).toBe(1);
-
-    await admin.query("UPDATE assets SET public_path=NULL WHERE id=$1", [asset.id]);
-    await admin.query("DELETE FROM assets WHERE id=$1", [asset.id]);
-    expect((await admin.query<{ document_id: string | null }>(
-      "SELECT document_id FROM public_resources WHERE public_id=$1",
-      [publicId],
-    )).rows[0]?.document_id).toBeNull();
-    expect((await admin.query(
-      "SELECT 1 FROM public_route_aliases WHERE public_id=$1",
-      [publicId],
-    )).rowCount).toBe(1);
-    expect((await admin.query(
-      "SELECT 1 FROM published_route_aliases WHERE public_id=$1",
-      [publicId],
-    )).rowCount).toBe(0);
-  });
-
   test("roles can use only the path-independent capabilities they need", async () => {
     expect((await admin.query<{ allowed: boolean }>(
       `SELECT has_function_privilege(
@@ -649,17 +560,6 @@ describeDatabase("path-independent document substrate", () => {
         `SELECT has_function_privilege(
            $1,'defer_document_link_index(uuid)','EXECUTE'
          ) AS allowed`,
-        [role],
-      )).rows[0]?.allowed).toBe(false);
-    }
-
-    for (const role of ["context_use_public", "context_use_storage"]) {
-      expect((await admin.query<{ allowed: boolean }>(
-        "SELECT has_table_privilege($1,'published_route_aliases','SELECT') AS allowed",
-        [role],
-      )).rows[0]?.allowed).toBe(true);
-      expect((await admin.query<{ allowed: boolean }>(
-        "SELECT has_table_privilege($1,'public_route_aliases','SELECT') AS allowed",
         [role],
       )).rows[0]?.allowed).toBe(false);
     }
