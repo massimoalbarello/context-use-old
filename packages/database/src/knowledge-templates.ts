@@ -16,6 +16,7 @@ import type {
   UpdateDirectoryInput,
   UpdatePageInput,
 } from "@context-use/shared";
+import { embeddedDefaultKnowledgeTemplate } from "./default-knowledge-template.ts";
 import { DirectoryRepository } from "./directories.ts";
 import { PageRepository } from "./pages.ts";
 
@@ -65,6 +66,14 @@ type TemplateRetirements = {
   pages: string[];
 };
 
+type ResolvedKnowledgeTemplate = {
+  guideDirectoryPaths: string[];
+  guideBodies: ReadonlyMap<string, string>;
+  directoryPresentations: Map<string, TemplateDirectoryPresentation>;
+  pages: TemplatePageDefinition[];
+  retirements: TemplateRetirements;
+};
+
 export type KnowledgeTemplatePageContract = {
   path: string;
   title: string;
@@ -109,11 +118,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-async function readDirectoryPresentations(
-  rootPath: string,
+function parseDirectoryPresentations(
+  source: string,
   guideDirectoryPaths: string[],
-): Promise<Map<string, TemplateDirectoryPresentation>> {
-  const source = await readFile(join(rootPath, "directories.json"), "utf8");
+): Map<string, TemplateDirectoryPresentation> {
   const parsed: unknown = JSON.parse(source);
   if (!isRecord(parsed)) throw new Error("Template directories.json must contain an object");
 
@@ -148,16 +156,26 @@ async function readDirectoryPresentations(
   return presentations;
 }
 
-async function readTemplatePages(
+async function readDirectoryPresentations(
   rootPath: string,
+  guideDirectoryPaths: string[],
+): Promise<Map<string, TemplateDirectoryPresentation>> {
+  return parseDirectoryPresentations(
+    await readFile(join(rootPath, "directories.json"), "utf8"),
+    guideDirectoryPaths,
+  );
+}
+
+async function parseTemplatePages(
+  source: string,
+  availableBodyFiles: readonly string[],
+  readBody: (bodyFile: string) => Promise<string> | string,
   directoryPaths: Set<string>,
   guideDirectoryPaths: string[],
   templateName: string,
 ): Promise<TemplatePageDefinition[]> {
-  const source = await readFile(join(rootPath, "pages.json"), "utf8");
   const parsed: unknown = JSON.parse(source);
   if (!isRecord(parsed)) throw new Error("Template pages.json must contain an object");
-  const availableBodyFiles = await discoverTemplatePageBodyFiles(rootPath);
   const referencedBodyFiles = new Set<string>();
   const guidePaths = new Set(guideDirectoryPaths.map(guidePath));
   const definitions: TemplatePageDefinition[] = [];
@@ -187,7 +205,7 @@ async function readTemplatePages(
       throw new Error(`Template page body file is referenced more than once: ${bodyFile}`);
     }
     referencedBodyFiles.add(bodyFile);
-    const bodyMarkdown = await readFile(join(rootPath, bodyFile), "utf8");
+    const bodyMarkdown = await readBody(bodyFile);
     const input = createPageSchema.parse({
       path,
       title,
@@ -203,6 +221,22 @@ async function readTemplatePages(
     }
   }
   return definitions;
+}
+
+async function readTemplatePages(
+  rootPath: string,
+  directoryPaths: Set<string>,
+  guideDirectoryPaths: string[],
+  templateName: string,
+): Promise<TemplatePageDefinition[]> {
+  return parseTemplatePages(
+    await readFile(join(rootPath, "pages.json"), "utf8"),
+    await discoverTemplatePageBodyFiles(rootPath),
+    (bodyFile) => readFile(join(rootPath, bodyFile), "utf8"),
+    directoryPaths,
+    guideDirectoryPaths,
+    templateName,
+  );
 }
 
 async function discoverTemplatePageBodyFiles(rootPath: string): Promise<string[]> {
@@ -238,18 +272,12 @@ async function discoverTemplatePageBodyFiles(rootPath: string): Promise<string[]
   return files;
 }
 
-async function readTemplateRetirements(
-  rootPath: string,
+function parseTemplateRetirements(
+  source: string | null,
   currentDirectoryPaths: Set<string>,
   currentPagePaths: Set<string>,
-): Promise<TemplateRetirements> {
-  let source: string;
-  try {
-    source = await readFile(join(rootPath, TEMPLATE_RETIREMENTS_FILE), "utf8");
-  } catch (error) {
-    if (isRecord(error) && error.code === "ENOENT") return { directories: [], pages: [] };
-    throw error;
-  }
+): TemplateRetirements {
+  if (source === null) return { directories: [], pages: [] };
   const parsed: unknown = JSON.parse(source);
   if (!isRecord(parsed) || Object.keys(parsed).sort().join(",") !== "directories,pages") {
     throw new Error("Template retired.json must contain only directories and pages arrays");
@@ -281,6 +309,21 @@ async function readTemplateRetirements(
     directories: readPaths("directory", parsed.directories, currentDirectoryPaths),
     pages: readPaths("page", parsed.pages, currentPagePaths),
   };
+}
+
+async function readTemplateRetirements(
+  rootPath: string,
+  currentDirectoryPaths: Set<string>,
+  currentPagePaths: Set<string>,
+): Promise<TemplateRetirements> {
+  let source: string | null;
+  try {
+    source = await readFile(join(rootPath, TEMPLATE_RETIREMENTS_FILE), "utf8");
+  } catch (error) {
+    if (isRecord(error) && error.code === "ENOENT") source = null;
+    else throw error;
+  }
+  return parseTemplateRetirements(source, currentDirectoryPaths, currentPagePaths);
 }
 
 function guidePath(directoryPath: string): string {
@@ -326,6 +369,83 @@ async function discoverGuideDirectories(rootPath: string): Promise<string[]> {
     const depth = left.split("/").filter(Boolean).length - right.split("/").filter(Boolean).length;
     return depth || left.localeCompare(right);
   });
+}
+
+function normalizedTemplateMarkdown(markdown: string): string {
+  return markdown.trimEnd() + "\n";
+}
+
+async function resolveEmbeddedDefaultTemplate(): Promise<ResolvedKnowledgeTemplate> {
+  const guideDirectoryPaths = Object.keys(embeddedDefaultKnowledgeTemplate.guides);
+  const guideBodies = new Map(Object.entries(embeddedDefaultKnowledgeTemplate.guides)
+    .map(([path, body]) => [path, normalizedTemplateMarkdown(body)]));
+  const directoryPresentations = parseDirectoryPresentations(
+    embeddedDefaultKnowledgeTemplate.directoryMetadata,
+    guideDirectoryPaths,
+  );
+  const bodyFiles = Object.keys(embeddedDefaultKnowledgeTemplate.pageBodies);
+  const pages = await parseTemplatePages(
+    embeddedDefaultKnowledgeTemplate.pageMetadata,
+    bodyFiles,
+    (bodyFile) => {
+      const body = embeddedDefaultKnowledgeTemplate.pageBodies[
+        bodyFile as keyof typeof embeddedDefaultKnowledgeTemplate.pageBodies
+      ];
+      if (body === undefined) throw new Error(`Template page body is missing: ${bodyFile}`);
+      return body;
+    },
+    new Set(directoryPresentations.keys()),
+    guideDirectoryPaths,
+    embeddedDefaultKnowledgeTemplate.name,
+  );
+  const currentPagePaths = new Set([
+    ...guideDirectoryPaths.map(guidePath),
+    ...pages.map(({ input }) => input.path),
+  ]);
+  const retirements = parseTemplateRetirements(
+    embeddedDefaultKnowledgeTemplate.retirements,
+    new Set(directoryPresentations.keys()),
+    currentPagePaths,
+  );
+  return { guideDirectoryPaths, guideBodies, directoryPresentations, pages, retirements };
+}
+
+async function resolveFilesystemTemplate(
+  templateName: string,
+  templatesRoot: URL,
+): Promise<ResolvedKnowledgeTemplate> {
+  const rootPath = new URL(`${templateName}/`, templatesRoot).pathname;
+  const guideDirectoryPaths = await discoverGuideDirectories(rootPath);
+  const guideBodies = new Map(await Promise.all(guideDirectoryPaths.map(async (path) => [
+    path,
+    normalizedTemplateMarkdown(await readFile(join(rootPath, path, "AGENTS.md"), "utf8")),
+  ] as const)));
+  const directoryPresentations = await readDirectoryPresentations(rootPath, guideDirectoryPaths);
+  const pages = await readTemplatePages(
+    rootPath,
+    new Set(directoryPresentations.keys()),
+    guideDirectoryPaths,
+    templateName,
+  );
+  const currentPagePaths = new Set([
+    ...guideDirectoryPaths.map(guidePath),
+    ...pages.map(({ input }) => input.path),
+  ]);
+  const retirements = await readTemplateRetirements(
+    rootPath,
+    new Set(directoryPresentations.keys()),
+    currentPagePaths,
+  );
+  return { guideDirectoryPaths, guideBodies, directoryPresentations, pages, retirements };
+}
+
+async function resolveKnowledgeTemplate(
+  templateName: string,
+  templatesRoot: URL,
+): Promise<ResolvedKnowledgeTemplate> {
+  return templateName === "default" && templatesRoot.href === TEMPLATES_ROOT.href
+    ? resolveEmbeddedDefaultTemplate()
+    : resolveFilesystemTemplate(templateName, templatesRoot);
 }
 
 function templateActor(name: string): Actor {
@@ -395,17 +515,17 @@ export async function knowledgeTemplateBaseline(
   templatesRoot = TEMPLATES_ROOT,
 ): Promise<KnowledgeTemplateBaseline> {
   assertTemplateName(templateName);
-  const rootPath = new URL(`${templateName}/`, templatesRoot).pathname;
-  const presentations = await readDirectoryPresentations(rootPath, [""]);
-  const rootDirectory = presentations.get("")!;
-  const bodyMarkdown = await readFile(join(rootPath, "AGENTS.md"), "utf8");
+  const template = await resolveKnowledgeTemplate(templateName, templatesRoot);
+  const rootDirectory = template.directoryPresentations.get("")!;
+  const bodyMarkdown = template.guideBodies.get("");
+  if (bodyMarkdown === undefined) throw new Error("Template root guide is missing");
   return {
     template: templateName,
     root_directory: rootDirectory,
     root_guide: {
       title: "AGENTS.md",
       summary: guideSummary(""),
-      body_markdown: bodyMarkdown.trimEnd() + "\n",
+      body_markdown: bodyMarkdown,
       commit_message: `Apply ${templateName} knowledge template`,
       actor_subject: templateActor(templateName).subject,
     },
@@ -423,30 +543,26 @@ export async function knowledgeTemplateMigrationContract(
   templatesRoot = TEMPLATES_ROOT,
 ): Promise<KnowledgeTemplateMigrationContract> {
   assertTemplateName(templateName);
-  const rootPath = new URL(`${templateName}/`, templatesRoot).pathname;
-  const guideDirectoryPaths = await discoverGuideDirectories(rootPath);
-  const presentations = await readDirectoryPresentations(rootPath, guideDirectoryPaths);
-  const pages = await readTemplatePages(
-    rootPath,
-    new Set(presentations.keys()),
-    guideDirectoryPaths,
-    templateName,
-  );
-  const baseline = await knowledgeTemplateBaseline(templateName, templatesRoot);
+  const template = await resolveKnowledgeTemplate(templateName, templatesRoot);
+  const rootDirectory = template.directoryPresentations.get("");
+  const rootGuide = template.guideBodies.get("");
+  if (!rootDirectory || rootGuide === undefined) {
+    throw new Error("Template root contract is incomplete");
+  }
   return {
     template: templateName,
-    directories: [...presentations.entries()].map(([path, presentation]) => ({
+    directories: [...template.directoryPresentations.entries()].map(([path, presentation]) => ({
       path,
       ...presentation,
     })),
     root_guide: {
       path: "agents",
-      title: baseline.root_guide.title,
-      summary: baseline.root_guide.summary,
-      body_markdown: baseline.root_guide.body_markdown,
+      title: "AGENTS.md",
+      summary: guideSummary(""),
+      body_markdown: rootGuide,
       management: "managed",
     },
-    pages: pages.map(({ input, management }) => ({
+    pages: template.pages.map(({ input, management }) => ({
       path: input.path,
       title: input.title,
       summary: input.summary,
@@ -465,29 +581,14 @@ export async function reconcileKnowledgeTemplate(
   options: KnowledgeTemplateReconcileOptions = {},
 ): Promise<TemplateResult> {
   assertTemplateName(templateName);
-  const rootUrl = new URL(`${templateName}/`, templatesRoot);
-  const rootPath = rootUrl.pathname;
-  const guideDirectoryPaths = await discoverGuideDirectories(rootPath);
-  const directoryPresentations = await readDirectoryPresentations(rootPath, guideDirectoryPaths);
+  const template = await resolveKnowledgeTemplate(templateName, templatesRoot);
+  const { guideDirectoryPaths, directoryPresentations } = template;
   const directoryPaths = [...directoryPresentations.keys()].sort((left, right) => {
     const depth = left.split("/").filter(Boolean).length - right.split("/").filter(Boolean).length;
     return depth || left.localeCompare(right);
   });
-  const templatePages = await readTemplatePages(
-    rootPath,
-    new Set(directoryPaths),
-    guideDirectoryPaths,
-    templateName,
-  );
-  const currentPagePaths = new Set([
-    ...guideDirectoryPaths.map(guidePath),
-    ...templatePages.map(({ input }) => input.path),
-  ]);
-  const retirements = await readTemplateRetirements(
-    rootPath,
-    new Set(directoryPaths),
-    currentPagePaths,
-  );
+  const templatePages = template.pages;
+  const retirements = template.retirements;
   const actions: TemplateAction[] = [];
   const blockedDirectories = new Set<string>();
 
@@ -581,12 +682,15 @@ export async function reconcileKnowledgeTemplate(
     if (blockedDirectories.has(directoryPath)) continue;
     const path = guidePath(directoryPath);
     if (options.skipOperationalPaths?.has(path)) continue;
-    const bodyMarkdown = await readFile(join(rootPath, directoryPath, "AGENTS.md"), "utf8");
+    const bodyMarkdown = template.guideBodies.get(directoryPath);
+    if (bodyMarkdown === undefined) {
+      throw new Error(`Template directory ${directoryPath || "/"} has no AGENTS.md`);
+    }
     const input: CreatePageInput = {
       path,
       title: "AGENTS.md",
       summary: guideSummary(directoryPath),
-      body_markdown: bodyMarkdown.trimEnd() + "\n",
+      body_markdown: bodyMarkdown,
       commit_message: `Apply ${templateName} knowledge template`,
     };
     const existing = await repositories.pages.getByPath(path, true) as TemplatePage | null;

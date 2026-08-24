@@ -64,10 +64,10 @@ export async function runKnowledgePrepareCommand(options: {
     if (!socketPath || !token) {
       throw new Error("Knowledge preparation requires the dashboard storage capability");
     }
-    const configuredRoot = process.env.CONTEXT_USE_DEVELOPMENT_TEMPLATE_ROOT;
-    const templatesRoot = configuredRoot
-      ? pathToFileURL(configuredRoot.endsWith("/") ? configuredRoot : `${configuredRoot}/`)
-      : undefined;
+    const templatesRoot = knowledgePrepareTemplatesRoot(
+      process.env.CONTEXT_USE_DEVELOPMENT_TEMPLATE_ROOT,
+      production,
+    );
     const storage = new BrokeredStorage({ socketPath, token });
     const result = await prepareKnowledgeCorpus({
       corpusPool,
@@ -110,6 +110,18 @@ export function knowledgePrepareForceTemplate(configured: string | undefined): b
   if (!value || value === "false") return false;
   if (value === "true") return true;
   throw new Error("CONTEXT_USE_FORCE_TEMPLATE must be true or false");
+}
+
+export function knowledgePrepareTemplatesRoot(
+  configured: string | undefined,
+  production: boolean,
+): URL | undefined {
+  if (!configured?.trim()) return undefined;
+  if (production) {
+    throw new Error("Production knowledge preparation uses only the embedded default template");
+  }
+  const path = configured.trim();
+  return pathToFileURL(path.endsWith("/") ? path : `${path}/`);
 }
 
 export function isolatedCorpusDatabaseUrl(configured: string | undefined): string {
