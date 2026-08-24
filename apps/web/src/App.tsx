@@ -18,6 +18,7 @@ type SessionInfo = { owner: { id: string; email: string }; passkey_count: number
 type Section = "knowledge" | "history" | "mcp" | "settings";
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "context-use.sidebar.width.v1";
+const SIDEBAR_OPEN_STORAGE_KEY = "context-use.sidebar.open.v1";
 const MOBILE_LAYOUT_QUERY = "(max-width: 960px)";
 const DEFAULT_SIDEBAR_WIDTH = 258;
 const MIN_SIDEBAR_WIDTH = 220;
@@ -31,6 +32,14 @@ function restoredSidebarWidth() {
     return Number.isFinite(stored) && stored > 0 ? clampSidebarWidth(stored) : DEFAULT_SIDEBAR_WIDTH;
   } catch {
     return DEFAULT_SIDEBAR_WIDTH;
+  }
+}
+
+function restoredSidebarOpen() {
+  try {
+    return window.localStorage.getItem(SIDEBAR_OPEN_STORAGE_KEY) !== "false";
+  } catch {
+    return true;
   }
 }
 
@@ -56,7 +65,7 @@ function CloseIcon() {
 type DashboardSelection = { kind: "document"; id: string };
 
 function selectionFromLocation(): DashboardSelection | null {
-  const match = window.location.pathname.match(/^\/app\/(documents|pages|assets)\/([0-9a-f-]+)/);
+  const match = window.location.pathname.match(/^\/app\/(documents|pages|assets|records)\/([0-9a-f-]+)/);
   if (!match) return null;
   return { kind: "document", id: match[2]! };
 }
@@ -81,8 +90,8 @@ export function App() {
   const [navigatorRefresh, setNavigatorRefresh] = useState(0);
   const [section, setSection] = useState<Section>(sectionFromLocation);
   const [query, setQuery] = useState("");
-  const [showArchived, setShowArchived] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(restoredSidebarWidth);
+  const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(restoredSidebarOpen);
   const [resizingSidebar, setResizingSidebar] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [message, setMessage] = useState("");
@@ -102,15 +111,6 @@ export function App() {
   useEffect(() => { if (!isPending) setSessionResolved(true); }, [isPending]);
   useEffect(() => { if (authSession) loadSession().catch(() => setSession(null)); }, [authSession]);
   useEffect(() => { if (session) loadAssets().catch(() => undefined); }, [session]);
-  useEffect(() => {
-    if (!session || section !== "knowledge") return;
-    const interval = window.setInterval(() => {
-      if (document.visibilityState !== "visible") return;
-      setNavigatorRefresh((value) => value + 1);
-      void loadAssets();
-    }, 5_000);
-    return () => window.clearInterval(interval);
-  }, [session, section]);
   useEffect(() => {
     const syncLocation = () => {
       setSelected(selectionFromLocation());
@@ -140,12 +140,13 @@ export function App() {
       setMessage(caught instanceof Error ? caught.message : "Could not open document");
     });
     return () => controller.abort();
-  }, [navigatorRefresh, selected?.id, selected?.kind, session]);
+  }, [selected?.id, selected?.kind, session]);
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") return;
       event.preventDefault();
       if (window.matchMedia(MOBILE_LAYOUT_QUERY).matches) setMobileSidebarOpen(true);
+      else setDesktopSidebarOpen(true);
       window.setTimeout(() => { searchRef.current?.focus(); searchRef.current?.select(); });
     };
     window.addEventListener("keydown", focusSearch);
@@ -159,6 +160,14 @@ export function App() {
       // Resizing still works when browser storage is unavailable.
     }
   }, [sidebarWidth]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SIDEBAR_OPEN_STORAGE_KEY, String(desktopSidebarOpen));
+    } catch {
+      // The sidebar remains collapsible when browser storage is unavailable.
+    }
+  }, [desktopSidebarOpen]);
 
   useEffect(() => {
     if (!resizingSidebar) return;
@@ -286,7 +295,7 @@ export function App() {
     if (!(target instanceof HTMLAnchorElement) || target.target === "_blank") return;
     const url = new URL(target.href, window.location.href);
     const match = url.origin === window.location.origin
-      ? /^\/app\/documents\/([0-9a-f-]{36})$/.exec(url.pathname)
+      ? /^\/app\/(?:documents|pages|assets|records)\/([0-9a-f-]{36})$/.exec(url.pathname)
       : null;
     if (!match) return;
     event.preventDefault();
@@ -309,7 +318,7 @@ export function App() {
     event.preventDefault();
   };
 
-  return <div className="shell" style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties} onClickCapture={followDocumentLink}>
+  return <div className={`shell${desktopSidebarOpen ? "" : " sidebar-collapsed"}`} style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties} onClickCapture={followDocumentLink}>
     <header className="mobile-topbar">
       <button
         ref={mobileSidebarToggleRef}
@@ -320,11 +329,7 @@ export function App() {
         aria-expanded={mobileSidebarOpen}
         onClick={() => setMobileSidebarOpen((open) => !open)}
       ><SidebarToggleIcon /></button>
-      <nav className="mobile-section-nav" aria-label="Dashboard sections">
-        <button className={section === "knowledge" ? "active" : ""} onClick={openKnowledge}><SectionIcon section="knowledge" /><span>Knowledge</span></button>
-        <button className={section === "history" ? "active" : ""} onClick={openHistory}><SectionIcon section="history" /><span>History</span></button>
-        <button className={section === "mcp" ? "active" : ""} onClick={openMcpClients}><SectionIcon section="mcp" /><span>MCP clients</span></button>
-      </nav>
+      <strong className="mobile-current-section">{section === "mcp" ? "MCP clients" : section[0]!.toUpperCase() + section.slice(1)}</strong>
     </header>
     <button
       type="button"
@@ -333,24 +338,23 @@ export function App() {
       tabIndex={-1}
       onClick={() => setMobileSidebarOpen(false)}
     />
+    <button type="button" className="sidebar-open-button" aria-label="Open knowledge browser" aria-controls="knowledge-sidebar" onClick={() => setDesktopSidebarOpen(true)}><SidebarToggleIcon /></button>
     <aside ref={sidebarRef} id="knowledge-sidebar" className={`sidebar${mobileSidebarOpen ? " mobile-open" : ""}`} aria-label="Knowledge browser">
-      <div className="sidebar-brand"><div className="brand-mark small">cu</div><div className="sidebar-brand-copy"><strong>context-use</strong><span>Private workspace</span></div><button ref={mobileSidebarCloseRef} type="button" className="sidebar-close-button" aria-label="Close knowledge browser" onClick={() => setMobileSidebarOpen(false)}><CloseIcon /></button></div>
-      <nav className="sidebar-section-nav">
-        <button className={section === "history" ? "active" : ""} onClick={openHistory}><SectionIcon section="history" /><span>History</span></button>
-        <button className={section === "mcp" ? "active" : ""} onClick={openMcpClients}><SectionIcon section="mcp" /><span>MCP clients</span></button>
-      </nav>
+      <div className="sidebar-brand"><div className="brand-mark small">cu</div><div className="sidebar-brand-copy"><strong>context-use</strong><span>Private workspace</span></div><button type="button" className="sidebar-collapse-button" aria-label="Close knowledge browser" onClick={() => setDesktopSidebarOpen(false)}><SidebarToggleIcon /></button><button ref={mobileSidebarCloseRef} type="button" className="sidebar-close-button" aria-label="Close knowledge browser" onClick={() => setMobileSidebarOpen(false)}><CloseIcon /></button></div>
       <label className="sidebar-search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5" /><path d="m12.25 12.25 4 4" /></svg><input ref={searchRef} className="search" aria-label="Search knowledge" placeholder="Search knowledge…" value={query} onChange={(event) => setQuery(event.target.value)} /><kbd>⌘K</kbd></label>
       <DocumentNavigator
         query={query}
-        includeRetired={showArchived}
         selectedId={section === "knowledge" && selected?.kind === "document" ? selected.id : null}
         refreshToken={navigatorRefresh}
         onCreate={createDocument}
         onSelect={openDocument}
       />
-      <label className="archive-toggle"><input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />Include archived and deleted</label>
       <footer>
+        <nav className="sidebar-section-nav" aria-label="Workspace utilities">
+          <button className={section === "history" ? "active" : ""} onClick={openHistory}><SectionIcon section="history" /><span>History</span></button>
+        </nav>
         <button className={section === "settings" ? "settings-button active" : "settings-button"} onClick={openSettings}><SectionIcon section="settings" /><span>Settings</span></button>
+        <button className={section === "mcp" ? "settings-button settings-subnav active" : "settings-button settings-subnav"} onClick={openMcpClients}><SectionIcon section="mcp" /><span>MCP clients</span></button>
         <div className="sidebar-account"><span className="user-avatar">{session.owner.email.slice(0, 1).toUpperCase()}</span><span className="sidebar-user"><strong>{session.owner.email}</strong><small>{session.passkey_count} secure passkey{session.passkey_count === 1 ? "" : "s"}</small></span><button type="button" className="sign-out-button" onClick={() => authClient.signOut({ fetchOptions: { onSuccess: () => location.assign("/app") } })}><SignOutIcon /><span>Sign out</span></button></div>
       </footer>
     </aside>

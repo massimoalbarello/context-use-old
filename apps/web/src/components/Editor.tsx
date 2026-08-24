@@ -106,7 +106,7 @@ export function Editor({
   const [historyHasMore, setHistoryHasMore] = useState(false);
   const [draft, setDraft] = useState({ title: "", summary: "", body_markdown: "" });
   const [commit, setCommit] = useState("");
-  const [tab, setTab] = useState<"preview" | "history">("preview");
+  const [tab, setTab] = useState<"preview" | "links" | "history">("preview");
   const [isEditing, setIsEditing] = useState(false);
   const [publishingVersion, setPublishingVersion] = useState<number | null>(null);
   const [message, setMessage] = useState("");
@@ -278,7 +278,7 @@ export function Editor({
       </div>
     </div>}
     {!isEditing && <nav className="tabs">
-      <div>{(["preview", "history"] as const).map((item) => <button className={tab === item ? "active" : ""} key={item} onClick={() => setTab(item)}>{item}</button>)}</div>
+      <div>{(["preview", "links", "history"] as const).map((item) => <button className={tab === item ? "active" : ""} key={item} onClick={() => setTab(item)}>{item}</button>)}</div>
       {tab === "preview" && <button className="edit-page-button" onClick={edit} aria-label="Edit page">
         <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M11.7 2.3a1 1 0 0 1 1.4 0l.6.6a1 1 0 0 1 0 1.4l-8 8-3.2.7.7-3.2 8-8Z" /><path d="m9.8 4.2 2 2" /></svg>
         Edit
@@ -299,8 +299,8 @@ export function Editor({
     </section>}
     {!isEditing && tab === "preview" && <>
       <article className="rendered" dangerouslySetInnerHTML={{ __html: page.rendered_html ?? "" }} />
-      <DocumentNeighborhood documentId={page.id} onOpen={onOpenDocument} />
     </>}
+    {!isEditing && tab === "links" && <DocumentNeighborhood documentId={page.id} onOpen={onOpenDocument} />}
     {!isEditing && tab === "history" && <section className="history-list">
       <header><h2>Version history</h2><p>The latest editable version and the published version are independent. Publishing points the public URL at one exact snapshot.</p></header>
       {historyHasMore && <p className="version-diff-status">Showing the latest 100 retained versions.</p>}

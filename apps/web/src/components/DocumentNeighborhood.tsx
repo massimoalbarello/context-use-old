@@ -47,7 +47,7 @@ export function DocumentNeighborhood({
   }, [documentId]);
 
   if (error) return <aside className="document-neighborhood compact error" role="status">{error}</aside>;
-  if (!neighborhood) return null;
+  if (!neighborhood) return <aside className="document-neighborhood compact" role="status">Loading links…</aside>;
 
   const outbound = neighborhood.outbound.neighbors
     .filter((neighbor): neighbor is typeof neighbor & { document: DashboardDocumentSummary } => (
@@ -56,7 +56,7 @@ export function DocumentNeighborhood({
   const unresolved = neighborhood.outbound.neighbors.length - outbound.length;
   const backlinks = neighborhood.backlinks.documents;
   if (!outbound.length && !backlinks.length && !unresolved && neighborhood.outbound.index_complete) {
-    return null;
+    return <aside className="document-neighborhood compact">This page does not link to any documents and has no backlinks yet.</aside>;
   }
 
   return <aside className="document-neighborhood" aria-label="Document connections">
