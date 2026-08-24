@@ -47,6 +47,41 @@ export class HypermediaBootstrapRepository {
     private readonly bodies: MarkdownObjectStore,
   ) {}
 
+  async retainedInstallationReady(): Promise<boolean> {
+    const result = await this.pool.query<{ ready: boolean }>(
+      `SELECT
+         NOT EXISTS (SELECT 1 FROM hypermedia_bootstrap_allocations)
+         AND EXISTS (
+           SELECT 1
+           FROM knowledge_settings settings
+           JOIN knowledge_pages page
+             ON page.id=settings.global_guide_document_id
+            AND page.archived_at IS NULL
+           WHERE settings.singleton
+         )
+         AND NOT EXISTS (
+           SELECT expected.key
+           FROM (VALUES ('activity-distiller'),('diary-composer')) expected(key)
+           WHERE NOT EXISTS (
+             SELECT 1
+             FROM automation_registry registry
+             JOIN knowledge_pages instructions
+               ON instructions.id=registry.instructions_document_id
+              AND instructions.archived_at IS NULL
+             JOIN knowledge_pages state
+               ON state.id=registry.state_document_id
+              AND state.archived_at IS NULL
+             WHERE registry.key=expected.key AND registry.disabled_at IS NULL
+           )
+         )
+         AND EXISTS (
+           SELECT 1 FROM publication_settings settings
+           WHERE settings.singleton AND settings.updated_at IS NOT NULL
+         ) AS ready`,
+    );
+    return result.rows[0]?.ready === true;
+  }
+
   async begin(): Promise<HypermediaBootstrapAllocation[]> {
     const result = await this.pool.query<HypermediaBootstrapAllocation>(
       `SELECT document_kind,document_id,revision_id

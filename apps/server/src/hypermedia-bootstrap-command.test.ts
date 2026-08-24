@@ -6,6 +6,7 @@ import {
 } from "@context-use/database";
 import {
   applyHypermediaBootstrap,
+  hypermediaBootstrapAllocations,
   hypermediaBootstrapDocuments,
 } from "./hypermedia-bootstrap-command.ts";
 
@@ -26,6 +27,20 @@ function allocations(): HypermediaBootstrapAllocation[] {
 }
 
 describe("hypermedia bootstrap command", () => {
+  test("does not re-enter fresh bootstrap for a ready retained installation", async () => {
+    let began = false;
+    expect(await hypermediaBootstrapAllocations({
+      async retainedInstallationReady() { return true; },
+      async begin() { began = true; return allocations(); },
+    })).toBeNull();
+    expect(began).toBe(false);
+
+    expect(await hypermediaBootstrapAllocations({
+      async retainedInstallationReady() { return false; },
+      async begin() { return allocations(); },
+    })).toEqual(allocations());
+  });
+
   test("maps the embedded contract to five stable semantic allocations", async () => {
     const documents = hypermediaBootstrapDocuments(defaultHypermediaBootstrapTemplate, allocations());
 

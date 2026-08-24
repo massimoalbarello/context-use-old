@@ -145,5 +145,16 @@ describeBootstrap("fresh hypermedia bootstrap", () => {
       entrypoint_latched: true,
     });
     expect(objects.size).toBe(5);
+
+    await admin!.query("SET session_replication_role='replica'");
+    try {
+      await admin!.query("DELETE FROM hypermedia_bootstrap_allocations");
+    } finally {
+      await admin!.query("SET session_replication_role='origin'");
+    }
+    expect(await bootstrap.retainedInstallationReady()).toBe(true);
+    await expect(bootstrap.begin()).rejects.toThrow(
+      "hypermedia bootstrap requires an empty installation",
+    );
   }, 15_000);
 });
