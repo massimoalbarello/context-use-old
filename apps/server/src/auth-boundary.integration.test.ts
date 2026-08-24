@@ -1,7 +1,4 @@
 import { afterAll, describe, expect, spyOn, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { makeSignature } from "better-auth/crypto";
 import { Client, Pool } from "pg";
 import {
@@ -12,7 +9,7 @@ import { disposableDatabaseUrl } from "@context-use/database/disposable-database
 import { config } from "./config.ts";
 import { csrfToken } from "./security.ts";
 import { createStorageBrokerApp } from "./storage-app.ts";
-import { FilesystemStorage } from "./storage.ts";
+import { MemoryObjectStorage } from "./test-object-storage.ts";
 
 const databaseUrl = await disposableDatabaseUrl();
 const requireDatabase = (): string => {
@@ -25,9 +22,8 @@ const requireDatabase = (): string => {
 // exercising the real cross-service boundary.
 const enabled = process.env.TEST_APP_DATABASE_URL === "1"
   && process.env.TEST_AUTH_BOUNDARY_ISOLATED === "1";
-const testStorageRoot = enabled ? await mkdtemp(join(tmpdir(), "context-use-app-storage-")) : null;
 const testStoragePool = enabled ? new Pool({ connectionString: config.STORAGE_DATABASE_URL }) : null;
-const testStorage = testStorageRoot ? new FilesystemStorage(testStorageRoot) : null;
+const testStorage = enabled ? new MemoryObjectStorage() : null;
 if (enabled) {
   const storageBroker = createStorageBrokerApp({
     storage: testStorage!,
@@ -60,7 +56,6 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       __contextUseStorageHandler?: (request: Request) => Promise<Response> | Response;
     }).__contextUseStorageHandler;
     await testStoragePool?.end();
-    if (testStorageRoot) await rm(testStorageRoot, { recursive: true, force: true });
   });
 
   test("bearer credentials are rejected by publication APIs", async () => {

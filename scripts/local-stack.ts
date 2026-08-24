@@ -44,7 +44,7 @@ export function composeArguments(command: ComposeCommand): string[] {
   }
 }
 
-export function stackVolumeName(volume: "asset-data"): string {
+export function stackVolumeName(volume: "minio-data"): string {
   return `${LOCAL_STACK.project}_${volume}`;
 }
 
@@ -64,7 +64,7 @@ function runDocker(command: ComposeCommand, env: Record<string, string | undefin
 }
 
 function removeDataVolume(): void {
-  const volume = stackVolumeName("asset-data");
+  const volume = stackVolumeName("minio-data");
   const listed = Bun.spawnSync(["docker", "volume", "ls", "--quiet", "--filter", `name=^${volume}$`], {
     stdout: "pipe",
     stderr: "inherit",

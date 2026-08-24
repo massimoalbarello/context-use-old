@@ -30,7 +30,7 @@ describe("local stack commands", () => {
       "--remove-orphans",
     ]);
     expect(composeArguments("down")).not.toContain("--volumes");
-    expect(stackVolumeName("asset-data")).toBe("context-use-dev_asset-data");
+    expect(stackVolumeName("minio-data")).toBe("context-use-dev_minio-data");
   });
 
   test("development compose can receive an eval-selected template", () => {
@@ -39,5 +39,8 @@ describe("local stack commands", () => {
     expect(compose).toContain(
       "CONTEXT_USE_DEVELOPMENT_TEMPLATE_ROOT: ${CONTEXT_USE_DEVELOPMENT_TEMPLATE_ROOT:-}",
     );
+    expect(compose).toContain("S3_ENDPOINT: http://minio:9000");
+    expect(compose).not.toContain("STORAGE_DRIVER");
+    expect(compose).not.toContain("STORAGE_PATH");
   });
 });

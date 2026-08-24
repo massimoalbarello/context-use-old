@@ -49,6 +49,34 @@ services:
       timeout: 3s
       retries: 30
 
+  minio:
+    image: quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: context-use
+      MINIO_ROOT_PASSWORD: development-only-minio-secret
+    ports: ["9000:9000", "9001:9001"]
+    volumes: [minio-data:/data]
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:9000/minio/health/ready"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  object-storage-init:
+    <<: *code-service
+    depends_on:
+      minio: { condition: service_healthy }
+    environment:
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: context-use
+      AWS_SECRET_ACCESS_KEY: development-only-minio-secret
+      AWS_EC2_METADATA_DISABLED: "true"
+      ASSET_BUCKET: context-use
+      S3_ENDPOINT: http://minio:9000
+    command: ["bun", "apps/server/src/object-storage-init.ts"]
+    restart: "no"
+
   migrate:
     <<: *code-service
     depends_on:
@@ -72,22 +100,27 @@ services:
     <<: *code-service
     depends_on:
       migrate: { condition: service_completed_successfully }
+      object-storage-init: { condition: service_completed_successfully }
       storage-socket-init: { condition: service_completed_successfully }
     environment:
       <<: *common
       SERVICE_MODE: storage
       STORAGE_DATABASE_URL: postgres://context_use_storage:development-only@postgres:5432/context_use
-      STORAGE_DRIVER: filesystem
-      STORAGE_PATH: /app/data/assets
       STORAGE_SOCKET_PATH: /run/context-use-storage/storage.sock
       STORAGE_DASHBOARD_TOKEN: development-storage-dashboard-token
       STORAGE_MCP_TOKEN: development-storage-private-mcp-token
       STORAGE_PUBLIC_TOKEN: development-storage-public-web-token
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: context-use
+      AWS_SECRET_ACCESS_KEY: development-only-minio-secret
+      AWS_EC2_METADATA_DISABLED: "true"
+      ASSET_BUCKET: context-use
+      S3_ENDPOINT: http://minio:9000
+      S3_FORCE_PATH_STYLE: "true"
     command: ["bun", "apps/server/src/storage-index.ts"]
     volumes:
       - .:/app
       - dependencies:/app/node_modules
-      - asset-data:/app/data/assets
       - storage-socket:/run/context-use-storage
     restart: unless-stopped
 
@@ -257,5 +290,5 @@ services:
 volumes:
   postgres-data:
   dependencies:
-  asset-data:
+  minio-data:
   storage-socket:

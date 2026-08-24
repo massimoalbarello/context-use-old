@@ -61,7 +61,6 @@ const validByService: Record<string, Record<string, string>> = {
   },
   storage: {
     STORAGE_DATABASE_URL: "postgres://context_use_storage:secret@127.0.0.1:5432/context_use",
-    STORAGE_DRIVER: "s3",
     AWS_CREDENTIALS_FILE: "/run/context-use-aws-storage/credentials.json",
     AWS_EC2_METADATA_DISABLED: "true",
     ASSET_BUCKET: "private-assets",
@@ -243,5 +242,10 @@ describe("production process credential boundaries", () => {
   test("web-facing services reject explicit AWS credentials", () => {
     expect(load("mcp", { AWS_ACCESS_KEY_ID: "should-not-be-here" }).exitCode).not.toBe(0);
     expect(load("public", { AWS_SESSION_TOKEN: "should-not-be-here" }).exitCode).not.toBe(0);
+  });
+
+  test("production storage cannot be redirected to an S3-compatible endpoint", () => {
+    expect(load("storage", { S3_ENDPOINT: "http://minio:9000" }).exitCode).not.toBe(0);
+    expect(load("storage", { S3_FORCE_PATH_STYLE: "true" }).exitCode).not.toBe(0);
   });
 });

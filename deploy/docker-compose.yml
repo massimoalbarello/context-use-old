@@ -746,7 +746,6 @@ services:
       APP_ORIGIN: https://${APP_HOSTNAME}
       ASSET_ORIGIN: https://${ASSET_HOSTNAME}
       STORAGE_DATABASE_URL: postgres://context_use_storage:${DB_STORAGE_PASSWORD}@postgres:5432/context_use
-      STORAGE_DRIVER: s3
       STORAGE_SOCKET_PATH: /run/context-use-storage/storage.sock
       STORAGE_DASHBOARD_TOKEN: ${STORAGE_DASHBOARD_TOKEN}
       STORAGE_MCP_TOKEN: ${STORAGE_MCP_TOKEN}

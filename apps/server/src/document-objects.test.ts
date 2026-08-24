@@ -1,7 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { describe, expect, test } from "bun:test";
 import {
   markdownObjectMetadata,
   type DocumentMaintenanceRepository,
@@ -9,22 +6,12 @@ import {
   type UnindexedDocumentRevision,
 } from "@context-use/database";
 import { reconcileDocumentLinks, reconcileDocumentObjects } from "./storage-app.ts";
-import { FilesystemStorage, type ObjectStorageBackend } from "./storage.ts";
-
-const temporaryRoots: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, {
-    recursive: true,
-    force: true,
-  })));
-});
+import type { ObjectStorageBackend } from "./storage.ts";
+import { MemoryObjectStorage } from "./test-object-storage.ts";
 
 describe("knowledge document object reconciliation", () => {
   test("indexes every stored revision, including an empty resolved target set", async () => {
-    const root = await mkdtemp(join(tmpdir(), "context-use-document-links-"));
-    temporaryRoots.push(root);
-    const storage = new FilesystemStorage(root);
+    const storage = new MemoryObjectStorage();
     const revisionId = "11111111-1111-4111-8111-111111111111";
     const targetId = "22222222-2222-4222-8222-222222222222";
     const body = [
@@ -69,9 +56,7 @@ describe("knowledge document object reconciliation", () => {
   });
 
   test("defers missing or corrupt revisions while indexing later available bodies", async () => {
-    const root = await mkdtemp(join(tmpdir(), "context-use-document-link-failures-"));
-    temporaryRoots.push(root);
-    const storage = new FilesystemStorage(root);
+    const storage = new MemoryObjectStorage();
     const missingId = "11111111-1111-4111-8111-111111111111";
     const corruptId = "22222222-2222-4222-8222-222222222222";
     const validId = "33333333-3333-4333-8333-333333333333";
@@ -191,9 +176,7 @@ describe("knowledge document object reconciliation", () => {
   });
 
   test("materializes a public-safe artifact from an object-backed revision", async () => {
-    const root = await mkdtemp(join(tmpdir(), "context-use-documents-"));
-    temporaryRoots.push(root);
-    const storage = new FilesystemStorage(root);
+    const storage = new MemoryObjectStorage();
     const pageId = "11111111-1111-4111-8111-111111111111";
     const versionId = "22222222-2222-4222-8222-222222222222";
     const privateTargetId = "33333333-3333-4333-8333-333333333333";
