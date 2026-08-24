@@ -34,8 +34,6 @@ describe("development data reset", () => {
       "pathless_publication_settings",
       "public_visibility_generations",
       "publication_target_generations",
-      "pathless_publication_adoption_staging",
-      "pathless_publication_adoptions",
       "public_namespace_conflicts",
     ] as const;
 

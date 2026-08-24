@@ -164,19 +164,6 @@ async function seedActiveAssetPublication(
     [artifactId, objectKey, adoptionId],
   );
   await client.query(
-    `INSERT INTO pathless_publication_adoptions(
-       id,adoption_kind,source_document_id,public_id,candidate_artifact_id,
-       candidate_object_key,reservation_allocation_id,source_snapshot,
-       source_fingerprint,expected_visibility_generation,
-       expected_visibility_state_hash,expected_target_generation,
-       phase,applied_at
-     ) VALUES (
-       $1,'legacy_asset',$2,$3,$4,$5,$1,'{}'::jsonb,$6,0,
-       repeat('0',64),1,'applied',now()
-     )`,
-    [adoptionId, assetId, publicId, artifactId, objectKey, hash("f")],
-  );
-  await client.query(
     `INSERT INTO public_asset_artifacts(
        artifact_id,public_id,source_document_id,body_object_key,
        body_size_bytes,body_content_hash,public_filename,public_content_type,
