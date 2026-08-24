@@ -19,6 +19,7 @@
     "build": "bun run --filter '@context-use/*' build",
     "typecheck": "bun run --filter '@context-use/*' typecheck",
     "test": "bun test apps packages",
+    "audit:filesystem-deprecation": "bun scripts/filesystem-deprecation-audit.ts",
     "openclaw:mount": "node packages/openclaw-context-use/bin.js mount --link packages/openclaw-context-use",
     "openclaw:off": "node packages/openclaw-context-use/bin.js off",
     "openclaw:remove": "node packages/openclaw-context-use/bin.js remove",

@@ -84,6 +84,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun audit --production
       - run: bun run typecheck
+      - run: bun run audit:filesystem-deprecation
       - run: bun --cwd apps/server build
       - name: Validate S3 semantics against MinIO
         run: |
@@ -136,13 +137,17 @@ jobs:
           psql "${TEST_DATABASE_URL}" --set ON_ERROR_STOP=1 <<'SQL'
           DO $$
           BEGIN
-            IF (SELECT count(*) FROM schema_migrations)<>2
+            IF (SELECT count(*) FROM schema_migrations)<>3
                OR NOT EXISTS (
                  SELECT 1 FROM schema_migrations WHERE version='001_baseline.sql'
                )
                OR NOT EXISTS (
                  SELECT 1 FROM schema_migrations
                  WHERE version='002_normalize_retained_bootstrap.sql'
+               )
+               OR NOT EXISTS (
+                 SELECT 1 FROM schema_migrations
+                 WHERE version='003_close_filesystem_deprecation.sql'
                )
                OR to_regclass('public.public_route_aliases') IS NULL THEN
               RAISE EXCEPTION 'current forward migration contract failed';

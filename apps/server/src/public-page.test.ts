@@ -154,7 +154,7 @@ describe("public page presentation", () => {
     expect(html).not.toContain("MCP");
   });
 
-  test("does not offer a dead directory index when no entry point is configured", () => {
+  test("does not offer an unconfigured public entrypoint", () => {
     const html = renderPublicLandingDocument({ siteOrigin: "https://someone.example" });
 
     expect(html).not.toContain('class="landing-cta"');
