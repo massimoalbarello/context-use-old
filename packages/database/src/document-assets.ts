@@ -67,10 +67,6 @@ async function transaction<T>(pool: Pool, work: (client: PoolClient) => Promise<
   }
 }
 
-function compatibilityPath(): string {
-  return `pathless-asset-${randomUUID()}`;
-}
-
 const ASSET_COLUMNS = `asset.id AS document_id,resource.public_id,
     asset.filename,asset.content_type,asset.size_bytes,asset.content_hash,
     asset.width,asset.height,asset.duration_seconds,
@@ -110,21 +106,20 @@ export class DocumentAssetRepository {
   async create(input: CreateDocumentAssetInput): Promise<DocumentAssetCreateResult> {
     const documentId = randomUUID();
     const objectKey = `objects/${documentId}`;
-    const path = compatibilityPath();
     return transaction(this.pool, async (client) => {
       await client.query(
         "SELECT pg_advisory_xact_lock_shared(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
       );
       const result = await client.query<DocumentAssetDatabaseRow>(
         `INSERT INTO assets(
-           id,current_path,filename,content_type,size_bytes,content_hash,
+           id,filename,content_type,size_bytes,content_hash,
            s3_object_key,width,height,duration_seconds
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
          RETURNING id AS document_id,NULL::uuid AS public_id,
            filename,content_type,size_bytes,content_hash,
            width,height,duration_seconds,
            created_at,deleted_at`,
-        [documentId, path, input.filename, input.content_type,
+        [documentId, input.filename, input.content_type,
           input.size_bytes, input.sha256, objectKey,
           input.width ?? null, input.height ?? null, input.duration_seconds ?? null],
       );

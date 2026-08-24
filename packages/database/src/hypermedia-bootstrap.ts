@@ -127,7 +127,6 @@ export class HypermediaBootstrapRepository {
         return;
       }
 
-      const compatibilityPath = `pathless-page-${document.document_id}`;
       await client.query(
         `INSERT INTO hypermedia_documents(id,authority,representation)
          VALUES ($1,'knowledge','markdown')`,
@@ -141,16 +140,16 @@ export class HypermediaBootstrapRepository {
           stored.body_size_bytes, stored.body_content_hash],
       );
       await client.query(
-        `INSERT INTO knowledge_pages(id,current_path,current_version_id,search_vector)
-         VALUES ($1,$2,$3,''::tsvector)`,
-        [document.document_id, compatibilityPath, document.revision_id],
+        `INSERT INTO knowledge_pages(id,current_version_id,search_vector)
+         VALUES ($1,$2,''::tsvector)`,
+        [document.document_id, document.revision_id],
       );
       await client.query(
         `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,path,title,summary,commit_message,
+           id,page_id,version_number,title,summary,commit_message,
            actor_kind,actor_subject
-         ) VALUES ($1,$2,1,$3,$4,$5,$6,'dashboard',$7)`,
-        [document.revision_id, document.document_id, compatibilityPath,
+         ) VALUES ($1,$2,1,$3,$4,$5,'dashboard',$6)`,
+        [document.revision_id, document.document_id,
           document.input.title, document.input.summary,
           document.input.commit_message, BOOTSTRAP_ACTOR],
       );

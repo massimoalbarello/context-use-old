@@ -90,9 +90,7 @@ describeDatabase("pathless private documents", () => {
       duration_seconds: "1.25",
       public_id: null,
     });
-    // The storage locator is an explicit internal handoff. Only the legacy
-    // compatibility path (verified below for pages) must be unlinkable from
-    // private document identity.
+    // The storage locator is an explicit internal handoff.
     expect(asset.storage.object_key).toBe(`objects/${asset.document.document_id}`);
     expect(await assets.getForStorage(asset.document.document_id)).toEqual({
       ...asset.document,
@@ -120,12 +118,19 @@ describeDatabase("pathless private documents", () => {
       pathless_search_ready: true,
     });
 
-    const legacy = await pool.query<{ current_path: string }>(
+    const compatibility = await pool.query<{ current_path: string | null }>(
       "SELECT current_path FROM knowledge_pages WHERE id=$1",
       [created.document_id],
     );
-    expect(legacy.rows[0]!.current_path).toStartWith("pathless-page-");
-    expect(legacy.rows[0]!.current_path).not.toContain(created.document_id);
+    expect(compatibility.rows[0]!.current_path).toBeNull();
+    expect((await pool.query<{ path: string | null }>(
+      "SELECT path FROM knowledge_page_versions WHERE id=$1",
+      [created.current_revision_id],
+    )).rows[0]!.path).toBeNull();
+    expect((await pool.query<{ current_path: string | null }>(
+      "SELECT current_path FROM assets WHERE id=$1",
+      [asset.document.document_id],
+    )).rows[0]!.current_path).toBeNull();
     const receipt = await pool.query<{ target_document_ids: string[] }>(
       "SELECT target_document_ids FROM knowledge_revision_contracts WHERE revision_id=$1",
       [created.current_revision_id],
@@ -339,11 +344,11 @@ describeDatabase("pathless private documents", () => {
     expect((await catalog.search("catalog-search-needle", {
       representation: "asset",
     })).documents.map(({ document_id }) => document_id)).toContain(asset.document.document_id);
-    const hiddenPath = (await pool.query<{ current_path: string }>(
+    const hiddenPath = (await pool.query<{ current_path: string | null }>(
       "SELECT current_path FROM knowledge_pages WHERE id=$1",
       [source.document_id],
     )).rows[0]!.current_path;
-    expect((await catalog.search(hiddenPath)).documents).toEqual([]);
+    expect(hiddenPath).toBeNull();
     expect((await catalog.list({
       authority: "source",
       integration: "pathless-test",
