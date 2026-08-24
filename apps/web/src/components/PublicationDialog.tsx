@@ -12,12 +12,6 @@ const FIELD_LABELS = {
   summary: "Summary",
 } as const;
 
-function publicMetadataChanges(review: Review) {
-  return review.metadata_changes.filter(
-    (change): change is typeof change & { field: "title" | "summary" } => change.field !== "path",
-  );
-}
-
 function versionAuthor(version: Review["queued_versions"][number]): string {
   if (version.actor_kind === "mcp") {
     return `MCP client${version.actor_subject ? ` · ${version.actor_subject}` : ""}`;
@@ -26,7 +20,7 @@ function versionAuthor(version: Review["queued_versions"][number]): string {
 }
 
 export function republicationChanged(review: Review): boolean {
-  return publicMetadataChanges(review).length > 0 || review.markdown_changes.length > 0;
+  return review.metadata_changes.length > 0 || review.markdown_changes.length > 0;
 }
 
 /**
@@ -52,7 +46,7 @@ export function RepublicationReview({ review, candidateVersionNumber }: {
         This version is identical to the one already public.
       </p>
       : <>
-        {publicMetadataChanges(review).map((change) => <div className="republication-metadata" key={change.field}>
+        {review.metadata_changes.map((change) => <div className="republication-metadata" key={change.field}>
           <span>{FIELD_LABELS[change.field]}</span>
           <del>{change.before ?? "—"}</del>
           <ins>{change.after}</ins>

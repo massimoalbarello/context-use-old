@@ -19,7 +19,6 @@ export type Version = {
   id: string;
   page_id: string;
   version_number: number;
-  path?: string;
   title: string;
   summary: string;
   body_markdown?: string;
@@ -41,7 +40,7 @@ export type PageVersionDiff = {
     to_version: number;
   };
   metadata_changes: Array<{
-    field: "path" | "title" | "summary";
+    field: "title" | "summary";
     before: string | null;
     after: string;
   }>;
@@ -95,7 +94,7 @@ export type AssetStatus = {
  */
 export type RepublicationReview = {
   published_version_number: number;
-  metadata_changes: Array<{ field: "path" | "title" | "summary"; before: string | null; after: string }>;
+  metadata_changes: Array<{ field: "title" | "summary"; before: string | null; after: string }>;
   markdown_changes: Array<{ before: string; after: string }>;
   queued_versions: Array<{
     version_number: number;

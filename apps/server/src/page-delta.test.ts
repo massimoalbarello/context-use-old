@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { documentDelta, markdownChanges, pageDelta } from "./page-delta.ts";
+import { documentDelta, markdownChanges } from "./page-delta.ts";
 
 describe("page delta", () => {
   test("isolates a one-word edit without returning unchanged paragraphs or duplicate representations", async () => {
@@ -83,40 +83,6 @@ describe("page delta", () => {
     ],
   ])("returns exact before/after text for %s", async (_name, before, after, expected) => {
     expect(await markdownChanges(before, after)).toEqual(expected);
-  });
-
-  test("reports structured metadata changes and a new-page baseline", async () => {
-    const delta = await pageDelta(null, {
-      path: "projects/context-use/intro",
-      title: "Context Use",
-      summary: "A linked knowledge system.",
-      body_markdown: "# Context Use\n\nStarted today.\n",
-    });
-
-    expect(delta).toEqual({
-      metadata_changes: [
-        { field: "path", before: null, after: "projects/context-use/intro" },
-        { field: "title", before: null, after: "Context Use" },
-        { field: "summary", before: null, after: "A linked knowledge system." },
-      ],
-      markdown_changes: [{
-        before: "",
-        after: "# Context Use\n\nStarted today.\n",
-      }],
-    });
-  });
-
-  test("returns no changes for identical versions", async () => {
-    const version = {
-      path: "people/ada/intro",
-      title: "Ada",
-      summary: "A collaborator.",
-      body_markdown: "# Ada\n",
-    };
-    expect(await pageDelta(version, version)).toEqual({
-      metadata_changes: [],
-      markdown_changes: [],
-    });
   });
 
   test("compares stable document revisions without filesystem metadata", async () => {
