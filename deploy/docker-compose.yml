@@ -117,7 +117,7 @@ services:
     command: ["bun", "packages/database/src/initialize.ts"]
     networks: [migration_data]
 
-  knowledge-prepare:
+  hypermedia-bootstrap:
     <<: *locked-service
     restart: "no"
     depends_on:
@@ -128,8 +128,6 @@ services:
       CORPUS_DATABASE_URL: postgres://context_use_corpus:${DB_CORPUS_PASSWORD}@postgres:5432/context_use
       STORAGE_SOCKET_PATH: /run/context-use-storage/storage.sock
       STORAGE_DASHBOARD_TOKEN: ${STORAGE_DASHBOARD_TOKEN}
-      CONTEXT_USE_TEMPLATE_INSTALL: ${CONTEXT_USE_TEMPLATE_INSTALL:-}
-      CONTEXT_USE_FORCE_TEMPLATE: ${CONTEXT_USE_FORCE_TEMPLATE:-false}
     command:
       - sh
       - -ec
@@ -513,7 +511,7 @@ services:
       auth: { condition: service_healthy }
       confirmation: { condition: service_healthy }
       storage: { condition: service_healthy }
-      knowledge-prepare: { condition: service_completed_successfully }
+      hypermedia-bootstrap: { condition: service_completed_successfully }
     environment:
       NODE_ENV: production
       SERVICE_MODE: dashboard
@@ -594,7 +592,7 @@ services:
       postgres: { condition: service_healthy }
       auth: { condition: service_healthy }
       storage: { condition: service_healthy }
-      knowledge-prepare: { condition: service_completed_successfully }
+      hypermedia-bootstrap: { condition: service_completed_successfully }
     environment:
       NODE_ENV: production
       SERVICE_MODE: mcp
@@ -631,7 +629,7 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       storage: { condition: service_healthy }
-      knowledge-prepare: { condition: service_completed_successfully }
+      hypermedia-bootstrap: { condition: service_completed_successfully }
     environment:
       NODE_ENV: production
       SERVICE_MODE: public
