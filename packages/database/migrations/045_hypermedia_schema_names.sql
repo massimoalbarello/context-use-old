@@ -30,6 +30,9 @@ DROP FUNCTION seed_pathless_publication_entrypoint();
 DROP FUNCTION adopt_generic_knowledge_revision(
   uuid,uuid,text,uuid[],knowledge_revision_contract_provenance
 );
+DROP FUNCTION register_public_resource_routes(uuid,publication_target,text);
+DROP FUNCTION page_search_vector(text,text,text,text);
+DROP TYPE corpus_directory_disposition;
 DROP TABLE public_knowledge_settings;
 ALTER TYPE knowledge_revision_contract_provenance
   RENAME VALUE 'corpus_migration' TO 'imported';
@@ -474,6 +477,11 @@ BEGIN
      OR to_regprocedure(
        'public.adopt_generic_knowledge_revision(uuid,uuid,text,uuid[],knowledge_revision_contract_provenance)'
      ) IS NOT NULL
+     OR to_regprocedure(
+       'public.register_public_resource_routes(uuid,publication_target,text)'
+     ) IS NOT NULL
+     OR to_regprocedure('public.page_search_vector(text,text,text,text)') IS NOT NULL
+     OR to_regtype('public.corpus_directory_disposition') IS NOT NULL
      OR to_regprocedure('public.seed_publication_entrypoint()') IS NOT NULL THEN
     RAISE EXCEPTION 'canonical naming left compatibility runtime objects'
       USING ERRCODE='55000';
