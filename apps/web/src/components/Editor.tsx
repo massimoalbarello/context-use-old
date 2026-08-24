@@ -270,10 +270,10 @@ export function Editor({
         {page.archived_at && <button className="danger" onClick={() => { setDeletionError(""); setDeletionOpen(true); }}>Delete permanently</button>}
         {!page.archived_at && !page.published_version_id && <button className="primary" onClick={() => setPublishingVersion(page.version_number)}>Publish</button>}
         {!page.archived_at && page.published_version_id && <button className="danger" disabled={unpublishWorking} onClick={() => void unpublish()}>{unpublishWorking ? "Waiting for passkey…" : "Unpublish"}</button>}
-        {!page.archived_at && page.published_version_id && (!page.pathless_published || hasUnpublishedChanges) && <button className="primary" onClick={() => setPublishingVersion(page.version_number)}>{page.pathless_published ? "Publish latest" : "Publish at permanent URL"}</button>}
+        {!page.archived_at && page.published_version_id && hasUnpublishedChanges && <button className="primary" onClick={() => setPublishingVersion(page.version_number)}>Publish latest</button>}
       </div>
     </header>
-    {page.public_url && <div className="publication-notice" role="status"><div><strong>{page.pathless_published ? "Permanent public URL" : "Current public URL"}</strong><a href={page.public_url} target="_blank" rel="noreferrer">{page.public_url}</a></div></div>}
+    {page.public_url && <div className="publication-notice" role="status"><div><strong>Permanent public URL</strong><a href={page.public_url} target="_blank" rel="noreferrer">{page.public_url}</a></div></div>}
     {hasUnpublishedChanges && <div className="publication-notice pending publication-alert" role="status">
       <div>
         <strong>Published page is not up to date</strong>
