@@ -605,26 +605,14 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
   })
   .get("/api/dashboard/automations", async ({ request }) => {
     await ownerRequest(request);
-    const registrations = await dashboardAutomations.list();
+    const registrations = await dashboardAutomations.listActive();
     return json({
       automations: await Promise.all(registrations.map(async (registration) => {
-        const [instructions, state] = await Promise.all([
-          dashboardDocumentCatalog.get(registration.instructions_document_id),
-          registration.state_document_id
-            ? dashboardDocumentCatalog.get(registration.state_document_id)
-            : Promise.resolve(null),
-        ]);
+        const instructions = await dashboardDocumentCatalog.get(registration.instructions_document_id);
         return {
           id: registration.id,
-          key: registration.key,
           name: registration.name,
-          enabled: registration.disabled_at === null,
-          updated_at: new Date(registration.updated_at).toISOString(),
-          disabled_at: registration.disabled_at === null
-            ? null
-            : new Date(registration.disabled_at).toISOString(),
           instructions: instructions ? dashboardDocumentSummary(instructions) : null,
-          state: state ? dashboardDocumentSummary(state) : null,
         };
       })),
     });

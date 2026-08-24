@@ -3,21 +3,6 @@ import type { Pool } from "pg";
 import { AutomationRegistryRepository } from "./automation-registry.ts";
 
 describe("automation registry", () => {
-  test("lists enabled and disabled automations with enabled entries first", async () => {
-    const statements: string[] = [];
-    const pool = {
-      async query(sql: string) {
-        statements.push(sql);
-        return { rows: [] };
-      },
-    } as unknown as Pool;
-
-    await new AutomationRegistryRepository(pool).list();
-
-    expect(statements[0]).toContain("ORDER BY disabled_at NULLS FIRST,key,id");
-    expect(statements[0]).not.toContain("WHERE disabled_at IS NULL");
-  });
-
   test("identity-preserving preparation never overwrites an owner rename or disabled state", async () => {
     const disabledAt = new Date("2026-01-01T00:00:00.000Z");
     const statements: string[] = [];

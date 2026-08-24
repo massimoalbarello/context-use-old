@@ -20,44 +20,33 @@ const document: DashboardDocumentSummary = {
 };
 
 describe("automation registry dashboard", () => {
-  test("shows registry status and direct hypermedia document links", () => {
+  test("lists automations with a way to view their instructions", () => {
     const automations: DashboardAutomation[] = [{
       id: "33333333-3333-4333-8333-333333333333",
-      key: "activity-distiller",
       name: "Activity distiller",
-      enabled: true,
-      updated_at: "2026-08-24T10:00:00.000Z",
-      disabled_at: null,
       instructions: document,
-      state: { ...document, document_id: "44444444-4444-4444-8444-444444444444", title: "Activity distiller state", operational_roles: ["automation_state"] },
     }];
     const html = renderToStaticMarkup(createElement(AutomationList, {
       automations,
       onOpenDocument: () => undefined,
     }));
 
-    expect(html).toContain("activity-distiller");
-    expect(html).toContain("Enabled");
-    expect(html).toContain(`context-use://document/${document.document_id}`);
-    expect(html).toContain("Activity distiller state");
+    expect(html).toContain("Activity distiller");
+    expect(html).toContain("View instructions");
+    expect(html).toContain("Reconcile connected activity into linked knowledge.");
   });
 
-  test("keeps disabled and stateless registrations visible", () => {
+  test("keeps an automation visible when its instruction page is unavailable", () => {
     const html = renderToStaticMarkup(createElement(AutomationList, {
       automations: [{
         id: "33333333-3333-4333-8333-333333333333",
-        key: "paused-workflow",
         name: "Paused workflow",
-        enabled: false,
-        updated_at: "2026-08-24T10:00:00.000Z",
-        disabled_at: "2026-08-24T09:00:00.000Z",
-        instructions: document,
-        state: null,
+        instructions: null,
       }],
       onOpenDocument: () => undefined,
     }));
 
-    expect(html).toContain("Disabled");
-    expect(html).toContain("No state document");
+    expect(html).toContain("Paused workflow");
+    expect(html).toContain("Instruction page unavailable");
   });
 });

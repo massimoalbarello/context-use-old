@@ -1491,66 +1491,38 @@ button:disabled {
 }
 
 .automation-list > article {
-  padding: 22px;
+  padding: 18px 20px;
   border: 1px solid var(--line);
   border-radius: 13px;
   background: var(--surface-strong);
   box-shadow: 0 5px 18px rgba(47, 41, 31, .035);
 }
 
-.automation-list > article > header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 18px;
-}
-
 .automation-list h2 {
-  margin: 4px 0 0;
+  margin: 0 0 12px;
   color: #302d29;
   font-size: 19px;
   letter-spacing: -.02em;
 }
 
-.automation-key {
-  color: var(--muted);
-  font: 9px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-.automation-status {
-  padding: 5px 8px;
-  border-radius: 99px;
-  background: #efede7;
-  color: var(--muted);
-  font-size: 8px;
-  font-weight: 720;
-  letter-spacing: .06em;
-  text-transform: uppercase;
-}
-
-.automation-status.enabled {
-  background: var(--green-soft);
-  color: var(--green);
-}
-
-.automation-documents {
-  margin-top: 20px;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.automation-document {
+.automation-list article > button {
+  width: 100%;
   min-width: 0;
-  padding: 14px;
+  padding: 13px 14px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 4px;
+  border: 0;
   border-radius: 10px;
   background: #f3f0e9;
+  color: var(--ink);
+  text-align: left;
 }
 
-.automation-document > span {
+.automation-list article > button:hover strong { color: var(--accent-hover); }
+
+.automation-list article > button span {
   color: #8b867e;
   font-size: 8px;
   font-weight: 720;
@@ -1558,54 +1530,25 @@ button:disabled {
   text-transform: uppercase;
 }
 
-.automation-document button {
-  min-width: 0;
-  padding: 0;
-  align-items: flex-start;
-  flex-direction: column;
-  gap: 4px;
-  border: 0;
-  background: transparent;
-  color: var(--ink);
-  text-align: left;
-}
-
-.automation-document button:hover strong { color: var(--accent-hover); }
-
-.automation-document strong,
-.automation-document small {
+.automation-list article > button strong,
+.automation-list article > button small {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.automation-document strong { font-size: 12px; }
+.automation-list article > button strong { font-size: 12px; }
 
-.automation-document small {
+.automation-list article > button small {
   color: var(--muted);
   font-size: 10px;
 }
 
-.automation-document code {
-  overflow: hidden;
-  color: #8a857d;
-  font: 8px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.automation-document p {
-  margin: 2px 0;
+.automation-list article > p {
+  margin: 0;
   color: var(--muted);
   font-size: 10px;
-}
-
-.automation-list > article > time {
-  margin-top: 14px;
-  display: block;
-  color: #99938a;
-  font-size: 9px;
 }
 
 .automations-empty {
@@ -3236,7 +3179,6 @@ button:disabled {
 
   .content-page > header h1 { font-size: 40px; }
   .asset-card dl { grid-template-columns: 1fr; }
-  .automation-documents { grid-template-columns: 1fr; }
   .document-neighborhood {
     width: auto;
     margin-right: 22px;
