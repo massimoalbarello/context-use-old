@@ -4,7 +4,7 @@ import { markdownObjectMetadata, type MarkdownObjectStore } from "./documents.ts
 import { SourceRecordRepository } from "./source-records.ts";
 
 describe("source record lock ordering", () => {
-  test("takes the shared transition lock before connector identity and record row locks", async () => {
+  test("takes the connector identity lock before record row locks", async () => {
     const calls: string[] = [];
     const store: MarkdownObjectStore = {
       async write(revisionId, markdown) {
@@ -39,12 +39,11 @@ describe("source record lock ordering", () => {
       markdown: "# Issue 42\n",
     })).rejects.toThrow("stop after lock request");
 
-    const transition = calls.findIndex((sql) => sql.includes("pg_advisory_xact_lock_shared"));
     const identity = calls.findIndex((sql) => sql.includes("pg_advisory_xact_lock(")
       && !sql.includes("_shared"));
     const record = calls.findIndex((sql) => sql.includes("FOR UPDATE OF source"));
-    expect(transition).toBeGreaterThan(-1);
-    expect(identity).toBeGreaterThan(transition);
+    expect(calls.some((sql) => sql.includes("filesystem-hypermedia-corpus-transition"))).toBe(false);
+    expect(identity).toBeGreaterThan(-1);
     expect(record).toBeGreaterThan(identity);
   });
 });

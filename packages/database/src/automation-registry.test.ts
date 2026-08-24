@@ -35,10 +35,9 @@ describe("automation registry", () => {
       state_document_id: "33333333-3333-4333-8333-333333333333",
     });
 
-    const transition = statements.findIndex((sql) => sql.includes("pg_advisory_xact_lock_shared"));
     const insert = statements.findIndex((sql) => sql.includes("INSERT INTO automation_registry"));
-    expect(transition).toBeGreaterThan(-1);
-    expect(insert).toBeGreaterThan(transition);
+    expect(statements.some((sql) => sql.includes("filesystem-hypermedia-corpus-transition"))).toBe(false);
+    expect(insert).toBeGreaterThan(-1);
     expect(statements[insert]).not.toContain("disabled_at=NULL");
     expect(statements[insert]).not.toContain("name=excluded.name");
     expect(registration.name).toBe("Owner renamed distiller");

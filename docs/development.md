@@ -55,13 +55,13 @@ database knowledge state; there is no filesystem storage backend or asset direct
 
 New installations receive the Git-versioned default corpus during the isolated deployment
 preparation step. That source is installation bootstrap data, not a runtime filesystem or a
-template-management API. Once hypermedia cutover is finalized, redeployments skip preparation
+template-management API. Once the bootstrap allocations are complete, redeployments skip preparation
 and every retained guide, instruction, state document, and owner document is managed through the
 same stable document identities, revisions, links, and search APIs.
 
 Validate changes to the shipped bootstrap corpus with its focused database and template tests.
 Do not add a dashboard or CLI path that reapplies the bootstrap documents to an
-already-finalized knowledge base.
+already-initialized knowledge base.
 
 ## Knowledge automations
 

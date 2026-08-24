@@ -92,7 +92,7 @@ describeBootstrap("fresh hypermedia bootstrap", () => {
       [retainedDocumentId],
     );
     await expect(bootstrap.begin()).rejects.toThrow(
-      "requires a completed v0.1.82 hypermedia cutover",
+      "hypermedia bootstrap requires an empty installation",
     );
     expect((await admin!.query(
       "SELECT count(*)::integer AS count FROM hypermedia_bootstrap_allocations",
@@ -138,7 +138,6 @@ describeBootstrap("fresh hypermedia bootstrap", () => {
     expect(await bootstrap.complete()).toEqual(completedAt);
 
     const state = await admin!.query<{
-      finalized: boolean;
       documents: string;
       revisions: string;
       contracts: string;
@@ -149,8 +148,6 @@ describeBootstrap("fresh hypermedia bootstrap", () => {
       entrypoint_latched: boolean;
     }>(
       `SELECT
-         (SELECT finalized_at IS NOT NULL FROM hypermedia_cutover_state WHERE singleton)
-           AS finalized,
          (SELECT count(*)::text FROM knowledge_pages) AS documents,
          (SELECT count(*)::text FROM hypermedia_document_revisions) AS revisions,
          (SELECT count(*)::text FROM knowledge_revision_contracts) AS contracts,
@@ -165,7 +162,6 @@ describeBootstrap("fresh hypermedia bootstrap", () => {
            AS entrypoint_latched`,
     );
     expect(state.rows[0]).toEqual({
-      finalized: true,
       documents: "5",
       revisions: "5",
       contracts: "5",

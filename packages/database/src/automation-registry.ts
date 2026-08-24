@@ -75,9 +75,6 @@ export class AutomationRegistryRepository {
    */
   async register(input: RegisterAutomationInput): Promise<AutomationRegistration> {
     return transaction(this.pool, async (client) => {
-      await client.query(
-        "SELECT pg_advisory_xact_lock_shared(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
-      );
       const result = await client.query<AutomationRegistration>(
         `INSERT INTO automation_registry(
            id,key,name,instructions_document_id,state_document_id

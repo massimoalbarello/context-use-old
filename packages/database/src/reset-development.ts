@@ -12,7 +12,6 @@ export const DEVELOPMENT_RESET_TABLES = [
   "publication_intent_id_reservations",
   "public_artifact_id_reservations",
   "hypermedia_bootstrap_allocations",
-  "hypermedia_cutover_state",
   "pathless_publication_settings",
   "public_visibility_generations",
   "publication_target_generations",
@@ -53,8 +52,6 @@ export function developmentResetSql(): string {
     INSERT INTO pathless_publication_settings(
       singleton,entrypoint_public_id,updated_at
     ) VALUES (true,NULL,NULL);
-    INSERT INTO hypermedia_cutover_state(singleton,finalized_at)
-    VALUES (true,NULL);
     INSERT INTO knowledge_settings(singleton) VALUES (true);
     INSERT INTO knowledge_directories(
       id,current_path,title,summary,search_vector
