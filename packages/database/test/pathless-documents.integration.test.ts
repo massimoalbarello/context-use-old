@@ -218,7 +218,10 @@ describeDatabase("pathless private documents", () => {
     expect(archived?.archived_at).not.toBeNull();
 
     const changes = await knowledge.changesSince({ cursor: changesBefore });
-    expect(changes.changes.find(({ document_id }) => document_id === created.document_id))
+    const archivedChange = changes.changes.find(({ document_id, change_kind }) => (
+      document_id === created.document_id && change_kind === "archived"
+    ));
+    expect(archivedChange)
       .toMatchObject({
         document_id: created.document_id,
         revision_id: archived!.current_revision_id,
@@ -227,8 +230,7 @@ describeDatabase("pathless private documents", () => {
         change_kind: "archived",
         title: "Pathless lifecycle updated",
       });
-    expect(changes.changes.find(({ document_id }) => document_id === created.document_id))
-      .not.toHaveProperty("path");
+    expect(archivedChange).not.toHaveProperty("path");
     expect(await knowledge.oldestRetainedRevisionAfter(created.document_id, 1, 4))
       .toMatchObject({
         document_id: created.document_id,
