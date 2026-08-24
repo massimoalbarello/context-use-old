@@ -143,8 +143,18 @@ jobs:
             bun "${released_worktree}/packages/database/src/migrate.ts"
           TEST_RELEASED_V084_DIRECTORY_UPGRADE_DATABASE_URL="${released_database_url}" \
             bun test packages/database/test/released-v084-directory-upgrade.integration.test.ts
-          MIGRATOR_DATABASE_URL="${released_database_url}" \
-            bun packages/database/src/migrate.ts
+          migration_output="$(
+            MIGRATOR_DATABASE_URL="${released_database_url}" \
+              bun packages/database/src/migrate.ts 2>&1
+          )" && {
+            echo 'partial v0.1.84 reconstruction unexpectedly crossed the retained-state migration'
+            exit 1
+          }
+          if [[ "${migration_output}" != *'retained hypermedia bootstrap operational state is partial'* ]]; then
+            printf '%s\n' "${migration_output}"
+            echo 'partial v0.1.84 reconstruction did not fail with the retained-state contract'
+            exit 1
+          fi
           psql "${released_database_url}" --set ON_ERROR_STOP=1 <<'SQL'
           DO $$
           BEGIN
