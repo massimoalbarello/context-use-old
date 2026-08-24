@@ -41,7 +41,7 @@ const catalogItem: PrivateDocumentCatalogItem = {
   public_id: "44444444-4444-4444-8444-444444444444",
   current_link_contract: "generic_document_v1",
   links_indexed_at: "2026-08-23T10:00:00.000Z",
-  pathless_search_ready: true,
+  search_ready: true,
   created_at: "2026-08-22T10:00:00.000Z",
   updated_at: "2026-08-23T10:00:00.000Z",
 };

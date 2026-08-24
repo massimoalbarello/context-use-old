@@ -43,7 +43,7 @@ export type PrivateDocumentCatalogItem = {
   public_id: string | null;
   current_link_contract: "generic_document_v1" | null;
   links_indexed_at: string | null;
-  pathless_search_ready: boolean;
+  search_ready: boolean;
   created_at: string;
   updated_at: string;
 };

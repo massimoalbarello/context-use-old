@@ -16,7 +16,7 @@ import { MemoryMarkdownStore } from "./memory-markdown-store.ts";
 const databaseUrl = await disposableDatabaseUrl();
 const describeDatabase = databaseUrl ? describe : describe.skip;
 
-describeDatabase("pathless private documents", () => {
+describeDatabase("canonical private documents", () => {
   const pool = new Pool({ connectionString: databaseUrl, max: 8 });
   const bodies = new MemoryMarkdownStore();
   const knowledge = new KnowledgeDocumentRepository(pool, bodies);
@@ -24,7 +24,7 @@ describeDatabase("pathless private documents", () => {
   const catalog = new PrivateDocumentCatalogRepository(pool);
   const records = new SourceRecordRepository(pool, bodies);
   const createdDocumentIds = new Set<string>();
-  const actor = { kind: "dashboard" as const, subject: "pathless-integration" };
+  const actor = { kind: "dashboard" as const, subject: "canonical-integration" };
 
   afterAll(async () => {
     const client = await pool.connect();
@@ -71,7 +71,7 @@ describeDatabase("pathless private documents", () => {
   test("creates, revises and archives without exposing compatibility paths or storage keys", async () => {
     const changesBefore = (await knowledge.changesSince()).next_cursor;
     const asset = await assets.create({
-      filename: "pathless-diagram.png",
+      filename: "canonical-diagram.png",
       content_type: "image/png",
       size_bytes: 1234,
       sha256: "a".repeat(64),
@@ -107,10 +107,10 @@ describeDatabase("pathless private documents", () => {
       `[Missing](context-use://document/${dangling})`,
     ].join("\n\n");
     const created = await knowledge.create({
-      title: "Pathless lifecycle",
-      summary: "A document used to verify path-independent mutation.",
+      title: "Canonical lifecycle",
+      summary: "A document used to verify identity-based mutation.",
       body_markdown: createdBody,
-      commit_message: "Create pathless lifecycle document",
+      commit_message: "Create canonical lifecycle document",
     }, actor);
     createdDocumentIds.add(created.document_id);
     expect(created).not.toHaveProperty("path");
@@ -119,7 +119,7 @@ describeDatabase("pathless private documents", () => {
     expect(created).toMatchObject({
       revision_number: 1,
       current_link_contract: "generic_document_v1",
-      pathless_search_ready: true,
+      search_ready: true,
     });
 
     const receipt = await pool.query<{ target_document_ids: string[] }>(
@@ -164,9 +164,9 @@ describeDatabase("pathless private documents", () => {
     expect(bodies.bodies.size).toBe(objectCount);
 
     const updated = await knowledge.update(created.document_id, {
-      title: "Pathless lifecycle updated",
+      title: "Canonical lifecycle updated",
       summary: "The active asset retention edge has been removed.",
-      body_markdown: "Searchable current body term pathlesscurrentneedle",
+      body_markdown: "Searchable current body term canonicalcurrentneedle",
       commit_message: "Remove asset reference",
       expected_revision_number: 1,
     }, actor);
@@ -180,7 +180,7 @@ describeDatabase("pathless private documents", () => {
     });
 
     const tombstoneLinked = await knowledge.update(created.document_id, {
-      title: "Pathless lifecycle updated",
+      title: "Canonical lifecycle updated",
       summary: "Deleted asset identity remains linkable without retaining its bytes.",
       body_markdown: `[Deleted asset](context-use://document/${asset.document.document_id})`,
       commit_message: "Link asset tombstone",
@@ -200,12 +200,12 @@ describeDatabase("pathless private documents", () => {
     expect(await knowledge.revision(created.document_id, 2)).toMatchObject({
       document_id: created.document_id,
       revision_number: 2,
-      title: "Pathless lifecycle updated",
-      body_markdown: "Searchable current body term pathlesscurrentneedle",
+      title: "Canonical lifecycle updated",
+      body_markdown: "Searchable current body term canonicalcurrentneedle",
     });
     expect(await knowledge.revision(created.document_id, 99)).toBeNull();
     const archived = await knowledge.archive(created.document_id, {
-      commit_message: "Archive pathless lifecycle document",
+      commit_message: "Archive canonical lifecycle document",
       expected_revision_number: 3,
     }, actor);
     expect(archived).toMatchObject({ revision_number: 4 });
@@ -222,14 +222,14 @@ describeDatabase("pathless private documents", () => {
         revision_number: 4,
         previous_revision_number: null,
         change_kind: "archived",
-        title: "Pathless lifecycle updated",
+        title: "Canonical lifecycle updated",
       });
     expect(archivedChange).not.toHaveProperty("path");
     expect(await knowledge.oldestRetainedRevisionAfter(created.document_id, 1, 4))
       .toMatchObject({
         document_id: created.document_id,
         revision_number: 2,
-        body_markdown: "Searchable current body term pathlesscurrentneedle",
+        body_markdown: "Searchable current body term canonicalcurrentneedle",
       });
   });
 
@@ -262,7 +262,7 @@ describeDatabase("pathless private documents", () => {
       body_markdown: [
         `[Target](context-use://document/${target.document_id})`,
         `[Dangling](context-use://document/${dangling})`,
-        "running pathlessbodyneedle",
+        "running canonicalbodyneedle",
       ].join("\n\n"),
       commit_message: "Create neighborhood source",
     }, actor);
@@ -285,7 +285,7 @@ describeDatabase("pathless private documents", () => {
     });
     createdDocumentIds.add(asset.document.document_id);
     const remote = await records.write({
-      integration: "pathless-test",
+      integration: "canonical-test",
       connectionInstanceId: 987654,
       connectionId: `connection-${randomUUID()}`,
       model: "note",
@@ -323,10 +323,10 @@ describeDatabase("pathless private documents", () => {
     expect((await catalog.search("résumé", {
       document_kind: "knowledge",
     })).documents.map(({ document_id }) => document_id)).toContain(target.document_id);
-    expect((await catalog.search("pathlessbodyneedle", {
+    expect((await catalog.search("canonicalbodyneedle", {
       document_kind: "knowledge",
     })).documents.map(({ document_id }) => document_id)).toContain(source.document_id);
-    expect((await catalog.search("metadataalpha pathlessbodyneedle", {
+    expect((await catalog.search("metadataalpha canonicalbodyneedle", {
       document_kind: "knowledge",
     })).documents.map(({ document_id }) => document_id)).toContain(source.document_id);
     expect((await catalog.search("remotefulltextneedle", {
@@ -337,7 +337,7 @@ describeDatabase("pathless private documents", () => {
     })).documents.map(({ document_id }) => document_id)).toContain(asset.document.document_id);
     expect((await catalog.list({
       authority: "source",
-      integration: "pathless-test",
+      integration: "canonical-test",
     })).documents.map(({ document_id }) => document_id)).toContain(remote.document_id);
     expect((await catalog.list({
       authority: "source",
@@ -453,14 +453,14 @@ describeDatabase("pathless private documents", () => {
     expect(Buffer.byteLength(largeBody)).toBeGreaterThan(3_500_000);
     expect(Buffer.byteLength(largeBody)).toBeLessThan(4_000_000);
     const large = await knowledge.create({
-      title: "Chunked pathless search",
+      title: "Chunked canonical search",
       summary: "A near-limit body whose full-text index is revision-bound and bounded.",
       body_markdown: largeBody,
       commit_message: "Create chunked-search fixture",
     }, actor);
     createdDocumentIds.add(large.document_id);
     expect((await pool.query(
-      "SELECT 1 FROM pathless_knowledge_search_chunks WHERE document_id=$1",
+      "SELECT 1 FROM knowledge_search_chunks WHERE document_id=$1",
       [large.document_id],
     )).rowCount).toBeGreaterThan(50);
     for (const query of [token(6_827), token(tokenCount - 1)]) {

@@ -172,10 +172,10 @@ describe("MCP knowledge tools", () => {
       public_id: null,
       revision_number: 1,
       title: "Stable document",
-      summary: "A path-independent knowledge document.",
+      summary: "An identity-based knowledge document.",
       archived_at: null,
       current_link_contract: "generic_document_v1",
-      pathless_search_ready: true,
+      search_ready: true,
       created_at: "2026-08-23T12:00:00.000Z",
       updated_at: "2026-08-23T12:00:00.000Z",
       body_markdown: "Stable body",
@@ -301,7 +301,7 @@ describe("MCP knowledge tools", () => {
       document_id: documentId,
       reference: `context-use://document/${documentId}`,
       title: "Stable document",
-      summary: "A path-independent knowledge document.",
+      summary: "An identity-based knowledge document.",
     });
     expect(searchResult.documents[0]).not.toHaveProperty("current_path");
 

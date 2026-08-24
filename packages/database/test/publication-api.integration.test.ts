@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { Client } from "pg";
 import { disposableDatabaseUrl } from "../src/disposable-database.ts";
-import { cleanupPathlessPublicationFixtures } from "./pathless-publication-fixture-cleanup.ts";
+import { cleanupPublicationFixtures } from "./publication-fixture-cleanup.ts";
 
 const databaseUrl = await disposableDatabaseUrl();
 const describeDatabase = databaseUrl ? describe : describe.skip;
@@ -49,7 +49,7 @@ async function seedPage(
          id,page_id,version_number,title,summary,commit_message,
          actor_kind,actor_subject,created_at
        ) VALUES (
-         $1,$2,1,'Pathless API','A checked publication fixture.',
+         $1,$2,1,'Canonical API','A checked publication fixture.',
          'Create publication fixture','dashboard','context-use-owner',
          '2026-08-23 12:34:56.123456+00'
        )`,
@@ -157,18 +157,18 @@ async function seedActiveAssetPublication(
   await client.query(
     `INSERT INTO public_artifact_id_reservations(
        artifact_id,body_object_key,allocation_kind,allocation_id
-     ) VALUES ($1,$2,'pathless_adoption',$3)`,
+     ) VALUES ($1,$2,'retained_publication',$3)`,
     [artifactId, objectKey, adoptionId],
   );
   await client.query(
     `INSERT INTO public_asset_artifacts(
        artifact_id,public_id,source_document_id,body_object_key,
        body_size_bytes,body_content_hash,public_filename,public_content_type,
-       origin,source_adoption_id,source_adoption_kind,representation_token,
+       origin,retained_source_id,retained_source_kind,representation_token,
        reservation_allocation_kind,reservation_allocation_id
      ) VALUES (
-       $1,$2,$3,$4,11,$5,'fixture.png','image/png','legacy_adoption',
-       $6,'legacy_asset',$7,'pathless_adoption',$6
+       $1,$2,$3,$4,11,$5,'fixture.png','image/png','retained',
+       $6,'asset',$7,'retained_publication',$6
      )`,
     [artifactId, publicId, assetId, objectKey, hash("b"), adoptionId, representationToken],
   );
@@ -182,10 +182,10 @@ async function seedActiveAssetPublication(
 async function ensureFixtureOwner(client: Client): Promise<void> {
   const insertedOwner = await client.query<{ id: string }>(
     `INSERT INTO "user"(id,name,email,"emailVerified")
-     VALUES ('context-use-owner','Pathless owner',$1,true)
+     VALUES ('context-use-owner','Canonical owner',$1,true)
      ON CONFLICT (id) DO NOTHING
      RETURNING id`,
-    [`pathless-${randomUUID()}@example.test`],
+    [`canonical-${randomUUID()}@example.test`],
   );
   for (const { id } of insertedOwner.rows) fixtureUserIds.add(id);
 }
@@ -213,18 +213,18 @@ async function stageAssetPublication(
 ): Promise<{ intentId: string; publicId: string; artifactId: string }> {
   const intentId = randomUUID();
   const planned = (await client.query(
-    `SELECT * FROM begin_pathless_publication_intent(
+    `SELECT * FROM begin_publication_intent(
        $1,'publish','asset',$2,NULL,'context-use-owner',$3
      )`,
     [intentId, assetId, sessionId],
   )).rows[0]!;
   const claim = (await client.query(
-    "SELECT * FROM claim_pathless_publication_artifact($1,$2)",
+    "SELECT * FROM claim_publication_artifact($1,$2)",
     [intentId, randomUUID()],
   )).rows[0]!;
   const target = claim.authorization;
   await client.query(
-    `SELECT finalize_pathless_publication_artifact_claim(
+    `SELECT finalize_publication_artifact_claim(
        $1,$2,'asset',$3,$4,NULL,NULL,NULL,$5,$6,$7,$8,$9,
        '{}'::uuid[],'{}'::uuid[],NULL
      )`,
@@ -254,18 +254,18 @@ async function stagePagePublication(
 ): Promise<{ intentId: string; publicId: string; artifactId: string }> {
   const intentId = randomUUID();
   const planned = (await client.query(
-    `SELECT * FROM begin_pathless_publication_intent(
+    `SELECT * FROM begin_publication_intent(
        $1,'publish','page',$2,$3,'context-use-owner',$4
      )`,
     [intentId, page.pageId, page.revisionId, sessionId],
   )).rows[0]!;
   const claim = (await client.query(
-    "SELECT * FROM claim_pathless_publication_artifact($1,$2)",
+    "SELECT * FROM claim_publication_artifact($1,$2)",
     [intentId, randomUUID()],
   )).rows[0]!;
   const target = claim.authorization;
   await client.query(
-    `SELECT finalize_pathless_publication_artifact_claim(
+    `SELECT finalize_publication_artifact_claim(
        $1,$2,'page',29,$3,$4,$5,$6,NULL,NULL,NULL,NULL,NULL,$7,$8,$9
      )`,
     [
@@ -310,7 +310,7 @@ async function confirmPublicationAsRole(
   }
 }
 
-describeDatabase("checked pathless publication planning and staging", () => {
+describeDatabase("checked publication planning and staging", () => {
   const client = new Client({ connectionString: databaseUrl });
 
   beforeAll(async () => {
@@ -319,7 +319,7 @@ describeDatabase("checked pathless publication planning and staging", () => {
 
   afterAll(async () => {
     try {
-      await cleanupPathlessPublicationFixtures(client, fixtureDocumentIds, {
+      await cleanupPublicationFixtures(client, fixtureDocumentIds, {
         extraIntentIds: fixtureExtraIntentIds,
         credentialIds: fixtureCredentialIds,
         userIds: fixtureUserIds,
@@ -332,9 +332,9 @@ describeDatabase("checked pathless publication planning and staging", () => {
   test("round-trips a microsecond page receipt and freezes a DB-derived token", async () => {
     const page = await seedPage(client);
     const intentId = randomUUID();
-    const sessionId = `pathless-api-${randomUUID()}`;
+    const sessionId = `canonical-api-${randomUUID()}`;
     const planned = (await client.query(
-      `SELECT * FROM begin_pathless_publication_intent(
+      `SELECT * FROM begin_publication_intent(
          $1,'publish','page',$2,$3,'context-use-owner',$4
        )`,
       [intentId, page.pageId, page.revisionId, sessionId],
@@ -342,7 +342,7 @@ describeDatabase("checked pathless publication planning and staging", () => {
     expect(planned.candidate_public_id).toMatch(/^[0-9a-f-]{36}$/);
 
     const claim = (await client.query(
-      "SELECT * FROM claim_pathless_publication_artifact($1,$2)",
+      "SELECT * FROM claim_publication_artifact($1,$2)",
       [intentId, randomUUID()],
     )).rows[0]!;
     const target = claim.authorization;
@@ -368,7 +368,7 @@ describeDatabase("checked pathless publication planning and staging", () => {
       target.projection_receipt_hash,
     ];
     await client.query(
-      `SELECT finalize_pathless_publication_artifact_claim(
+      `SELECT finalize_publication_artifact_claim(
          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16
        )`,
       finalizeArguments,
@@ -384,14 +384,14 @@ describeDatabase("checked pathless publication planning and staging", () => {
              AND reservation.artifact_id=staging.artifact_id
              AND reservation.resource_kind=staging.target_kind
          ) AS reserved
-       FROM pathless_publication_artifact_staging staging
+       FROM publication_artifact_staging staging
        WHERE staging.intent_id=$1`,
       [intentId],
     )).rows[0]!;
     expect(staged.representation_token).toMatch(/^[a-f0-9]{64}$/);
     expect(staged.reserved).toBe(true);
     expect(await errorCode(client.query(
-      "SELECT * FROM get_pathless_publication_write_target($1)",
+      "SELECT * FROM get_publication_write_target($1)",
       [intentId],
     ))).toBe("55000");
 
@@ -401,7 +401,7 @@ describeDatabase("checked pathless publication planning and staging", () => {
     );
     await client.query("UPDATE knowledge_pages SET archived_at=now() WHERE id=$1", [page.pageId]);
     await client.query(
-      `SELECT finalize_pathless_publication_artifact_claim(
+      `SELECT finalize_publication_artifact_claim(
          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16
        )`,
       finalizeArguments,
@@ -409,7 +409,7 @@ describeDatabase("checked pathless publication planning and staging", () => {
     const mismatched = [...finalizeArguments];
     mismatched[3] = 30;
     expect(await errorCode(client.query(
-      `SELECT finalize_pathless_publication_artifact_claim(
+      `SELECT finalize_publication_artifact_claim(
          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16
        )`,
       mismatched,
@@ -424,7 +424,7 @@ describeDatabase("checked pathless publication planning and staging", () => {
     const second = new Client({ connectionString: databaseUrl });
     await Promise.all([first.connect(), second.connect()]);
     try {
-      const query = `SELECT * FROM begin_pathless_publication_intent(
+      const query = `SELECT * FROM begin_publication_intent(
         $1,'publish','asset',$2,NULL,'context-use-owner',$3
       )`;
       const [left, right] = await Promise.all([
@@ -434,7 +434,7 @@ describeDatabase("checked pathless publication planning and staging", () => {
       expect(left.rows[0]?.candidate_public_id).toBe(right.rows[0]?.candidate_public_id);
       expect(Number((await client.query(
         `SELECT count(*) AS count FROM public_artifact_id_reservations
-         WHERE allocation_kind='pathless_intent' AND allocation_id=$1`,
+         WHERE allocation_kind='publication_intent' AND allocation_id=$1`,
         [intentId],
       )).rows[0]?.count)).toBe(1);
     } finally {
@@ -451,13 +451,13 @@ describeDatabase("checked pathless publication planning and staging", () => {
     const page = await seedPage(client, [asset.assetId]);
     const intentId = randomUUID();
     const planned = (await client.query(
-      `SELECT * FROM begin_pathless_publication_intent(
+      `SELECT * FROM begin_publication_intent(
          $1,'publish','page',$2,$3,'context-use-owner',$4
        )`,
       [intentId, page.pageId, page.revisionId, `projection-${randomUUID()}`],
     )).rows[0]!;
     const target = (await client.query(
-      "SELECT * FROM claim_pathless_publication_artifact($1,$2)",
+      "SELECT * FROM claim_publication_artifact($1,$2)",
       [intentId, randomUUID()],
     )).rows[0]!.authorization;
     expect(target.target_projection).toEqual([{
@@ -475,7 +475,7 @@ describeDatabase("checked pathless publication planning and staging", () => {
     const asset = await seedAsset(client, { durationSeconds: duration });
     const intentId = randomUUID();
     await client.query(
-      `SELECT * FROM begin_pathless_publication_intent(
+      `SELECT * FROM begin_publication_intent(
          $1,'publish','asset',$2,NULL,'context-use-owner',$3
        )`,
       [intentId, asset.assetId, `duration-${randomUUID()}`],
@@ -485,25 +485,25 @@ describeDatabase("checked pathless publication planning and staging", () => {
     try {
       await storage.query("SET ROLE context_use_storage");
       const claim = (await storage.query(
-        "SELECT * FROM claim_pathless_publication_artifact($1,$2)",
+        "SELECT * FROM claim_publication_artifact($1,$2)",
         [intentId, randomUUID()],
       )).rows[0]!;
       const target = claim.authorization;
       expect(target.public_duration_seconds).toBe(duration);
       expect(await errorCode(storage.query(
-        "SELECT id FROM pathless_publication_intents WHERE id=$1",
+        "SELECT id FROM publication_intents WHERE id=$1",
         [intentId],
       ))).toBe("42501");
       expect(await errorCode(storage.query(
-        "SELECT intent_id FROM pathless_publication_artifact_staging WHERE intent_id=$1",
+        "SELECT intent_id FROM publication_artifact_staging WHERE intent_id=$1",
         [intentId],
       ))).toBe("42501");
       expect(await errorCode(storage.query(
-        "SELECT pathless_publication_source_fingerprint('asset',$1,NULL)",
+        "SELECT publication_source_fingerprint('asset',$1,NULL)",
         [asset.assetId],
       ))).toBe("42501");
       expect(await errorCode(storage.query(
-        "SELECT pathless_publication_projection_plan($1,NULL,$2)",
+        "SELECT publication_projection_plan($1,NULL,$2)",
         [asset.assetId, target.candidate_public_id],
       ))).toBe("42501");
       expect((await storage.query(
@@ -511,7 +511,7 @@ describeDatabase("checked pathless publication planning and staging", () => {
         [asset.assetId],
       )).rows[0]?.s3_object_key).toBe(`objects/${asset.assetId}`);
       await storage.query(
-        `SELECT finalize_pathless_publication_artifact_claim(
+        `SELECT finalize_publication_artifact_claim(
            $1,$2,'asset',$3,$4,NULL,NULL,NULL,$5,$6,NULL,NULL,$7,
            '{}'::uuid[],'{}'::uuid[],NULL
          )`,
@@ -530,13 +530,13 @@ describeDatabase("checked pathless publication planning and staging", () => {
       await storage.end().catch(() => undefined);
     }
     expect((await client.query(
-      "SELECT 1 FROM pathless_publication_artifact_staging WHERE intent_id=$1",
+      "SELECT 1 FROM publication_artifact_staging WHERE intent_id=$1",
       [intentId],
     )).rowCount).toBe(1);
     const owner = (await client.query(
       `SELECT rolsuper,rolinherit,rolcreaterole,rolcreatedb,rolcanlogin,
          rolreplication,rolbypassrls
-       FROM pg_roles WHERE rolname='context_use_pathless_storage_owner'`,
+       FROM pg_roles WHERE rolname='context_use_storage_owner'`,
     )).rows[0]!;
     expect(owner).toEqual({
       rolsuper: false,
@@ -551,8 +551,8 @@ describeDatabase("checked pathless publication planning and staging", () => {
       `SELECT count(*) AS count FROM pg_auth_members membership
        JOIN pg_roles member_role ON member_role.oid=membership.member
        JOIN pg_roles granted_role ON granted_role.oid=membership.roleid
-       WHERE member_role.rolname='context_use_pathless_storage_owner'
-          OR granted_role.rolname='context_use_pathless_storage_owner'`,
+       WHERE member_role.rolname='context_use_storage_owner'
+          OR granted_role.rolname='context_use_storage_owner'`,
     )).rows[0]?.count)).toBe(0);
     expect((await client.query(
       `SELECT has_column_privilege(
@@ -562,7 +562,7 @@ describeDatabase("checked pathless publication planning and staging", () => {
 
     const oversized = await seedAsset(client, { sizeBytes: "5000000001" });
     expect(await errorCode(client.query(
-      `SELECT * FROM begin_pathless_publication_intent(
+      `SELECT * FROM begin_publication_intent(
          $1,'publish','asset',$2,NULL,'context-use-owner',$3
        )`,
       [randomUUID(), oversized.assetId, `oversized-${randomUUID()}`],
@@ -573,7 +573,7 @@ describeDatabase("checked pathless publication planning and staging", () => {
     const unstaged = await seedAsset(client);
     const unstagedIntent = randomUUID();
     await client.query(
-      `SELECT * FROM begin_pathless_publication_intent(
+      `SELECT * FROM begin_publication_intent(
          $1,'publish','asset',$2,NULL,'context-use-owner',$3
        )`,
       [unstagedIntent, unstaged.assetId, `unstaged-${randomUUID()}`],
@@ -595,7 +595,7 @@ describeDatabase("checked pathless publication planning and staging", () => {
       [detachedPublicId],
     );
     expect(await errorCode(client.query(
-      `SELECT * FROM begin_pathless_publication_intent(
+      `SELECT * FROM begin_publication_intent(
          $1,'publish','asset',$2,NULL,'context-use-owner',$3
        )`,
       [randomUUID(), detached.assetId, `detached-${randomUUID()}`],
@@ -603,7 +603,7 @@ describeDatabase("checked pathless publication planning and staging", () => {
 
     const unsafeFilename = await seedAsset(client, { filename: "../private.png" });
     expect(await errorCode(client.query(
-      `SELECT * FROM begin_pathless_publication_intent(
+      `SELECT * FROM begin_publication_intent(
          $1,'publish','asset',$2,NULL,'context-use-owner',$3
        )`,
       [randomUUID(), unsafeFilename.assetId, `unsafe-${randomUUID()}`],
@@ -613,7 +613,7 @@ describeDatabase("checked pathless publication planning and staging", () => {
       contentType: `application/x-${leakedId}`,
     });
     expect(await errorCode(client.query(
-      `SELECT * FROM begin_pathless_publication_intent(
+      `SELECT * FROM begin_publication_intent(
          $1,'publish','asset',$2,NULL,'context-use-owner',$3
        )`,
       [randomUUID(), unsafeContentType.assetId, `unsafe-${randomUUID()}`],
@@ -644,7 +644,7 @@ describeDatabase("checked pathless publication planning and staging", () => {
     await client.query("SET session_replication_role=replica");
     try {
       await client.query(
-        `UPDATE pathless_publication_intents
+        `UPDATE publication_intents
          SET created_at=created_at-interval '10 minutes',
            expires_at=expires_at-interval '10 minutes'
          WHERE id=$1`,
@@ -697,7 +697,7 @@ describeDatabase("checked pathless publication planning and staging", () => {
     const unpublishIntentId = randomUUID();
     const unpublishSession = `unpublish-${randomUUID()}`;
     await client.query(
-      `SELECT * FROM begin_pathless_publication_intent(
+      `SELECT * FROM begin_publication_intent(
          $1,'unpublish','asset',$2,NULL,'context-use-owner',$3
        )`,
       [unpublishIntentId, asset.assetId, unpublishSession],
@@ -768,7 +768,7 @@ describeDatabase("checked pathless publication planning and staging", () => {
     const unpublishIntentId = randomUUID();
     const unpublishSession = `page-unpublish-${randomUUID()}`;
     await client.query(
-      `SELECT * FROM begin_pathless_publication_intent(
+      `SELECT * FROM begin_publication_intent(
          $1,'unpublish','page',$2,NULL,'context-use-owner',$3
        )`,
       [unpublishIntentId, page.pageId, unpublishSession],
@@ -824,12 +824,12 @@ describeDatabase("checked pathless publication planning and staging", () => {
       [staged.intentId],
     )).rowCount).toBe(1);
     expect((await client.query(
-      "SELECT confirmed_at FROM pathless_publication_intents WHERE id=$1",
+      "SELECT confirmed_at FROM publication_intents WHERE id=$1",
       [staged.intentId],
     )).rows[0]?.confirmed_at).toBeNull();
   });
 
-  test("orders page deletion confirmation before a competing pathless target lock", async () => {
+  test("orders page deletion confirmation before a competing canonical target lock", async () => {
     const page = await seedPage(client);
     await client.query("UPDATE knowledge_pages SET archived_at=now() WHERE id=$1", [page.pageId]);
     const deletionIntentId = randomUUID();
@@ -873,7 +873,7 @@ describeDatabase("checked pathless publication planning and staging", () => {
       );
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(await errorCode(locker.query(
-        `SELECT * FROM begin_pathless_publication_intent(
+        `SELECT * FROM begin_publication_intent(
            $1,'publish','page',$2,$3,'context-use-owner',$4
          )`,
         [randomUUID(), page.pageId, page.revisionId, `racer-${randomUUID()}`],

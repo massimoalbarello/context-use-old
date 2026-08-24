@@ -40,7 +40,7 @@ export function NewKnowledgeDocument({
     </header>
     <section className="edit-grid">
       <div className="edit-top">
-        <div className="editor-fields pathless">
+        <div className="editor-fields single-column">
           <label>Title<input autoFocus maxLength={240} value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label>
           <label className="summary-field">Summary<input maxLength={320} required value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} /></label>
         </div>

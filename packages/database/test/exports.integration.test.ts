@@ -69,8 +69,8 @@ describeDatabase("passkey-bound current knowledge exports", () => {
            ) OR target_document_id=ANY($1::uuid[])`,
           [fixtureDocumentIds],
         );
-        await pool.query("DELETE FROM pathless_knowledge_search_chunks WHERE document_id=ANY($1::uuid[])", [fixtureDocumentIds]);
-        await pool.query("DELETE FROM pathless_knowledge_search WHERE document_id=ANY($1::uuid[])", [fixtureDocumentIds]);
+        await pool.query("DELETE FROM knowledge_search_chunks WHERE document_id=ANY($1::uuid[])", [fixtureDocumentIds]);
+        await pool.query("DELETE FROM knowledge_search WHERE document_id=ANY($1::uuid[])", [fixtureDocumentIds]);
         await pool.query("DELETE FROM knowledge_revision_contracts WHERE document_id=ANY($1::uuid[])", [fixtureDocumentIds]);
         await pool.query("DELETE FROM knowledge_page_changes WHERE page_id=ANY($1::uuid[])", [fixtureDocumentIds]);
         await pool.query("DELETE FROM knowledge_page_versions WHERE page_id=ANY($1::uuid[])", [fixtureDocumentIds]);

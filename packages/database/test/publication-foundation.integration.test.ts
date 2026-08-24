@@ -21,7 +21,7 @@ async function sqlState(client: Client, query: () => Promise<unknown>): Promise<
   }
 }
 
-describeDatabase("pathless publication global namespaces", () => {
+describeDatabase("publication global namespaces", () => {
   const client = new Client({ connectionString: databaseUrl });
 
   beforeAll(async () => {
@@ -74,7 +74,7 @@ describeDatabase("pathless publication global namespaces", () => {
     try {
       const intentId = randomUUID();
       await client.query(
-        `INSERT INTO pathless_publication_intents(
+        `INSERT INTO publication_intents(
            id,action,target_kind,target_document_id,owner_user_id,session_id,
            expires_at,expected_visibility_generation,
            expected_visibility_state_hash,expected_target_generation
@@ -85,10 +85,10 @@ describeDatabase("pathless publication global namespaces", () => {
         [intentId, randomUUID(), hash("d")],
       );
       await client.query("SET LOCAL session_replication_role=replica");
-      await client.query("DELETE FROM pathless_publication_intents WHERE id=$1", [intentId]);
+      await client.query("DELETE FROM publication_intents WHERE id=$1", [intentId]);
       await client.query("SET LOCAL session_replication_role=origin");
       expect(await sqlState(client, () => client.query(
-        `INSERT INTO pathless_publication_intents(
+        `INSERT INTO publication_intents(
            id,action,target_kind,target_document_id,owner_user_id,session_id,
            expires_at,expected_visibility_generation,
            expected_visibility_state_hash,expected_target_generation
@@ -270,7 +270,7 @@ describeDatabase("pathless publication global namespaces", () => {
       expect(await sqlState(client, () => client.query(
         `INSERT INTO public_artifact_id_reservations(
            artifact_id,body_object_key,allocation_kind,allocation_id
-         ) VALUES ($1,$2,'pathless_adoption',$3)`,
+         ) VALUES ($1,$2,'retained_publication',$3)`,
         [assetId, `artifacts/public/${assetId}`, randomUUID()],
       ))).toBe("23505");
       expect(await sqlState(client, () => client.query(

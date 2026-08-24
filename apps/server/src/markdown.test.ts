@@ -178,7 +178,7 @@ describe("safe Markdown rendering", () => {
     expect(html).not.toContain(missing);
   });
 
-  test("does not resolve filesystem-era links or paths", async () => {
+  test("does not resolve unsupported private links", async () => {
     const id = "11111111-1111-4111-8111-111111111111";
     let lookups = 0;
     const html = await renderMarkdown([

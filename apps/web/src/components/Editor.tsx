@@ -292,7 +292,7 @@ export function Editor({
             <span>Saving edits creates a new private version. The published page will not update automatically.</span>
           </div>
         </div>}
-        <div className="editor-fields pathless"><label>Title<input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label><label className="summary-field">Summary<input maxLength={320} required value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} /></label></div>
+        <div className="editor-fields single-column"><label>Title<input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label><label className="summary-field">Summary<input maxLength={320} required value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} /></label></div>
       </div>
       <textarea className="markdown-editor" value={draft.body_markdown} onChange={(event) => setDraft({ ...draft, body_markdown: event.target.value })} spellCheck />
       <footer className="save-bar"><input placeholder="Describe this change (required)" value={commit} onChange={(event) => setCommit(event.target.value)} /><div className="button-row"><button onClick={cancelEdit}>Cancel</button><button className="primary" disabled={commit.trim().length < 3 || !draft.summary.trim()} onClick={save}>Save version</button></div></footer>

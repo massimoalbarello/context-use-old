@@ -1,11 +1,11 @@
 import {
   mapConcurrently,
-  PathlessPublicRepository,
+  PublicRepository,
   createPool,
-  type PathlessPublicActiveAssetRoute,
-  type PathlessPublicActivePageRoute,
+  type PublicActiveAssetRoute,
+  type PublicActivePageRoute,
 } from "@context-use/database";
-import { pathlessPublicRouteSchema } from "@context-use/shared";
+import { publicRouteSchema } from "@context-use/shared";
 import { Elysia } from "elysia";
 import { config } from "./config.ts";
 import { json, routeError } from "./http.ts";
@@ -28,7 +28,7 @@ import { BrokeredStorage } from "./storage-client.ts";
 import { assetContentResponse } from "./asset-content.ts";
 
 const pool = createPool(config.PUBLIC_DATABASE_URL, { application_name: "context-use-public-web" });
-const pathlessPublicData = new PathlessPublicRepository(pool);
+const publicData = new PublicRepository(pool);
 const storage = new BrokeredStorage({
   socketPath: config.STORAGE_SOCKET_PATH,
   token: config.STORAGE_PUBLIC_TOKEN,
@@ -46,9 +46,9 @@ const xmlHeaders = { ...securityHeaders, "content-type": "application/xml; chars
 const unavailableResolvers = {
   document: async () => ({ available: false as const }),
   publicAssetPath: async (path: string) => {
-    const parsed = pathlessPublicRouteSchema.safeParse(`/a/${path}`);
+    const parsed = publicRouteSchema.safeParse(`/a/${path}`);
     if (!parsed.success) return { available: false as const };
-    const route = await pathlessPublicData.resolve(parsed.data);
+    const route = await publicData.resolve(parsed.data);
     return route.state === "active" && route.route_kind === "asset"
       ? {
           available: true as const,
@@ -59,8 +59,8 @@ const unavailableResolvers = {
   },
 };
 
-function pathlessPublicPage(
-  page: Awaited<ReturnType<PathlessPublicRepository["pages"]>>[number],
+function publicPage(
+  page: Awaited<ReturnType<PublicRepository["pages"]>>[number],
   bodyMarkdown = "",
 ): PublicPageContent {
   return {
@@ -72,21 +72,21 @@ function pathlessPublicPage(
   };
 }
 
-async function pathlessPublishedPages(full: boolean): Promise<PublicPageContent[]> {
-  const pages = await pathlessPublicData.pages();
-  if (!full) return pages.map((page) => pathlessPublicPage(page));
-  return mapConcurrently(pages, 8, async (page) => pathlessPublicPage(
+async function canonicalPublishedPages(full: boolean): Promise<PublicPageContent[]> {
+  const pages = await publicData.pages();
+  if (!full) return pages.map((page) => publicPage(page));
+  return mapConcurrently(pages, 8, async (page) => publicPage(
     page,
     await storage.readPublishedRepresentationText(page.representation_token),
   ));
 }
 
-async function pathlessPublicEntrypoint(): Promise<{
+async function publicEntrypoint(): Promise<{
   state: "unassigned" | "inactive" | "active";
   publicPath: string | null;
   introduction: PublicPageContent | null;
 }> {
-  const route = await pathlessPublicData.entrypoint();
+  const route = await publicData.entrypoint();
   if (route.state !== "active" || route.route_kind === "asset") {
     return { state: route.state, publicPath: null, introduction: null };
   }
@@ -119,10 +119,10 @@ function publicAssetRequestAllowed(request: Request): boolean {
     && !request.headers.has("authorization");
 }
 
-async function pathlessPageResponse(
+async function pageResponse(
   publicId: string,
   markdown: boolean,
-  route: PathlessPublicActivePageRoute,
+  route: PublicActivePageRoute,
 ): Promise<Response> {
   let bodyMarkdown: string;
   try {
@@ -164,10 +164,10 @@ async function pathlessPageResponse(
   ), { headers: htmlHeaders });
 }
 
-async function pathlessAssetResponse(
+async function assetResponse(
   request: Request,
   publicId: string,
-  route: PathlessPublicActiveAssetRoute,
+  route: PublicActiveAssetRoute,
 ): Promise<Response> {
   if (!publicAssetRequestAllowed(request)) return notFound();
   let metadata: { sizeBytes: number; contentHash: string };
@@ -189,8 +189,8 @@ async function pathlessAssetResponse(
 }
 
 async function publicLlmsResponse(full: boolean): Promise<Response> {
-  const entrypoint = await pathlessPublicData.entrypoint();
-  const pages = await pathlessPublishedPages(full);
+  const entrypoint = await publicData.entrypoint();
+  const pages = await canonicalPublishedPages(full);
   const options = {
     siteOrigin: config.APP_ORIGIN,
     assetOrigin: config.ASSET_ORIGIN,
@@ -203,7 +203,7 @@ async function publicLlmsResponse(full: boolean): Promise<Response> {
 }
 
 async function publicSitemapResponse(): Promise<Response> {
-  const pages = await pathlessPublishedPages(false);
+  const pages = await canonicalPublishedPages(false);
   return new Response(renderSitemapXml(pages, config.APP_ORIGIN), { headers: xmlHeaders });
 }
 
@@ -214,11 +214,11 @@ export const publicApp = new Elysia({ strictPath: true })
   .get("/health", () => json({ status: "ok", service: "public-web" }))
   .get("/a/*", async ({ request, params }) => {
     if (!publicAssetRequestAllowed(request)) return notFound();
-    const parsed = pathlessPublicRouteSchema.safeParse(`/a/${params["*"]}`);
+    const parsed = publicRouteSchema.safeParse(`/a/${params["*"]}`);
     if (!parsed.success) return notFound();
-    const route = await pathlessPublicData.resolve(parsed.data);
+    const route = await publicData.resolve(parsed.data);
     if (route.state === "active" && route.route_kind === "asset") {
-      return pathlessAssetResponse(request, route.public_id, route);
+      return assetResponse(request, route.public_id, route);
     }
     return notFound();
   })
@@ -233,7 +233,7 @@ export const publicApp = new Elysia({ strictPath: true })
   .get("/p/*", async ({ params }) => {
     const rawPath = params["*"];
     if (rawPath === "") {
-      const entrypoint = await pathlessPublicData.entrypoint();
+      const entrypoint = await publicData.entrypoint();
       return entrypoint.state === "active" && entrypoint.route_kind !== "asset"
         ? new Response(null, {
             status: 302,
@@ -242,15 +242,15 @@ export const publicApp = new Elysia({ strictPath: true })
         : notFound();
     }
     const markdown = rawPath.endsWith(".md");
-    const parsed = pathlessPublicRouteSchema.safeParse(`/p/${rawPath}`);
+    const parsed = publicRouteSchema.safeParse(`/p/${rawPath}`);
     if (!parsed.success) return notFound();
-    const route = await pathlessPublicData.resolve(parsed.data);
+    const route = await publicData.resolve(parsed.data);
     return route.state === "active" && route.route_kind !== "asset"
-      ? pathlessPageResponse(route.public_id, markdown, route)
+      ? pageResponse(route.public_id, markdown, route)
       : notFound();
   })
   .get("/", async () => {
-    const entrypoint = await pathlessPublicEntrypoint();
+    const entrypoint = await publicEntrypoint();
     const profileLinks = entrypoint.introduction
       ? externalProfileLinks(entrypoint.introduction.body_markdown, config.APP_ORIGIN)
       : [];

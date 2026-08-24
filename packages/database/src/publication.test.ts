@@ -1,19 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import type { Pool } from "pg";
-import type { PathlessPublicationArtifactReceipt } from "@context-use/shared";
+import type { PublicationArtifactReceipt } from "@context-use/shared";
 import {
   ConfirmationRepository,
   type PublicationConfirmationIntent,
 } from "./confirmation.ts";
 import {
-  PathlessPublicEntrypointRepository,
-  PathlessPublicRepository,
-  PathlessPublicationRepository,
-  PathlessStoragePublicationRepository,
-  type PathlessPublicationIntent,
-  type PathlessPublicationWriteAuthorization,
-  type PathlessStorageRoute,
-} from "./pathless-publication.ts";
+  PublicEntrypointRepository,
+  PublicRepository,
+  PublicationRepository,
+  StoragePublicationRepository,
+  type PublicationIntent,
+  type PublicationWriteAuthorization,
+  type StorageRoute,
+} from "./publication.ts";
 
 const documentId = "00000000-0000-4000-8000-000000000010";
 const revisionId = "00000000-0000-4000-8000-000000000020";
@@ -50,7 +50,7 @@ function recordingPoolSequence(rowSets: unknown[][]) {
   return { calls, pool };
 }
 
-describe("pathless publication dashboard boundary", () => {
+describe("publication dashboard boundary", () => {
   test("begins an exact page intent while leaving candidate allocation inside the database", async () => {
     const expiresAt = new Date("2026-08-23T12:05:00.000Z");
     const { calls, pool } = recordingPool([{
@@ -63,7 +63,7 @@ describe("pathless publication dashboard boundary", () => {
       expires_at: expiresAt,
     }]);
 
-    const intent = await new PathlessPublicationRepository(pool).begin({
+    const intent = await new PublicationRepository(pool).begin({
       action: "publish",
       target_kind: "page",
       target_document_id: documentId,
@@ -72,7 +72,7 @@ describe("pathless publication dashboard boundary", () => {
 
     expect(intent).toMatchObject({ id: intentId, candidate_public_id: publicId });
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.sql).toContain("FROM begin_pathless_publication_intent($1,$2,$3,$4,$5,$6,$7)");
+    expect(calls[0]!.sql).toContain("FROM begin_publication_intent($1,$2,$3,$4,$5,$6,$7)");
     expect(calls[0]!.sql).not.toContain("candidate_artifact_id");
     expect(calls[0]!.sql).not.toContain("object_key");
     expect(calls[0]!.values?.slice(1)).toEqual([
@@ -96,7 +96,7 @@ describe("pathless publication dashboard boundary", () => {
       candidate_public_id: null,
       expires_at: new Date(),
     }]);
-    const publications = new PathlessPublicationRepository(pool);
+    const publications = new PublicationRepository(pool);
 
     await publications.begin({
       action: "unpublish",
@@ -110,13 +110,13 @@ describe("pathless publication dashboard boundary", () => {
 
     expect(calls[0]!.values?.[4]).toBeNull();
     expect(calls[1]).toEqual({
-      sql: "SELECT cancel_pathless_publication_intent($1,$2,$3)",
+      sql: "SELECT cancel_publication_intent($1,$2,$3)",
       values: [intentId, "context-use-owner", "session-2"],
     });
   });
 
   test("reuses an explicit caller-stable intent UUID after a lost response", async () => {
-    const row: PathlessPublicationIntent = {
+    const row: PublicationIntent = {
       id: intentId,
       action: "publish",
       target_kind: "asset",
@@ -126,7 +126,7 @@ describe("pathless publication dashboard boundary", () => {
       expires_at: new Date(),
     };
     const { calls, pool } = recordingPool([row]);
-    const publications = new PathlessPublicationRepository(pool);
+    const publications = new PublicationRepository(pool);
     const input = {
       action: "publish" as const,
       target_kind: "asset" as const,
@@ -148,19 +148,19 @@ describe("pathless publication dashboard boundary", () => {
       active: true,
     };
     const dashboard = recordingPool([status]);
-    const publications = new PathlessPublicationRepository(dashboard.pool);
+    const publications = new PublicationRepository(dashboard.pool);
 
     expect(await publications.status("page", documentId)).toEqual(status);
     expect(dashboard.calls.at(-1)).toEqual({
-      sql: expect.stringContaining("FROM get_pathless_dashboard_publication_status($1,$2)"),
+      sql: expect.stringContaining("FROM get_dashboard_publication_status($1,$2)"),
       values: ["page", documentId],
     });
   });
 });
 
-describe("pathless publication storage boundary", () => {
+describe("publication storage boundary", () => {
   test("claims an exact write target without exposing a representation token", async () => {
-    const target: PathlessPublicationWriteAuthorization = {
+    const target: PublicationWriteAuthorization = {
       intent_id: intentId,
       target_kind: "page",
       candidate_public_id: publicId,
@@ -197,7 +197,7 @@ describe("pathless publication storage boundary", () => {
       authorization: target,
     };
     const { calls, pool } = recordingPool([row]);
-    const storage = new PathlessStoragePublicationRepository(pool);
+    const storage = new StoragePublicationRepository(pool);
 
     expect(await storage.claimIntent(intentId, claimToken)).toEqual({
       claim_token: claimToken,
@@ -206,7 +206,7 @@ describe("pathless publication storage boundary", () => {
       body_object_key: target.body_object_key,
       authorization: target,
     });
-    expect(calls[0]!.sql).toContain("FROM claim_pathless_publication_artifact($1,$2)");
+    expect(calls[0]!.sql).toContain("FROM claim_publication_artifact($1,$2)");
     expect(calls[0]!.sql).toContain('body_size_bytes,body_content_hash,"authorization"');
     expect(calls[0]!.sql).not.toContain("representation_token");
     expect(calls[0]!.values).toEqual([intentId, claimToken]);
@@ -225,12 +225,12 @@ describe("pathless publication storage boundary", () => {
       projected_target_public_ids: projected,
       observed_public_uuid_tokens: projected,
       projection_receipt_hash: hash("b"),
-    } satisfies PathlessPublicationArtifactReceipt;
+    } satisfies PublicationArtifactReceipt;
     const { calls, pool } = recordingPool();
 
-    await new PathlessStoragePublicationRepository(pool).finalizeIntent(claimToken, receipt);
+    await new StoragePublicationRepository(pool).finalizeIntent(claimToken, receipt);
 
-    expect(calls[0]!.sql).toContain("finalize_pathless_publication_artifact_claim");
+    expect(calls[0]!.sql).toContain("finalize_publication_artifact_claim");
     expect(calls[0]!.sql).not.toContain("representation_token");
     expect(calls[0]!.values).toEqual([
       claimToken,
@@ -263,10 +263,10 @@ describe("pathless publication storage boundary", () => {
       public_width: 1200,
       public_height: 1500,
       public_duration_seconds: "1234567890.12345678901234567890",
-    } satisfies PathlessPublicationArtifactReceipt;
+    } satisfies PublicationArtifactReceipt;
     const { calls, pool } = recordingPool();
 
-    await new PathlessStoragePublicationRepository(pool).finalizeIntent(claimToken, receipt);
+    await new StoragePublicationRepository(pool).finalizeIntent(claimToken, receipt);
 
     expect(calls[0]!.values).toEqual([
       claimToken,
@@ -289,7 +289,7 @@ describe("pathless publication storage boundary", () => {
   });
 
   test("resolves only one exact active representation token", async () => {
-    const route: PathlessStorageRoute = {
+    const route: StorageRoute = {
       resource_kind: "page",
       representation_token: hash("d"),
       body_object_key: `documents/public/${artifactId}.md`,
@@ -297,24 +297,24 @@ describe("pathless publication storage boundary", () => {
       body_content_hash: hash("a"),
     };
     const active = recordingPool([route]);
-    expect(await new PathlessStoragePublicationRepository(active.pool).resolve(hash("d")))
+    expect(await new StoragePublicationRepository(active.pool).resolve(hash("d")))
       .toEqual(route);
-    expect(active.calls[0]!.sql).toContain("FROM resolve_pathless_storage_route($1)");
+    expect(active.calls[0]!.sql).toContain("FROM resolve_storage_route($1)");
     expect(active.calls[0]!.values).toEqual([hash("d")]);
 
     const inactive = recordingPool();
-    expect(await new PathlessStoragePublicationRepository(inactive.pool).resolve(hash("e")))
+    expect(await new StoragePublicationRepository(inactive.pool).resolve(hash("e")))
       .toBeNull();
 
     const ambiguous = recordingPool([route, { ...route, resource_kind: "asset" }]);
-    await expect(new PathlessStoragePublicationRepository(ambiguous.pool).resolve(hash("d")))
+    await expect(new StoragePublicationRepository(ambiguous.pool).resolve(hash("d")))
       .rejects.toThrow("resolves ambiguously");
   });
 });
 
 
-describe("pathless publication entrypoint dashboard boundary", () => {
-  test("gets, lists, and sets only safe pathless entrypoint fields", async () => {
+describe("publication entrypoint dashboard boundary", () => {
+  test("gets, lists, and sets only safe entrypoint fields", async () => {
     const state = { public_id: publicId, configured: true, active: true };
     const candidate = {
       public_id: publicId,
@@ -329,7 +329,7 @@ describe("pathless publication entrypoint dashboard boundary", () => {
       [candidate],
       [{ ...state, artifact_id: artifactId }],
     ]);
-    const entrypoint = new PathlessPublicEntrypointRepository(dashboard.pool);
+    const entrypoint = new PublicEntrypointRepository(dashboard.pool);
 
     expect(await entrypoint.get()).toEqual(state);
     expect(await entrypoint.candidates()).toEqual([{
@@ -341,20 +341,20 @@ describe("pathless publication entrypoint dashboard boundary", () => {
     }]);
     expect(await entrypoint.set({ public_id: publicId })).toEqual(state);
 
-    expect(dashboard.calls[0]!.sql).toContain("FROM get_pathless_publication_entrypoint()");
+    expect(dashboard.calls[0]!.sql).toContain("FROM get_publication_entrypoint()");
     expect(dashboard.calls[1]!.sql).toContain(
-      "FROM list_pathless_publication_entrypoint_candidates()",
+      "FROM list_publication_entrypoint_candidates()",
     );
     expect(dashboard.calls[2]).toEqual({
-      sql: expect.stringContaining("FROM set_pathless_publication_entrypoint($1)"),
+      sql: expect.stringContaining("FROM set_publication_entrypoint($1)"),
       values: [publicId],
     });
   });
 });
 
-describe("pathless public read boundary", () => {
+describe("public read boundary", () => {
   test("requires exactly one resolver state", async () => {
-    const missing = new PathlessPublicRepository(recordingPool().pool);
+    const missing = new PublicRepository(recordingPool().pool);
     await expect(missing.resolve(`/p/${publicId}`)).rejects.toThrow(
       "did not resolve to exactly one state",
     );
@@ -374,7 +374,7 @@ describe("pathless public read boundary", () => {
       public_height: null,
       public_duration_seconds: null,
     };
-    const ambiguous = new PathlessPublicRepository(recordingPool([state, state]).pool);
+    const ambiguous = new PublicRepository(recordingPool([state, state]).pool);
     await expect(ambiguous.resolve(`/p/${publicId}`)).rejects.toThrow(
       "did not resolve to exactly one state",
     );
@@ -415,7 +415,7 @@ describe("pathless public read boundary", () => {
       },
     ];
     const pool = recordingPoolSequence(leakyRows.map((row) => [row]));
-    const publicData = new PathlessPublicRepository(pool.pool);
+    const publicData = new PublicRepository(pool.pool);
 
     expect(await publicData.resolve(`/p/${publicId}`)).toEqual({
       state: "inactive",
@@ -462,7 +462,7 @@ describe("pathless public read boundary", () => {
     };
     const root = { ...activePage, route_kind: "directory", canonical_path: `/p/${publicId}` };
     const pool = recordingPoolSequence([[activePage], [activeAsset], [root]]);
-    const publicData = new PathlessPublicRepository(pool.pool);
+    const publicData = new PublicRepository(pool.pool);
 
     const page = await publicData.resolve(`/p/${publicId}.md`);
     const asset = await publicData.resolve(`/a/${linkedPublicId}`);
@@ -498,7 +498,7 @@ describe("pathless public read boundary", () => {
       source_document_id: documentId,
     };
     const pool = recordingPoolSequence([[page], [asset]]);
-    const publicData = new PathlessPublicRepository(pool.pool);
+    const publicData = new PublicRepository(pool.pool);
 
     expect(await publicData.pages()).toEqual([{
       public_id: publicId,
@@ -525,8 +525,8 @@ describe("pathless public read boundary", () => {
 });
 
 describe("publication confirmation family dispatch", () => {
-  test("reads only pathless confirmation fields without publication evidence", async () => {
-    const pathlessIntent: PublicationConfirmationIntent = {
+  test("reads only canonical confirmation fields without publication evidence", async () => {
+    const canonicalIntent: PublicationConfirmationIntent = {
       id: intentId,
       action: "publish",
       target_kind: "page",
@@ -537,12 +537,12 @@ describe("publication confirmation family dispatch", () => {
       challenge: "challenge",
       expires_at: new Date("2026-08-23T12:05:00.000Z"),
     };
-    const { calls, pool } = recordingPool([pathlessIntent]);
+    const { calls, pool } = recordingPool([canonicalIntent]);
 
     expect(await new ConfirmationRepository(pool).publicationIntent(intentId))
-      .toEqual(pathlessIntent);
+      .toEqual(canonicalIntent);
     expect(calls[0]!.sql).toContain("FROM publication_intent_id_reservations");
-    expect(calls[0]!.sql).toContain("JOIN pathless_publication_intents");
+    expect(calls[0]!.sql).toContain("JOIN publication_intents");
     expect(calls[0]!.sql).not.toContain("intent_store");
     expect(calls[0]!.sql).not.toContain("FROM publication_intents");
     expect(calls[0]!.sql).not.toContain("candidate_public_id");
@@ -567,7 +567,7 @@ describe("publication confirmation family dispatch", () => {
     });
   });
 
-  test("returns null when no active pathless intent is reserved", async () => {
+  test("returns null when no active intent is reserved", async () => {
     const absent = recordingPool();
     expect(await new ConfirmationRepository(absent.pool).publicationIntent(intentId)).toBeNull();
   });

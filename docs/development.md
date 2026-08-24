@@ -47,15 +47,15 @@ The mark is `ALTER DATABASE … SET "context_use.disposable_test_database" = 'tr
 The local stack above is therefore never eligible: these suites would delete its owner identity
 while leaving related authentication state behind.
 
-The local stack stores document and asset objects in its MinIO service through the same S3 client
-used in production. `bun run local reset` removes that object-store volume together with the
-database knowledge state; there is no filesystem storage backend or asset directory fallback.
+The local stack stores document and asset objects in MinIO through the same S3 client used in
+production. `bun run local reset` removes that object-store volume together with the database
+knowledge state.
 
 ## Bootstrap knowledge
 
 New installations receive the Git-versioned default corpus during the isolated deployment
-preparation step. That source is installation bootstrap data, not a runtime filesystem or a
-template-management API. Once the bootstrap allocations are complete, redeployments skip preparation
+preparation step. That source is installation bootstrap data, not a template-management API. Once
+the bootstrap allocations are complete, redeployments skip preparation
 and every retained guide, instruction, state document, and owner document is managed through the
 same stable document identities, revisions, links, and search APIs.
 

@@ -5,13 +5,13 @@ import {
   DocumentAssetRepository,
   DocumentMaintenanceRepository,
   MAX_MARKDOWN_DOCUMENT_BYTES,
-  PathlessStoragePublicationRepository,
+  StoragePublicationRepository,
   createPool,
   extractDocumentLinks,
-  type PathlessPublicationObjectClaim,
-  type PathlessPublicationWriteAuthorization,
+  type PublicationObjectClaim,
+  type PublicationWriteAuthorization,
 } from "@context-use/database";
-import type { PathlessPublicationArtifactReceipt } from "@context-use/shared";
+import type { PublicationArtifactReceipt } from "@context-use/shared";
 import { Elysia } from "elysia";
 import { z } from "zod";
 import { config } from "./config.ts";
@@ -23,7 +23,7 @@ import {
   type StoredAsset,
 } from "./storage.ts";
 import { disableStreamingRequestIdleTimeout } from "./streaming-timeout.ts";
-import { projectPathlessPublicMarkdown } from "./pathless-public-markdown.ts";
+import { projectPublicMarkdown } from "./public-markdown.ts";
 
 const objectKeySchema = z.string().regex(/^objects\/[a-f0-9-]{36}$/);
 const privateDocumentKeySchema = z.string().regex(/^documents\/private\/[a-f0-9-]{36}\.md$/);
@@ -104,7 +104,7 @@ const defaultStorage: ObjectStorageBackend = new S3Storage(undefined, {
 
 const storagePool = createPool(config.STORAGE_DATABASE_URL, { application_name: "context-use-storage-boundary" });
 const defaultPrivateAssets = new DocumentAssetRepository(storagePool);
-const defaultPathlessPublications = new PathlessStoragePublicationRepository(storagePool);
+const defaultPublications = new StoragePublicationRepository(storagePool);
 const documentMaintenance = new DocumentMaintenanceRepository(storagePool);
 const defaultTokens: StorageBrokerTokens = {
   dashboard: config.STORAGE_DASHBOARD_TOKEN,
@@ -154,9 +154,9 @@ async function generatedObjectResponse(
   });
 }
 
-type PathlessPublicationClaims = Pick<PathlessStoragePublicationRepository,
+type PublicationClaims = Pick<StoragePublicationRepository,
   "claimIntent" | "finalizeIntent">
-  & Partial<Pick<PathlessStoragePublicationRepository, "resolve">>;
+  & Partial<Pick<StoragePublicationRepository, "resolve">>;
 
 function exactNumber(value: number | string, maximum: number): number {
   const result = Number(value);
@@ -168,7 +168,7 @@ function exactNumber(value: number | string, maximum: number): number {
 
 async function verifiedSourceBody(
   storage: ObjectStorageBackend,
-  authorization: PathlessPublicationWriteAuthorization,
+  authorization: PublicationWriteAuthorization,
 ): Promise<BodyInit> {
   const size = exactNumber(authorization.source_body_size_bytes, 5_000_000_000);
   if (!await storage.verify(
@@ -185,10 +185,10 @@ function sameUuidSet(left: string[], right: string[]): boolean {
 
 async function writeClaimedArtifact(input: {
   storage: ObjectStorageBackend;
-  claim: PathlessPublicationObjectClaim<PathlessPublicationWriteAuthorization>;
+  claim: PublicationObjectClaim<PublicationWriteAuthorization>;
 }): Promise<{
   claimToken: string;
-  receipt: PathlessPublicationArtifactReceipt | null;
+  receipt: PublicationArtifactReceipt | null;
 }> {
   const { storage, claim } = input;
   if (claim.finalized) {
@@ -208,7 +208,7 @@ async function writeClaimedArtifact(input: {
   let observedPublicIds: string[];
   if (project) {
     const source = await new Response(await verifiedSourceBody(storage, authorization)).text();
-    const projected = projectPathlessPublicMarkdown(source, authorization.target_projection);
+    const projected = projectPublicMarkdown(source, authorization.target_projection);
     observedPublicIds = projected.observedPublicIds;
     if (!sameUuidSet(observedPublicIds, authorization.projected_target_public_ids)) {
       throw new Error("Public projection did not observe the exact frozen UUID set");
@@ -248,7 +248,7 @@ async function writeClaimedArtifact(input: {
   }
 
   const target = authorization;
-  const receipt: PathlessPublicationArtifactReceipt = target.target_kind === "page"
+  const receipt: PublicationArtifactReceipt = target.target_kind === "page"
       ? {
         intent_id: target.intent_id,
         target_kind: "page",
@@ -277,9 +277,9 @@ async function writeClaimedArtifact(input: {
   return { claimToken: claim.claim_token, receipt };
 }
 
-export async function materializePathlessPublicationArtifact(input: {
+export async function materializePublicationArtifact(input: {
   storage: ObjectStorageBackend;
-  claims: PathlessPublicationClaims;
+  claims: PublicationClaims;
   allocationId: string;
 }): Promise<void> {
   const claim = await input.claims.claimIntent(input.allocationId);
@@ -294,10 +294,10 @@ export async function materializePathlessPublicationArtifact(input: {
 export function createStorageBrokerApp(input: {
   storage: ObjectStorageBackend;
   privateAssets: PrivateAssetLookup;
-  pathlessPublications?: PathlessPublicationClaims;
+  publications?: PublicationClaims;
   tokens: StorageBrokerTokens;
 }) {
-  const { storage, privateAssets, pathlessPublications, tokens } = input;
+  const { storage, privateAssets, publications, tokens } = input;
   const activeWrites = new Set<string>();
   return new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
   .onError(() => denied())
@@ -401,13 +401,13 @@ export function createStorageBrokerApp(input: {
     }
   }, { parse: "none" })
   .put("/private/publication-artifact", async ({ request, query }) => {
-    if (privateCapability(request, tokens) !== "dashboard" || !pathlessPublications) {
+    if (privateCapability(request, tokens) !== "dashboard" || !publications) {
       return denied();
     }
     const allocationId = z.string().uuid().parse(query.id);
-    await materializePathlessPublicationArtifact({
+    await materializePublicationArtifact({
       storage,
-      claims: pathlessPublications,
+      claims: publications,
       allocationId,
     });
     return new Response(null, { status: 204 });
@@ -445,11 +445,11 @@ export function createStorageBrokerApp(input: {
     }, { headers: { "cache-control": "no-store" } });
   })
   .head("/public/representation", async ({ request, query }) => {
-    if (!publicAuthorized(request, tokens) || !pathlessPublications?.resolve) return denied();
+    if (!publicAuthorized(request, tokens) || !publications?.resolve) return denied();
     const { token: representationToken } = z.object({
       token: z.string().regex(/^[a-f0-9]{64}$/),
     }).strict().parse(query);
-    const route = await pathlessPublications.resolve(representationToken);
+    const route = await publications.resolve(representationToken);
     if (!route || route.representation_token !== representationToken) return denied();
     const sizeBytes = exactNumber(route.body_size_bytes, 5_000_000_000);
     const objectKey = route.resource_kind === "page"
@@ -465,11 +465,11 @@ export function createStorageBrokerApp(input: {
     });
   })
   .get("/public/representation", async ({ request, query }) => {
-    if (!publicAuthorized(request, tokens) || !pathlessPublications?.resolve) return denied();
+    if (!publicAuthorized(request, tokens) || !publications?.resolve) return denied();
     const { token: representationToken } = z.object({
       token: z.string().regex(/^[a-f0-9]{64}$/),
     }).strict().parse(query);
-    const route = await pathlessPublications.resolve(representationToken);
+    const route = await publications.resolve(representationToken);
     if (!route || route.representation_token !== representationToken) return denied();
     const sizeBytes = exactNumber(route.body_size_bytes, 5_000_000_000);
     const objectKey = route.resource_kind === "page"
@@ -486,7 +486,7 @@ export function createStorageBrokerApp(input: {
 export const storageApp = createStorageBrokerApp({
   storage: defaultStorage,
   privateAssets: defaultPrivateAssets,
-  pathlessPublications: defaultPathlessPublications,
+  publications: defaultPublications,
   tokens: defaultTokens,
 });
 

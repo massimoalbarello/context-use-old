@@ -18,7 +18,7 @@ function unique(values: Iterable<string>): string[] {
  * while the disposable integration database must not leak one suite's graph
  * into later corpus/reset suites.
  */
-export async function cleanupPathlessPublicationFixtures(
+export async function cleanupPublicationFixtures(
   client: Client,
   sourceDocumentIds: Iterable<string>,
   options: {
@@ -42,7 +42,7 @@ export async function cleanupPathlessPublicationFixtures(
     client,
     `SELECT public_id AS id FROM public_resources
      WHERE document_id=ANY($1::uuid[]) OR original_document_id=ANY($1::uuid[])
-     UNION SELECT candidate_public_id FROM pathless_publication_intents
+     UNION SELECT candidate_public_id FROM publication_intents
      WHERE target_document_id=ANY($1::uuid[]) AND candidate_public_id IS NOT NULL`,
     [documentIds],
   ));
@@ -51,7 +51,7 @@ export async function cleanupPathlessPublicationFixtures(
     `SELECT id FROM hypermedia_document_revisions
      WHERE document_id=ANY($1::uuid[])
      UNION SELECT id FROM knowledge_page_versions WHERE page_id=ANY($1::uuid[])
-     UNION SELECT expected_revision_id FROM pathless_publication_intents
+     UNION SELECT expected_revision_id FROM publication_intents
      WHERE target_document_id=ANY($1::uuid[]) AND expected_revision_id IS NOT NULL`,
     [documentIds],
   ));
@@ -59,7 +59,7 @@ export async function cleanupPathlessPublicationFixtures(
     ...extraIntentIds,
     ...await selectIds(
       client,
-      `SELECT id FROM pathless_publication_intents
+      `SELECT id FROM publication_intents
        WHERE target_document_id=ANY($1::uuid[])
        UNION SELECT id FROM page_deletion_intents WHERE page_id=ANY($1::uuid[])`,
       [documentIds],
@@ -71,11 +71,11 @@ export async function cleanupPathlessPublicationFixtures(
      WHERE source_document_id=ANY($1::uuid[]) OR public_id=ANY($2::uuid[])
      UNION SELECT artifact_id FROM public_asset_artifacts
      WHERE source_document_id=ANY($1::uuid[]) OR public_id=ANY($2::uuid[])
-     UNION SELECT artifact_id FROM published_page_artifacts
+     UNION SELECT artifact_id FROM retained_page_artifacts
      WHERE page_id=ANY($1::uuid[])
-     UNION SELECT candidate_artifact_id FROM pathless_publication_intents
+     UNION SELECT candidate_artifact_id FROM publication_intents
      WHERE id=ANY($3::uuid[]) AND candidate_artifact_id IS NOT NULL
-     UNION SELECT artifact_id FROM pathless_publication_artifact_staging
+     UNION SELECT artifact_id FROM publication_artifact_staging
      WHERE intent_id=ANY($3::uuid[])`,
     [documentIds, publicIds, intentIds],
   ));
@@ -90,28 +90,22 @@ export async function cleanupPathlessPublicationFixtures(
   try {
     await client.query("SET LOCAL session_replication_role=replica");
     await client.query(
-      `UPDATE pathless_publication_settings
+      `UPDATE publication_settings
        SET entrypoint_public_id=NULL,updated_at=NULL
        WHERE entrypoint_public_id=ANY($1::uuid[])`,
       [publicIds],
-    );
-    await client.query(
-      `UPDATE public_knowledge_settings
-       SET entrypoint_page_id=NULL,updated_at=clock_timestamp()
-       WHERE entrypoint_page_id=ANY($1::uuid[])`,
-      [documentIds],
     );
     await client.query(
       "DELETE FROM confirmation_challenges WHERE intent_id=ANY($1::uuid[])",
       [intentIds],
     );
     await client.query(
-      `DELETE FROM pathless_publication_object_claims
+      `DELETE FROM publication_object_claims
        WHERE allocation_id=ANY($1::uuid[])`,
       [intentIds],
     );
     await client.query(
-      "DELETE FROM pathless_publication_artifact_staging WHERE intent_id=ANY($1::uuid[])",
+      "DELETE FROM publication_artifact_staging WHERE intent_id=ANY($1::uuid[])",
       [intentIds],
     );
     await client.query("DELETE FROM page_publications WHERE public_id=ANY($1::uuid[])", [publicIds]);
@@ -123,7 +117,7 @@ export async function cleanupPathlessPublicationFixtures(
     );
     await client.query("DELETE FROM public_page_artifacts WHERE artifact_id=ANY($1::uuid[])", [artifactIds]);
     await client.query("DELETE FROM public_asset_artifacts WHERE artifact_id=ANY($1::uuid[])", [artifactIds]);
-    await client.query("DELETE FROM pathless_publication_intents WHERE id=ANY($1::uuid[])", [intentIds]);
+    await client.query("DELETE FROM publication_intents WHERE id=ANY($1::uuid[])", [intentIds]);
     await client.query("DELETE FROM knowledge_export_intents WHERE id=ANY($1::uuid[])", [intentIds]);
     await client.query("DELETE FROM page_deletion_intents WHERE id=ANY($1::uuid[])", [intentIds]);
     await client.query(
@@ -163,10 +157,10 @@ export async function cleanupPathlessPublicationFixtures(
           OR target_asset_id=ANY($2::uuid[])`,
       [revisionIds, documentIds],
     );
-    await client.query("DELETE FROM pathless_knowledge_search_chunks WHERE document_id=ANY($1::uuid[])", [documentIds]);
-    await client.query("DELETE FROM pathless_knowledge_search WHERE document_id=ANY($1::uuid[])", [documentIds]);
+    await client.query("DELETE FROM knowledge_search_chunks WHERE document_id=ANY($1::uuid[])", [documentIds]);
+    await client.query("DELETE FROM knowledge_search WHERE document_id=ANY($1::uuid[])", [documentIds]);
     await client.query("DELETE FROM knowledge_revision_contracts WHERE document_id=ANY($1::uuid[])", [documentIds]);
-    await client.query("DELETE FROM published_page_artifacts WHERE page_id=ANY($1::uuid[])", [documentIds]);
+    await client.query("DELETE FROM retained_page_artifacts WHERE page_id=ANY($1::uuid[])", [documentIds]);
     await client.query("DELETE FROM knowledge_page_changes WHERE page_id=ANY($1::uuid[])", [documentIds]);
     await client.query("DELETE FROM knowledge_page_versions WHERE page_id=ANY($1::uuid[])", [documentIds]);
     await client.query("DELETE FROM hypermedia_document_revisions WHERE document_id=ANY($1::uuid[])", [documentIds]);

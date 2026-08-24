@@ -20,7 +20,7 @@ describeDatabase("knowledge lifecycle lock ordering", () => {
     )).rows[0]!.definition;
     const transition = definition.indexOf("pg_advisory_xact_lock_shared");
     const intentRead = definition.indexOf("FROM publication_intent_id_reservations", transition);
-    const document = definition.indexOf("lock_pathless_publication_context", intentRead);
+    const document = definition.indexOf("lock_publication_context", intentRead);
     const pageMutation = definition.indexOf("DELETE FROM page_publications", document);
     const assetMutation = definition.indexOf("DELETE FROM asset_publications", pageMutation);
     expect(transition).toBeGreaterThan(-1);

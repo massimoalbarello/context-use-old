@@ -36,7 +36,6 @@ describe("automation registry", () => {
     });
 
     const insert = statements.findIndex((sql) => sql.includes("INSERT INTO automation_registry"));
-    expect(statements.some((sql) => sql.includes("filesystem-hypermedia-corpus-transition"))).toBe(false);
     expect(insert).toBeGreaterThan(-1);
     expect(statements[insert]).not.toContain("disabled_at=NULL");
     expect(statements[insert]).not.toContain("name=excluded.name");

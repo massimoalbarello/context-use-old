@@ -127,7 +127,7 @@ function authorized(token: string, path: string, init: RequestInit = {}): Reques
 }
 
 describe("storage broker capabilities", () => {
-  test("claims, conditionally writes, verifies and finalizes a pathless page artifact", async () => {
+  test("claims, conditionally writes, verifies and finalizes a canonical page artifact", async () => {
     const storage = new MemoryStorage();
     const intentId = "60606060-6060-4060-8060-606060606060";
     const revisionId = "62626262-6262-4262-8262-626262626262";
@@ -157,7 +157,7 @@ describe("storage broker capabilities", () => {
           body_object_key: destinationKey,
           max_body_size_bytes: 4_000_000,
           public_title: "Public page",
-          public_summary: "A public pathless page.",
+          public_summary: "A public canonical page.",
           public_last_edited_at: "2026-08-23T12:34:56.123456Z",
           public_filename: null,
           public_content_type: null,
@@ -179,7 +179,7 @@ describe("storage broker capabilities", () => {
     const app = createStorageBrokerApp({
       storage,
       privateAssets: privateAssets({}),
-      pathlessPublications: claims,
+      publications: claims,
       tokens,
     });
 
@@ -252,13 +252,13 @@ describe("storage broker capabilities", () => {
     const left = createStorageBrokerApp({
       storage,
       privateAssets: privateAssets({}),
-      pathlessPublications: claims,
+      publications: claims,
       tokens,
     });
     const right = createStorageBrokerApp({
       storage,
       privateAssets: privateAssets({}),
-      pathlessPublications: claims,
+      publications: claims,
       tokens,
     });
     const request = () => authorized(
@@ -278,7 +278,7 @@ describe("storage broker capabilities", () => {
     expect(finalizations).toHaveLength(2);
   });
 
-  test("legacy path-based public object reads are absent", async () => {
+  test("public objects are readable only by representation token", async () => {
     const storage = new MemoryStorage();
     const app = createStorageBrokerApp({
       storage,
@@ -315,7 +315,7 @@ describe("storage broker capabilities", () => {
     const app = createStorageBrokerApp({
       storage,
       privateAssets: privateAssets({}),
-      pathlessPublications: claims,
+      publications: claims,
       tokens,
     });
 

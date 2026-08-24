@@ -41,8 +41,8 @@ describe("staged migration ceiling", () => {
   const stagedFiles = [
     { version: "001_baseline.sql", checksum: "checksum-001", sql: "one" },
     { version: "026_audited_corpus.sql", checksum: "checksum-026", sql: "twenty-six" },
-    { version: "027_pathless_contract.sql", checksum: "checksum-027", sql: "twenty-seven" },
-    { version: "028_pathless_publication.sql", checksum: "checksum-028", sql: "twenty-eight" },
+    { version: "027_canonical_contract.sql", checksum: "checksum-027", sql: "twenty-seven" },
+    { version: "028_canonical_publication.sql", checksum: "checksum-028", sql: "twenty-eight" },
   ];
 
   test("defaults to every on-disk migration", () => {
@@ -53,13 +53,13 @@ describe("staged migration ceiling", () => {
     expect(migrationsThroughVersion(
       stagedFiles,
       [{ version: "026_audited_corpus.sql", checksum: "checksum-026" }],
-      "027_pathless_contract.sql",
+      "027_canonical_contract.sql",
     ).map(({ version }) => version)).toEqual([
       "001_baseline.sql",
       "026_audited_corpus.sql",
-      "027_pathless_contract.sql",
+      "027_canonical_contract.sql",
     ]);
-    expect(() => migrationsThroughVersion(stagedFiles, [], "027_pathless_contract"))
+    expect(() => migrationsThroughVersion(stagedFiles, [], "027_canonical_contract"))
       .toThrow("exactly match an on-disk migration filename");
     expect(() => migrationsThroughVersion(stagedFiles, [], ""))
       .toThrow("exactly match an on-disk migration filename");
@@ -70,10 +70,10 @@ describe("staged migration ceiling", () => {
       stagedFiles,
       [
         { version: "001_baseline.sql", checksum: "checksum-001" },
-        { version: "027_pathless_contract.sql", checksum: "checksum-027" },
+        { version: "027_canonical_contract.sql", checksum: "checksum-027" },
       ],
       "026_audited_corpus.sql",
-    )).toThrow("older than already-applied migration(s): 027_pathless_contract.sql");
+    )).toThrow("older than already-applied migration(s): 027_canonical_contract.sql");
   });
 
   test("allows a bounded compatibility pass after later contraction migrations", () => {
@@ -81,7 +81,7 @@ describe("staged migration ceiling", () => {
       stagedFiles,
       [
         { version: "001_baseline.sql", checksum: "checksum-001" },
-        { version: "027_pathless_contract.sql", checksum: "checksum-027" },
+        { version: "027_canonical_contract.sql", checksum: "checksum-027" },
       ],
       "026_audited_corpus.sql",
       true,
@@ -94,12 +94,12 @@ describe("staged migration ceiling", () => {
   test("validates every applied checksum before limiting new migrations", () => {
     const applied = [
       { version: "001_baseline.sql", checksum: "checksum-001" },
-      { version: "027_pathless_contract.sql", checksum: "modified-checksum" },
+      { version: "027_canonical_contract.sql", checksum: "modified-checksum" },
     ];
     expect(() => {
       assertMigrationState(stagedFiles, applied, ["knowledge_pages"]);
-      migrationsThroughVersion(stagedFiles, applied, "027_pathless_contract.sql");
-    }).toThrow("027_pathless_contract.sql does not match this release");
+      migrationsThroughVersion(stagedFiles, applied, "027_canonical_contract.sql");
+    }).toThrow("027_canonical_contract.sql does not match this release");
   });
 });
 

@@ -163,10 +163,16 @@ jobs:
               WHERE id='11111111-1111-4111-8111-111111111111'
             ) OR to_regclass('public.hypermedia_cutover_state') IS NOT NULL
               OR to_regclass('public.knowledge_directories') IS NOT NULL
-              OR to_regclass('public.publication_intents') IS NOT NULL
+              OR to_regclass('public.publication_intents') IS NULL
+              OR to_regclass('public.knowledge_search') IS NULL
+              OR to_regclass('public.publication_settings') IS NULL
+              OR to_regclass('public.public_knowledge_settings') IS NOT NULL
+              OR to_regclass('public.pathless_publication_intents') IS NOT NULL
               OR to_regtype('public.publication_intent_store') IS NOT NULL
               OR to_regprocedure('public.finalize_hypermedia_cutover()') IS NOT NULL
               OR to_regprocedure('public.list_hypermedia_cutover_blockers()') IS NOT NULL
+              OR to_regprocedure('public.get_publication_entrypoint()') IS NULL
+              OR to_regprocedure('public.get_pathless_publication_entrypoint()') IS NOT NULL
               OR EXISTS (
                 SELECT 1 FROM information_schema.columns
                 WHERE table_schema='public'
@@ -175,7 +181,7 @@ jobs:
                     'published_version_id','intent_store'
                   )
               ) THEN
-              RAISE EXCEPTION 'filesystem schema retirement contract failed';
+              RAISE EXCEPTION 'hypermedia schema contract failed';
             END IF;
           END;
           $$;

@@ -2,8 +2,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { Client, type Pool } from "pg";
 import { disposableDatabaseUrl } from "../src/disposable-database.ts";
-import { PathlessStoragePublicationRepository } from "../src/pathless-publication.ts";
-import { cleanupPathlessPublicationFixtures } from "./pathless-publication-fixture-cleanup.ts";
+import { StoragePublicationRepository } from "../src/publication.ts";
+import { cleanupPublicationFixtures } from "./publication-fixture-cleanup.ts";
 
 const databaseUrl = await disposableDatabaseUrl();
 const describeDatabase = databaseUrl ? describe : describe.skip;
@@ -28,8 +28,8 @@ async function asRole<T>(client: Client, role: string, action: () => Promise<T>)
   }
 }
 
-function storageRepository(client: Client): PathlessStoragePublicationRepository {
-  return new PathlessStoragePublicationRepository({
+function storageRepository(client: Client): StoragePublicationRepository {
+  return new StoragePublicationRepository({
     query: async (sql: string, values?: unknown[]) => asRole(
       client,
       "context_use_storage",
@@ -81,7 +81,7 @@ async function seedPage(client: Client) {
   return { pageId, revisionId };
 }
 
-describeDatabase("pathless publication object claims", () => {
+describeDatabase("publication object claims", () => {
   const client = new Client({ connectionString: databaseUrl });
 
   beforeAll(async () => {
@@ -90,7 +90,7 @@ describeDatabase("pathless publication object claims", () => {
 
   afterAll(async () => {
     try {
-      await cleanupPathlessPublicationFixtures(client, fixtureDocumentIds);
+      await cleanupPublicationFixtures(client, fixtureDocumentIds);
     } finally {
       await client.end().catch(() => undefined);
     }
@@ -100,7 +100,7 @@ describeDatabase("pathless publication object claims", () => {
     const page = await seedPage(client);
     const intentId = randomUUID();
     await client.query(
-      `SELECT * FROM begin_pathless_publication_intent(
+      `SELECT * FROM begin_publication_intent(
          $1,'publish','page',$2,$3,'context-use-owner',$4
        )`,
       [intentId, page.pageId, page.revisionId, `repository-${randomUUID()}`],
@@ -118,7 +118,7 @@ describeDatabase("pathless publication object claims", () => {
     const intentId = randomUUID();
     const requestedToken = randomUUID();
     await client.query(
-      `SELECT * FROM begin_pathless_publication_intent(
+      `SELECT * FROM begin_publication_intent(
          $1,'publish','page',$2,$3,'context-use-owner',$4
        )`,
       [intentId, page.pageId, page.revisionId, `claim-${randomUUID()}`],
@@ -126,7 +126,7 @@ describeDatabase("pathless publication object claims", () => {
 
     const claim = await asRole(client, "context_use_storage", async () => {
       const stored = (await client.query(
-        "SELECT * FROM claim_pathless_publication_artifact($1,$2)",
+        "SELECT * FROM claim_publication_artifact($1,$2)",
         [intentId, requestedToken],
       )).rows[0]!;
       expect(stored).toMatchObject({
@@ -137,7 +137,7 @@ describeDatabase("pathless publication object claims", () => {
       });
       expect(stored.authorization.intent_id).toBe(intentId);
       expect(await errorCode(client.query(
-        `SELECT stage_pathless_publication_artifact(
+        `SELECT stage_publication_artifact(
            $1,'page',29,$2,$3,$4,$5,NULL,NULL,NULL,NULL,NULL,
            '{}'::uuid[],'{}'::uuid[],$6
          )`,
@@ -158,7 +158,7 @@ describeDatabase("pathless publication object claims", () => {
       [intentId, Buffer.from(randomUUID()).toString("base64url")],
     ))).toBe("55000");
     expect(await errorCode(client.query(
-      `SELECT stage_pathless_publication_artifact(
+      `SELECT stage_publication_artifact(
          $1,'page',29,$2,$3,$4,$5,NULL,NULL,NULL,NULL,NULL,
          '{}'::uuid[],'{}'::uuid[],$6
        )`,
@@ -193,31 +193,31 @@ describeDatabase("pathless publication object claims", () => {
     const mismatchedFinalizeValues = [...finalizeValues];
     mismatchedFinalizeValues[15] = "d".repeat(64);
     expect(await asRole(client, "context_use_storage", async () => errorCode(client.query(
-      `SELECT finalize_pathless_publication_artifact_claim(
+      `SELECT finalize_publication_artifact_claim(
          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16
        )`,
       mismatchedFinalizeValues,
     )))).toBe("22023");
     expect((await client.query(
-      `SELECT finalized_at FROM pathless_publication_object_claims
-       WHERE allocation_kind='pathless_intent' AND allocation_id=$1`,
+      `SELECT finalized_at FROM publication_object_claims
+       WHERE allocation_kind='publication_intent' AND allocation_id=$1`,
       [intentId],
     )).rows[0]!.finalized_at).toBeNull();
     const replay = await asRole(client, "context_use_storage", async () => {
       await client.query(
-        `SELECT finalize_pathless_publication_artifact_claim(
+        `SELECT finalize_publication_artifact_claim(
            $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16
          )`,
         finalizeValues,
       );
       await client.query(
-        `SELECT finalize_pathless_publication_artifact_claim(
+        `SELECT finalize_publication_artifact_claim(
            $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16
          )`,
         finalizeValues,
       );
       return (await client.query(
-        "SELECT * FROM claim_pathless_publication_artifact($1,$2)",
+        "SELECT * FROM claim_publication_artifact($1,$2)",
         [intentId, randomUUID()],
       )).rows[0]!;
     });
@@ -230,7 +230,7 @@ describeDatabase("pathless publication object claims", () => {
       authorization: null,
     });
     expect(Number((await client.query(
-      "SELECT count(*) AS count FROM pathless_publication_artifact_staging WHERE intent_id=$1",
+      "SELECT count(*) AS count FROM publication_artifact_staging WHERE intent_id=$1",
       [intentId],
     )).rows[0]!.count)).toBe(1);
   }, 15_000);
@@ -239,7 +239,7 @@ describeDatabase("pathless publication object claims", () => {
     const page = await seedPage(client);
     const intentId = randomUUID();
     await client.query(
-      `SELECT * FROM begin_pathless_publication_intent(
+      `SELECT * FROM begin_publication_intent(
          $1,'publish','page',$2,$3,'context-use-owner',$4
        )`,
       [intentId, page.pageId, page.revisionId, `race-${randomUUID()}`],
@@ -253,14 +253,14 @@ describeDatabase("pathless publication object claims", () => {
         right.query("SET ROLE context_use_storage"),
       ]);
       const [first, second] = await Promise.all([
-        left.query("SELECT * FROM claim_pathless_publication_artifact($1,$2)", [intentId, randomUUID()]),
-        right.query("SELECT * FROM claim_pathless_publication_artifact($1,$2)", [intentId, randomUUID()]),
+        left.query("SELECT * FROM claim_publication_artifact($1,$2)", [intentId, randomUUID()]),
+        right.query("SELECT * FROM claim_publication_artifact($1,$2)", [intentId, randomUUID()]),
       ]);
       expect(first.rows[0]!.claim_token).toBe(second.rows[0]!.claim_token);
       expect(first.rows[0]!.artifact_id).toBe(second.rows[0]!.artifact_id);
       expect(Number((await client.query(
-        `SELECT count(*) AS count FROM pathless_publication_object_claims
-         WHERE allocation_kind='pathless_intent' AND allocation_id=$1`,
+        `SELECT count(*) AS count FROM publication_object_claims
+         WHERE allocation_kind='publication_intent' AND allocation_id=$1`,
         [intentId],
       )).rows[0]!.count)).toBe(1);
     } finally {

@@ -14,7 +14,7 @@ export const PAGE_MARKDOWN_BODY_DESCRIPTION = [
 export const IMAGE_LAYOUT_STYLES = `.cu-image{box-sizing:border-box;display:block;margin:1rem 0;vertical-align:top}.cu-image>img,.cu-image>video{display:block;width:100%;max-width:none;height:auto}.cu-image--size-small{width:min(100%,240px)}.cu-image--size-medium{width:min(100%,420px)}.cu-image--size-large{width:min(100%,640px)}.cu-image--size-full{width:100%}.cu-image--align-left{margin-right:auto}.cu-image--align-center{margin-right:auto;margin-left:auto}.cu-image--align-right{margin-left:auto}.cu-image--shape-square,.cu-image--shape-portrait,.cu-image--shape-landscape{overflow:hidden}.cu-image--shape-square{aspect-ratio:1/1}.cu-image--shape-portrait{aspect-ratio:4/5}.cu-image--shape-landscape{aspect-ratio:16/9}.cu-image--shape-square>img,.cu-image--shape-square>video,.cu-image--shape-portrait>img,.cu-image--shape-portrait>video,.cu-image--shape-landscape>img,.cu-image--shape-landscape>video{height:100%;object-fit:cover}.cu-image--layout-half,.cu-image--layout-third{display:inline-block;margin:.5rem .5rem .5rem 0}.cu-image--layout-half{width:calc(50% - 1rem)}.cu-image--layout-third{width:calc(33.333% - 1rem)}@media(max-width:640px){.cu-image--layout-half,.cu-image--layout-third{display:block;width:100%;margin:1rem 0}}`;
 
 export const UUID = z.string().uuid();
-export const KnowledgePath = z
+export const PublicRouteSuffix = z
   .string()
   .min(1)
   .max(512)
@@ -60,57 +60,57 @@ export const archiveKnowledgeDocumentSchema = z
   })
   .strict();
 
-const pathlessPagePublishIntentSchema = z.object({
+const pagePublishIntentSchema = z.object({
   action: z.literal("publish"),
   target_kind: z.literal("page"),
   target_document_id: UUID,
   expected_revision_id: UUID,
 }).strict();
 
-const pathlessPageUnpublishIntentSchema = z.object({
+const pageUnpublishIntentSchema = z.object({
   action: z.literal("unpublish"),
   target_kind: z.literal("page"),
   target_document_id: UUID,
 }).strict();
 
-const pathlessAssetPublishIntentSchema = z.object({
+const assetPublishIntentSchema = z.object({
   action: z.literal("publish"),
   target_kind: z.literal("asset"),
   target_document_id: UUID,
 }).strict();
 
-const pathlessAssetUnpublishIntentSchema = z.object({
+const assetUnpublishIntentSchema = z.object({
   action: z.literal("unpublish"),
   target_kind: z.literal("asset"),
   target_document_id: UUID,
 }).strict();
 
 /** Four exact variants keep page revision approval distinct from asset publication. */
-export const pathlessPublicationIntentSchema = z.union([
-  pathlessPagePublishIntentSchema,
-  pathlessPageUnpublishIntentSchema,
-  pathlessAssetPublishIntentSchema,
-  pathlessAssetUnpublishIntentSchema,
+export const publicationIntentSchema = z.union([
+  pagePublishIntentSchema,
+  pageUnpublishIntentSchema,
+  assetPublishIntentSchema,
+  assetUnpublishIntentSchema,
 ]);
 
-export const pathlessPublicationEntrypointSchema = z.object({
+export const publicationEntrypointSchema = z.object({
   public_id: UUID.nullable(),
 }).strict();
 
-function isPathlessPublicRoute(value: string): boolean {
+function isPublicRoute(value: string): boolean {
   if (value === "/p/") return true;
-  if (value.startsWith("/a/")) return KnowledgePath.safeParse(value.slice(3)).success;
+  if (value.startsWith("/a/")) return PublicRouteSuffix.safeParse(value.slice(3)).success;
   if (!value.startsWith("/p/")) return false;
 
   const suffix = value.slice(3);
-  if (suffix.endsWith("/")) return KnowledgePath.safeParse(suffix.slice(0, -1)).success;
-  if (suffix.endsWith(".md")) return KnowledgePath.safeParse(suffix.slice(0, -3)).success;
-  return KnowledgePath.safeParse(suffix).success;
+  if (suffix.endsWith("/")) return PublicRouteSuffix.safeParse(suffix.slice(0, -1)).success;
+  if (suffix.endsWith(".md")) return PublicRouteSuffix.safeParse(suffix.slice(0, -3)).success;
+  return PublicRouteSuffix.safeParse(suffix).success;
 }
 
 /** Exact canonical and grandfathered-alias routes accepted by the public resolver. */
-export const pathlessPublicRouteSchema = z.string().refine(
-  isPathlessPublicRoute,
+export const publicRouteSchema = z.string().refine(
+  isPublicRoute,
   "Use an exact /p/, /p/<path>, /p/<path>.md, or /a/<path> public route",
 );
 
@@ -147,7 +147,7 @@ const CanonicalPublicUUIDArray = z.array(CanonicalLowercaseUUID).max(100_000).su
   },
 );
 
-const pathlessPagePublicationArtifactReceiptSchema = z.object({
+const pagePublicationArtifactReceiptSchema = z.object({
   intent_id: UUID,
   target_kind: z.literal("page"),
   body_size_bytes: z.number().int().min(0).max(4_000_000),
@@ -173,7 +173,7 @@ const pathlessPagePublicationArtifactReceiptSchema = z.object({
   }
 });
 
-const pathlessAssetPublicationArtifactReceiptSchema = z.object({
+const assetPublicationArtifactReceiptSchema = z.object({
   intent_id: UUID,
   target_kind: z.literal("asset"),
   body_size_bytes: z.number().int().min(0).max(5_000_000_000),
@@ -188,9 +188,9 @@ const pathlessAssetPublicationArtifactReceiptSchema = z.object({
   public_duration_seconds: CanonicalNonnegativeDecimal.nullish(),
 }).strict();
 
-export const pathlessPublicationArtifactReceiptSchema = z.discriminatedUnion("target_kind", [
-  pathlessPagePublicationArtifactReceiptSchema,
-  pathlessAssetPublicationArtifactReceiptSchema,
+export const publicationArtifactReceiptSchema = z.discriminatedUnion("target_kind", [
+  pagePublicationArtifactReceiptSchema,
+  assetPublicationArtifactReceiptSchema,
 ]);
 
 export const createDocumentAssetSchema = z.object({
@@ -207,14 +207,14 @@ export const archiveDocumentAssetSchema = z.object({
   asset_id: UUID,
 }).strict();
 
-export type PathlessPublicationIntentInput = z.infer<typeof pathlessPublicationIntentSchema>;
-export type PathlessPublicationArtifactReceipt = z.infer<
-  typeof pathlessPublicationArtifactReceiptSchema
+export type PublicationIntentInput = z.infer<typeof publicationIntentSchema>;
+export type PublicationArtifactReceipt = z.infer<
+  typeof publicationArtifactReceiptSchema
 >;
-export type PathlessPublicationEntrypointInput = z.infer<
-  typeof pathlessPublicationEntrypointSchema
+export type PublicationEntrypointInput = z.infer<
+  typeof publicationEntrypointSchema
 >;
-export type PathlessPublicRouteInput = z.infer<typeof pathlessPublicRouteSchema>;
+export type PublicRouteInput = z.infer<typeof publicRouteSchema>;
 export type CreateKnowledgeDocumentInput = z.infer<typeof createKnowledgeDocumentSchema>;
 export type UpdateKnowledgeDocumentInput = z.infer<typeof updateKnowledgeDocumentSchema>;
 export type ArchiveKnowledgeDocumentInput = z.infer<typeof archiveKnowledgeDocumentSchema>;
@@ -229,7 +229,7 @@ export const dashboardDocumentOperationalRoleSchema = z.enum([
   "automation_state",
 ]);
 
-/** Pathless, locator-free document metadata safe for the authenticated dashboard. */
+/** Canonical, locator-free document metadata safe for the authenticated dashboard. */
 export const dashboardDocumentSummarySchema = z.object({
   document_id: UUID,
   document_kind: dashboardDocumentKindSchema,

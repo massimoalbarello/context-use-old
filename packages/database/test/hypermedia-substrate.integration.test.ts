@@ -9,7 +9,7 @@ import { KnowledgeSettingsRepository } from "../src/knowledge-settings.ts";
 const adminUrl = await disposableDatabaseUrl();
 const describeDatabase = adminUrl ? describe : describe.skip;
 
-describeDatabase("path-independent document substrate", () => {
+describeDatabase("hypermedia document substrate", () => {
   let admin: Client;
   let repositoryPool: Pool;
 
@@ -24,7 +24,7 @@ describeDatabase("path-independent document substrate", () => {
     await admin.end();
   });
 
-  async function createPage(path: string) {
+  async function createPage() {
     const pageId = randomUUID();
     const revisionId = randomUUID();
     await admin.query("BEGIN");
@@ -52,10 +52,10 @@ describeDatabase("path-independent document substrate", () => {
       await admin.query("ROLLBACK");
       throw error;
     }
-    return { pageId, revisionId, path };
+    return { pageId, revisionId };
   }
 
-  async function createAsset(path: string) {
+  async function createAsset() {
     const id = randomUUID();
     await admin.query(
        `INSERT INTO assets(
@@ -64,11 +64,11 @@ describeDatabase("path-independent document substrate", () => {
          'objects/'||($1::uuid)::text)`,
       [id, "0".repeat(64)],
     );
-    return { id, path };
+    return { id };
   }
 
   test("identity attachment boundaries reject cross-kind UUID collisions", async () => {
-    const asset = await createAsset(`substrate-asset-${randomUUID()}`);
+    const asset = await createAsset();
     const identity = await admin.query<{
       authority: string;
       representation: string;
@@ -96,7 +96,7 @@ describeDatabase("path-independent document substrate", () => {
       [collidingId, "0".repeat(64)],
     )).rejects.toThrow("asset identity collides");
 
-    const page = await createPage(`substrate-identity-page-${randomUUID()}`);
+    const page = await createPage();
     await expect(admin.query(
       `INSERT INTO assets(
          id,filename,content_type,size_bytes,content_hash,s3_object_key
@@ -226,8 +226,8 @@ describeDatabase("path-independent document substrate", () => {
 
   test("backlinks follow only current, active source revisions", async () => {
     const links = new DocumentLinkRepository(repositoryPool);
-    const target = await createPage(`substrate-backlink-target-${randomUUID()}`);
-    const source = await createPage(`substrate-backlink-source-${randomUUID()}`);
+    const target = await createPage();
+    const source = await createPage();
 
     await links.replaceRevisionTargets(source.revisionId, [target.pageId]);
     expect((await links.backlinks(target.pageId)).backlinks.map((link) => link.source_revision_id))
@@ -331,7 +331,7 @@ describeDatabase("path-independent document substrate", () => {
     );
     expect(await links.backlinksComplete()).toBe(true);
 
-    const page = await createPage(`substrate-completeness-page-${randomUUID()}`);
+    const page = await createPage();
     expect(await links.backlinksComplete()).toBe(false);
     await admin.query("UPDATE knowledge_pages SET archived_at=now() WHERE id=$1", [page.pageId]);
     expect(await links.backlinksComplete()).toBe(true);
@@ -383,7 +383,7 @@ describeDatabase("path-independent document substrate", () => {
        FROM knowledge_settings
        WHERE singleton`,
     );
-    const guide = await createPage(`substrate-guide-${randomUUID()}`);
+    const guide = await createPage();
     try {
       await admin.query(
         `UPDATE knowledge_settings
@@ -413,7 +413,7 @@ describeDatabase("path-independent document substrate", () => {
         [guide.pageId],
       )).rejects.toThrow();
 
-      const asset = await createAsset(`substrate-guide-asset-${randomUUID()}`);
+      const asset = await createAsset();
       await expect(admin.query(
         `UPDATE knowledge_settings
          SET global_guide_document_id=$1,updated_at=now()
@@ -436,7 +436,7 @@ describeDatabase("path-independent document substrate", () => {
        FROM knowledge_settings
        WHERE singleton`,
     );
-    const guide = await createPage(`substrate-concurrent-guide-${randomUUID()}`);
+    const guide = await createPage();
     const archiver = new Client({
       connectionString: adminUrl,
       application_name: "context-use-test-guide-archiver",
@@ -500,7 +500,7 @@ describeDatabase("path-independent document substrate", () => {
     }
   });
 
-  test("roles can use only the path-independent capabilities they need", async () => {
+  test("roles can use only the hypermedia capabilities they need", async () => {
     expect((await admin.query<{ allowed: boolean }>(
       `SELECT has_function_privilege(
          'context_use_mcp','replace_source_record_search_chunks(uuid,text[])','EXECUTE'

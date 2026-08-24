@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
-  pathlessPublicationArtifactReceiptSchema,
-  pathlessPublicationEntrypointSchema,
-  pathlessPublicationIntentSchema,
-  pathlessPublicRouteSchema,
+  publicationArtifactReceiptSchema,
+  publicationEntrypointSchema,
+  publicationIntentSchema,
+  publicRouteSchema,
 } from "./index.ts";
 
 const documentId = "00000000-0000-4000-8000-000000000010";
@@ -39,8 +39,8 @@ const assetReceipt = {
   public_duration_seconds: null,
 };
 
-describe("pathless publication shared contracts", () => {
-  test("accepts exactly four pathless intent variants", () => {
+describe("publication shared contracts", () => {
+  test("accepts exactly four intent variants", () => {
     for (const intent of [
       {
         action: "publish",
@@ -52,7 +52,7 @@ describe("pathless publication shared contracts", () => {
       { action: "publish", target_kind: "asset", target_document_id: documentId },
       { action: "unpublish", target_kind: "asset", target_document_id: documentId },
     ]) {
-      expect(pathlessPublicationIntentSchema.safeParse(intent).success).toBe(true);
+      expect(publicationIntentSchema.safeParse(intent).success).toBe(true);
     }
 
     for (const intent of [
@@ -71,35 +71,35 @@ describe("pathless publication shared contracts", () => {
       },
       { action: "publish", target_kind: "asset", target_document_id: documentId, extra: true },
     ]) {
-      expect(pathlessPublicationIntentSchema.safeParse(intent).success).toBe(false);
+      expect(publicationIntentSchema.safeParse(intent).success).toBe(false);
     }
   });
 
   test("discriminates page and asset staging receipts", () => {
-    expect(pathlessPublicationArtifactReceiptSchema.parse(pageReceipt)).toEqual(pageReceipt);
-    expect(pathlessPublicationArtifactReceiptSchema.parse(assetReceipt)).toEqual(assetReceipt);
-    expect(pathlessPublicationArtifactReceiptSchema.safeParse({
+    expect(publicationArtifactReceiptSchema.parse(pageReceipt)).toEqual(pageReceipt);
+    expect(publicationArtifactReceiptSchema.parse(assetReceipt)).toEqual(assetReceipt);
+    expect(publicationArtifactReceiptSchema.safeParse({
       ...pageReceipt,
       public_filename: "leak.txt",
     }).success).toBe(false);
-    expect(pathlessPublicationArtifactReceiptSchema.safeParse({
+    expect(publicationArtifactReceiptSchema.safeParse({
       ...assetReceipt,
       projected_target_public_ids: [],
     }).success).toBe(false);
-    expect(pathlessPublicationArtifactReceiptSchema.safeParse({
+    expect(publicationArtifactReceiptSchema.safeParse({
       ...pageReceipt,
       representation_token: hash("d"),
     }).success).toBe(false);
 
     const { intent_id: _missingPageIntentId, ...pageWithoutIntentId } = pageReceipt;
     const { intent_id: _missingAssetIntentId, ...assetWithoutIntentId } = assetReceipt;
-    expect(pathlessPublicationArtifactReceiptSchema.safeParse(pageWithoutIntentId).success).toBe(false);
-    expect(pathlessPublicationArtifactReceiptSchema.safeParse(assetWithoutIntentId).success).toBe(false);
-    expect(pathlessPublicationArtifactReceiptSchema.safeParse({
+    expect(publicationArtifactReceiptSchema.safeParse(pageWithoutIntentId).success).toBe(false);
+    expect(publicationArtifactReceiptSchema.safeParse(assetWithoutIntentId).success).toBe(false);
+    expect(publicationArtifactReceiptSchema.safeParse({
       ...pageReceipt,
       intentId: pageIntentId,
     }).success).toBe(false);
-    expect(pathlessPublicationArtifactReceiptSchema.safeParse({
+    expect(publicationArtifactReceiptSchema.safeParse({
       ...pageReceipt,
       target_kind: "asset",
       intent_id: assetIntentId,
@@ -107,56 +107,56 @@ describe("pathless publication shared contracts", () => {
   });
 
   test("enforces receipt hashes, metadata bounds, and timestamp syntax", () => {
-    expect(pathlessPublicationArtifactReceiptSchema.safeParse({
+    expect(publicationArtifactReceiptSchema.safeParse({
       ...pageReceipt,
       body_content_hash: "A".repeat(64),
     }).success).toBe(false);
-    expect(pathlessPublicationArtifactReceiptSchema.safeParse({
+    expect(publicationArtifactReceiptSchema.safeParse({
       ...pageReceipt,
       projection_receipt_hash: "a".repeat(63),
     }).success).toBe(false);
-    expect(pathlessPublicationArtifactReceiptSchema.safeParse({
+    expect(publicationArtifactReceiptSchema.safeParse({
       ...pageReceipt,
       body_size_bytes: 4_000_001,
     }).success).toBe(false);
-    expect(pathlessPublicationArtifactReceiptSchema.safeParse({
+    expect(publicationArtifactReceiptSchema.safeParse({
       ...pageReceipt,
       public_title: "x".repeat(241),
     }).success).toBe(false);
-    expect(pathlessPublicationArtifactReceiptSchema.safeParse({
+    expect(publicationArtifactReceiptSchema.safeParse({
       ...pageReceipt,
       public_summary: "first\nsecond",
     }).success).toBe(false);
-    expect(pathlessPublicationArtifactReceiptSchema.safeParse({
+    expect(publicationArtifactReceiptSchema.safeParse({
       ...pageReceipt,
       public_last_edited_at: "2026-08-23 12:34:56",
     }).success).toBe(false);
-    expect(pathlessPublicationArtifactReceiptSchema.safeParse({
+    expect(publicationArtifactReceiptSchema.safeParse({
       ...assetReceipt,
       public_filename: "../portrait.jpg",
     }).success).toBe(false);
-    expect(pathlessPublicationArtifactReceiptSchema.safeParse({
+    expect(publicationArtifactReceiptSchema.safeParse({
       ...assetReceipt,
       public_content_type: "image/jpeg\r\nX-Leak: 1",
     }).success).toBe(false);
-    expect(pathlessPublicationArtifactReceiptSchema.safeParse({
+    expect(publicationArtifactReceiptSchema.safeParse({
       ...assetReceipt,
       public_width: 0,
     }).success).toBe(false);
-    expect(pathlessPublicationArtifactReceiptSchema.safeParse({
+    expect(publicationArtifactReceiptSchema.safeParse({
       ...assetReceipt,
       body_size_bytes: 5_000_000_001,
     }).success).toBe(false);
-    expect(pathlessPublicationArtifactReceiptSchema.safeParse({
+    expect(publicationArtifactReceiptSchema.safeParse({
       ...assetReceipt,
       public_duration_seconds: "1234567890.12345678901234567890",
     }).success).toBe(true);
-    expect(pathlessPublicationArtifactReceiptSchema.safeParse({
+    expect(publicationArtifactReceiptSchema.safeParse({
       ...assetReceipt,
       public_duration_seconds: 1.25,
     }).success).toBe(false);
     for (const duration of ["-1", "+1", "01", "1e3", ".5", "1."]) {
-      expect(pathlessPublicationArtifactReceiptSchema.safeParse({
+      expect(publicationArtifactReceiptSchema.safeParse({
         ...assetReceipt,
         public_duration_seconds: duration,
       }).success).toBe(false);
@@ -164,20 +164,20 @@ describe("pathless publication shared contracts", () => {
   });
 
   test("requires bounded, sorted, unique lowercase UUID arrays", () => {
-    expect(pathlessPublicationArtifactReceiptSchema.safeParse({
+    expect(publicationArtifactReceiptSchema.safeParse({
       ...pageReceipt,
       projected_target_public_ids: [secondPublicId, firstPublicId],
     }).success).toBe(false);
-    expect(pathlessPublicationArtifactReceiptSchema.safeParse({
+    expect(publicationArtifactReceiptSchema.safeParse({
       ...pageReceipt,
       projected_target_public_ids: [firstPublicId, firstPublicId],
     }).success).toBe(false);
-    expect(pathlessPublicationArtifactReceiptSchema.safeParse({
+    expect(publicationArtifactReceiptSchema.safeParse({
       ...pageReceipt,
       projected_target_public_ids: [firstPublicId.toUpperCase()],
       observed_public_uuid_tokens: [firstPublicId.toUpperCase()],
     }).success).toBe(false);
-    expect(pathlessPublicationArtifactReceiptSchema.safeParse({
+    expect(publicationArtifactReceiptSchema.safeParse({
       ...pageReceipt,
       observed_public_uuid_tokens: [firstPublicId],
     }).success).toBe(false);
@@ -185,7 +185,7 @@ describe("pathless publication shared contracts", () => {
     const tooManyIds = Array.from({ length: 100_001 }, (_, index) => (
       `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`
     ));
-    expect(pathlessPublicationArtifactReceiptSchema.safeParse({
+    expect(publicationArtifactReceiptSchema.safeParse({
       ...pageReceipt,
       projected_target_public_ids: tooManyIds,
     }).success).toBe(false);
@@ -202,7 +202,7 @@ describe("pathless publication shared contracts", () => {
       "/a/media/portrait",
       `/a/${firstPublicId}`,
     ]) {
-      expect(pathlessPublicRouteSchema.safeParse(route).success).toBe(true);
+      expect(publicRouteSchema.safeParse(route).success).toBe(true);
     }
     for (const route of [
       "/p",
@@ -218,17 +218,17 @@ describe("pathless publication shared contracts", () => {
       "https://example.test/p/about",
       `/p/${"a".repeat(513)}`,
     ]) {
-      expect(pathlessPublicRouteSchema.safeParse(route).success).toBe(false);
+      expect(publicRouteSchema.safeParse(route).success).toBe(false);
     }
   });
 
-  test("sets or clears the independent pathless entrypoint by public identity", () => {
-    expect(pathlessPublicationEntrypointSchema.parse({ public_id: firstPublicId })).toEqual({
+  test("sets or clears the entrypoint by public identity", () => {
+    expect(publicationEntrypointSchema.parse({ public_id: firstPublicId })).toEqual({
       public_id: firstPublicId,
     });
-    expect(pathlessPublicationEntrypointSchema.parse({ public_id: null })).toEqual({ public_id: null });
-    expect(pathlessPublicationEntrypointSchema.safeParse({ entrypoint_public_id: firstPublicId }).success)
+    expect(publicationEntrypointSchema.parse({ public_id: null })).toEqual({ public_id: null });
+    expect(publicationEntrypointSchema.safeParse({ entrypoint_public_id: firstPublicId }).success)
       .toBe(false);
-    expect(pathlessPublicationEntrypointSchema.safeParse({}).success).toBe(false);
+    expect(publicationEntrypointSchema.safeParse({}).success).toBe(false);
   });
 });

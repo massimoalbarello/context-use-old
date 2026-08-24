@@ -96,7 +96,7 @@ describeDatabase("PostgreSQL security roles", () => {
     return value;
   }
 
-  test("filesystem-era knowledge columns and tables are absent", async () => {
+  test("the knowledge catalog contains only hypermedia identity fields", async () => {
     const obsolete = await admin.query(
       `SELECT table_name,column_name FROM information_schema.columns
        WHERE table_schema='public' AND (
@@ -183,15 +183,6 @@ describeDatabase("PostgreSQL security roles", () => {
       );
       expect(confirmation.rows[0]?.allowed).toBe(true);
     }
-  });
-
-  test("retired corpus migration and publication adoption boundaries are absent", async () => {
-    const objects = await admin.query<{ relation: string | null; routine: string | null }>(
-      `SELECT to_regclass('public.pathless_publication_adoptions')::text AS relation,
-         to_regprocedure('public.list_pathless_publication_adoption_candidates()')::text
-           AS routine`,
-    );
-    expect(objects.rows[0]).toEqual({ relation: null, routine: null });
   });
 
   test("fresh hypermedia bootstrap allocations remain corpus-only and immutable", async () => {
@@ -401,9 +392,6 @@ describeDatabase("PostgreSQL security roles", () => {
         )).rows[0]?.allowed).toBe(false);
       }
     }
-    expect((await admin.query<{ relation: string | null }>(
-      "SELECT to_regclass('publication_intents')::text AS relation",
-    )).rows[0]?.relation).toBeNull();
   });
 
   test("the retired reset owner is inert", async () => {
@@ -535,8 +523,8 @@ describeDatabase("PostgreSQL security roles", () => {
     }
 
     for (const [relation, column] of [
-      ["published_page_artifacts", "body_object_key"],
-      ["published_page_artifacts", "body_content_hash"],
+      ["retained_page_artifacts", "body_object_key"],
+      ["retained_page_artifacts", "body_content_hash"],
     ]) {
       expect((await admin.query<{ allowed: boolean }>(
         "SELECT has_column_privilege('context_use_dashboard',$1,$2,'SELECT') AS allowed",
@@ -549,18 +537,14 @@ describeDatabase("PostgreSQL security roles", () => {
     }
   });
 
-  test("pathless revision and catalog boundaries enforce their real service roles", async () => {
+  test("revision and catalog boundaries enforce their service roles", async () => {
     const authoredDocumentId = randomUUID();
     const authoredRevisionId = randomUUID();
-    const adoptedDocumentId = randomUUID();
-    const adoptedRevisionId = randomUUID();
-    const suffix = randomUUID().slice(0, 8);
-    const body = "Role-bound pathless body";
+    const body = "Role-bound document body";
     const bodyHash = createHash("sha256").update(body).digest("hex");
     const insertFixture = async (
       documentId: string,
       revisionId: string,
-      _fixtureLabel: string,
       title: string,
     ): Promise<void> => {
       await admin.query(
@@ -585,7 +569,7 @@ describeDatabase("PostgreSQL security roles", () => {
       await admin.query(
         `INSERT INTO knowledge_page_versions(
            id,page_id,version_number,title,summary,commit_message,actor_kind,actor_subject
-         ) VALUES ($1,$2,1,$3,'Role fixture.','Create pathless role fixture','dashboard','owner')`,
+         ) VALUES ($1,$2,1,$3,'Role fixture.','Create role fixture','dashboard','owner')`,
         [revisionId, documentId, title],
       );
     };
@@ -596,16 +580,8 @@ describeDatabase("PostgreSQL security roles", () => {
       await insertFixture(
         authoredDocumentId,
         authoredRevisionId,
-        `tests/pathless-authored-${suffix}`,
         "Authored role boundary",
       );
-      await insertFixture(
-        adoptedDocumentId,
-        adoptedRevisionId,
-        `tests/pathless-adopted-${suffix}`,
-        "Adopted role boundary",
-      );
-
       await admin.query("SET LOCAL ROLE context_use_dashboard");
       expect((await admin.query(
         "SELECT register_generic_knowledge_revision($1,$2,'{}'::uuid[])",
@@ -621,11 +597,7 @@ describeDatabase("PostgreSQL security roles", () => {
          ) WHERE search_document_id=$1`,
         [authoredDocumentId],
       )).rowCount).toBe(1);
-      await expectDenied("SELECT * FROM pathless_knowledge_search_chunks");
-      await expectDenied(
-        "SELECT adopt_generic_knowledge_revision($1,$2,$3,'{}'::uuid[],'corpus_migration')",
-        [adoptedDocumentId, adoptedRevisionId, body],
-      );
+      await expectDenied("SELECT * FROM knowledge_search_chunks");
       await admin.query("RESET ROLE");
 
       await admin.query("SET LOCAL ROLE context_use_mcp");
@@ -637,14 +609,7 @@ describeDatabase("PostgreSQL security roles", () => {
         "SELECT 1 FROM knowledge_revision_contracts WHERE revision_id=$1",
         [authoredRevisionId],
       )).rowCount).toBe(1);
-      await expectDenied("SELECT * FROM pathless_knowledge_search_chunks");
-      await admin.query("RESET ROLE");
-
-      await admin.query("SET LOCAL ROLE context_use_corpus");
-      expect((await admin.query(
-        "SELECT adopt_generic_knowledge_revision($1,$2,$3,'{}'::uuid[],'corpus_migration')",
-        [adoptedDocumentId, adoptedRevisionId, body],
-      )).rowCount).toBe(1);
+      await expectDenied("SELECT * FROM knowledge_search_chunks");
       await admin.query("RESET ROLE");
 
       await admin.query("SET LOCAL ROLE context_use_dashboard");
@@ -663,8 +628,8 @@ describeDatabase("PostgreSQL security roles", () => {
       ]) {
         for (const relation of [
           "knowledge_revision_contracts",
-          "pathless_knowledge_search",
-          "pathless_knowledge_search_chunks",
+          "knowledge_search",
+          "knowledge_search_chunks",
           "private_document_catalog",
         ]) {
           expect((await admin.query<{ allowed: boolean }>(
@@ -675,7 +640,6 @@ describeDatabase("PostgreSQL security roles", () => {
         for (const fn of [
           "record_generic_knowledge_revision(uuid,uuid,text,uuid[],knowledge_revision_contract_provenance)",
           "register_generic_knowledge_revision(uuid,text,uuid[])",
-          "adopt_generic_knowledge_revision(uuid,uuid,text,uuid[],knowledge_revision_contract_provenance)",
           "search_private_document_catalog(text,real,bigint,uuid,boolean,integer,hypermedia_document_authority,hypermedia_document_representation,private_document_kind,private_document_lifecycle,text,private_document_operational_role)",
         ]) {
           expect((await admin.query<{ allowed: boolean }>(
@@ -801,7 +765,7 @@ describeDatabase("PostgreSQL security roles", () => {
     }
   });
 
-  test("pathless publication namespace boundaries are non-login owned and backup-readable", async () => {
+  test("publication namespace boundaries are non-login owned and backup-readable", async () => {
     const views = await admin.query<{ relname: string; owner: string }>(
       `SELECT relname,pg_get_userbyid(relowner) AS owner
        FROM pg_class
@@ -879,18 +843,18 @@ describeDatabase("PostgreSQL security roles", () => {
       "guard_private_uuid_columns",
       "guard_public_resource_identity",
       "lock_public_uuid_namespace",
-      "protect_active_pathless_asset_publication",
-      "protect_active_pathless_page_publication",
+      "protect_active_asset_publication",
+      "protect_active_page_publication",
       "public_uuid_has_artifact_identity",
       "public_uuid_has_legacy_alias_token",
       "public_uuid_has_private_identity",
       "public_uuid_has_reserved_public_identity",
-      "reject_pending_pathless_publication_claim_challenge",
-      "require_finalized_pathless_publication_object_claim",
-      "reserve_legacy_page_artifact_identity",
+      "reject_pending_publication_claim_challenge",
+      "require_finalized_publication_object_claim",
+      "reserve_retained_page_artifact_identity",
       "reserve_public_artifact_identity",
-      "guard_pathless_publication_object_claim_history",
-      "validate_active_pathless_publication_pin",
+      "guard_publication_object_claim_history",
+      "validate_active_publication_pin",
     ];
     const functions = await admin.query<{ proname: string; owner: string; security_definer: boolean }>(
       `SELECT proname,pg_get_userbyid(proowner) AS owner,prosecdef AS security_definer
@@ -905,7 +869,7 @@ describeDatabase("PostgreSQL security roles", () => {
       expect(fn.security_definer).toBe(true);
     }
     const dashboardStatus =
-      "get_pathless_dashboard_publication_status(publication_target,uuid)";
+      "get_dashboard_publication_status(publication_target,uuid)";
     expect((await admin.query<{ owner: string; security_definer: boolean }>(
       `SELECT pg_get_userbyid(proowner) AS owner,prosecdef AS security_definer
        FROM pg_proc WHERE oid=$1::regprocedure`,
@@ -974,10 +938,10 @@ describeDatabase("PostgreSQL security roles", () => {
       "blocking_public_namespace_conflicts",
       "live_public_namespace_conflicts",
       "page_publications",
-      "pathless_publication_artifact_staging",
-      "pathless_publication_intents",
-      "pathless_publication_object_claims",
-      "pathless_publication_settings",
+      "publication_artifact_staging",
+      "publication_intents",
+      "publication_object_claims",
+      "publication_settings",
       "public_artifact_id_reservations",
       "public_asset_artifacts",
       "public_namespace_conflicts",
@@ -991,8 +955,8 @@ describeDatabase("PostgreSQL security roles", () => {
     }
 
     const storageClaimFunctions = [
-      "claim_pathless_publication_artifact(uuid,uuid)",
-      "finalize_pathless_publication_artifact_claim(uuid,uuid,publication_target,bigint,text,text,text,timestamp with time zone,text,text,integer,integer,text,uuid[],uuid[],text)",
+      "claim_publication_artifact(uuid,uuid)",
+      "finalize_publication_artifact_claim(uuid,uuid,publication_target,bigint,text,text,text,timestamp with time zone,text,text,integer,integer,text,uuid[],uuid[],text)",
     ];
     for (const fn of storageClaimFunctions) {
       expect((await admin.query<{ owner: string; security_definer: boolean }>(
@@ -1000,7 +964,7 @@ describeDatabase("PostgreSQL security roles", () => {
          FROM pg_proc WHERE oid=$1::regprocedure`,
         [fn],
       )).rows[0]).toEqual({
-        owner: "context_use_pathless_storage_owner",
+        owner: "context_use_storage_owner",
         security_definer: true,
       });
       expect((await admin.query<{ allowed: boolean }>(
@@ -1218,7 +1182,7 @@ describeDatabase("PostgreSQL security roles", () => {
        ]) AS name`,
     );
     expect(retiredViews.rows.every(({ relation }) => relation === null)).toBe(true);
-    for (const relation of ["pathless_public_pages", "pathless_public_assets"]) {
+    for (const relation of ["public_pages", "public_assets"]) {
       expect((await admin.query<{ allowed: boolean }>(
         "SELECT has_table_privilege('context_use_public',$1,'SELECT') AS allowed",
         [relation],
@@ -1227,15 +1191,6 @@ describeDatabase("PostgreSQL security roles", () => {
     expect((await admin.query<{ relation: string | null }>(
       "SELECT to_regclass('public.published_page_sources')::text AS relation",
     )).rows[0]?.relation).toBeNull();
-    for (const column of ["singleton", "entrypoint_page_id"]) {
-      expect((await admin.query<{ allowed: boolean }>(
-        "SELECT has_column_privilege('context_use_corpus','public_knowledge_settings',$1,'SELECT') AS allowed",
-        [column],
-      )).rows[0]?.allowed).toBe(true);
-    }
-    expect((await admin.query<{ allowed: boolean }>(
-      "SELECT has_table_privilege('context_use_corpus','public_knowledge_settings','UPDATE') AS allowed",
-    )).rows[0]?.allowed).toBe(false);
   });
 
   test("storage role can reconcile private objects without granting that access to public services", async () => {
@@ -1378,9 +1333,6 @@ describeDatabase("PostgreSQL security roles", () => {
       provenance_columns: "0",
     });
 
-    expect((await admin.query<{ relation: string | null }>(
-      "SELECT to_regclass('publication_intents')::text AS relation",
-    )).rows[0]?.relation).toBeNull();
   });
 
   test("application-level knowledge restore is absent", async () => {

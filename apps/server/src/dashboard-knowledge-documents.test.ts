@@ -4,7 +4,7 @@ import {
   dashboardKnowledgeDocument,
   dashboardKnowledgeRevision,
   dashboardKnowledgeRevisionDelta,
-  dashboardPathlessRepublicationReview,
+  dashboardRepublicationReview,
 } from "./dashboard-knowledge-documents.ts";
 
 const revision: KnowledgeDocumentRevision = {
@@ -23,7 +23,7 @@ const revision: KnowledgeDocumentRevision = {
   target_document_ids: ["33333333-3333-4333-8333-333333333333"],
 };
 
-describe("pathless dashboard knowledge responses", () => {
+describe("canonical dashboard knowledge responses", () => {
   test("projects document content without compatibility paths or object locators", () => {
     const document: KnowledgeDocument = {
       document_id: revision.document_id,
@@ -34,7 +34,7 @@ describe("pathless dashboard knowledge responses", () => {
       summary: revision.summary,
       archived_at: null,
       current_link_contract: "generic_document_v1",
-      pathless_search_ready: true,
+      search_ready: true,
       created_at: revision.created_at,
       updated_at: revision.created_at,
       body_markdown: revision.body_markdown,
@@ -55,7 +55,7 @@ describe("pathless dashboard knowledge responses", () => {
     expect(projected).not.toHaveProperty("path");
     expect(projected).not.toHaveProperty("current_path");
     expect(projected).not.toHaveProperty("body_object_key");
-    expect(projected).not.toHaveProperty("pathless_published");
+    expect(projected).not.toHaveProperty("canonical_published");
   });
 
   test("projects revisions and computes title, summary and Markdown changes only", async () => {
@@ -92,7 +92,7 @@ describe("pathless dashboard knowledge responses", () => {
       summary: "Navigation follows folders.",
       body_markdown: "Old body",
     };
-    const review = await dashboardPathlessRepublicationReview(
+    const review = await dashboardRepublicationReview(
       published,
       revision,
       [revision],
