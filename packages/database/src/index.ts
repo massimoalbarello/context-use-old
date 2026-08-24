@@ -133,17 +133,8 @@ export {
   type PathlessStorageRoute,
 } from "./pathless-publication.ts";
 export {
-  extractAssetLinks,
   extractDocumentLinks,
-  extractDirectoryLinks,
-  extractPageLinks,
-  extractWikiLinks,
-  mapMarkdownOutsideCode,
   MAX_DOCUMENT_LINKS_PER_REVISION,
-  normalizeInternalDocumentLinks,
-  normalizeInternalPageLinks,
-  wikiLinkCandidatePaths,
-  type WikiLink,
 } from "./links.ts";
 export {
   AutomationRegistryIdentityConflictError,

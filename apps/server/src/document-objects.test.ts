@@ -9,7 +9,7 @@ import type { ObjectStorageBackend } from "./storage.ts";
 import { MemoryObjectStorage } from "./test-object-storage.ts";
 
 describe("knowledge document object reconciliation", () => {
-  test("indexes every stored revision, including an empty resolved target set", async () => {
+  test("indexes only canonical links in every stored revision", async () => {
     const storage = new MemoryObjectStorage();
     const revisionId = "11111111-1111-4111-8111-111111111111";
     const targetId = "22222222-2222-4222-8222-222222222222";

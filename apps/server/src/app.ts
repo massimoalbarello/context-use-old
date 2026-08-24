@@ -143,20 +143,6 @@ function privateDocumentResolvers() {
         href: `/app/documents/${id}`,
       };
     },
-    page: async (id: string) => {
-      const document = await dashboardDocumentCatalog.get(id);
-      return document?.document_kind === "knowledge" && document.lifecycle === "active"
-        ? { available: true as const, href: `/app/documents/${id}` }
-        : { available: false as const };
-    },
-    directory: async () => ({ available: false as const }),
-    pagePath: async () => ({ available: false as const }),
-    asset: async (id: string) => {
-      const asset = await dashboardAssets.get(id);
-      return asset
-        ? { available: true as const, href: `/api/dashboard/assets/${id}/content`, contentType: asset.content_type }
-        : { available: false as const };
-    },
   };
 }
 
@@ -277,10 +263,6 @@ function pathlessPreviewTargets(
             : { available: true as const, representation: "page" as const, href: target.href }
           : { available: false as const };
       },
-      page: async () => ({ available: false as const }),
-      directory: async () => ({ available: false as const }),
-      pagePath: async () => ({ available: false as const }),
-      asset: async () => ({ available: false as const }),
     },
   };
 }

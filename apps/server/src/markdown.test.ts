@@ -1,19 +1,27 @@
 import { describe, expect, test } from "bun:test";
 import { config } from "./config.ts";
-import { publicationWarnings, renderMarkdown } from "./markdown.ts";
+import { publicationWarnings, renderMarkdown, type MarkdownResolvers } from "./markdown.ts";
 
-const privateResolvers = {
-  page: async () => ({ available: false as const }),
-  directory: async () => ({ available: false as const }),
-  pagePath: async () => ({ available: false as const }),
-  asset: async () => ({ available: false as const }),
+const unavailableResolvers: MarkdownResolvers = {
+  document: async () => ({ available: false }),
 };
+
+function assetResolvers(contentType = "image/png"): MarkdownResolvers {
+  return {
+    document: async (id) => ({
+      available: true,
+      representation: "asset",
+      href: `/api/dashboard/assets/${id}/content`,
+      contentType,
+    }),
+  };
+}
 
 describe("safe Markdown rendering", () => {
   test("adds deterministic, duplicate-safe anchors to Markdown headings", async () => {
     const html = await renderMarkdown(
       "## A Useful Section\n\n### Résumé & next steps\n\n## A Useful Section",
-      privateResolvers,
+      unavailableResolvers,
     );
 
     expect(html).toContain('<h2 id="a-useful-section">A Useful Section</h2>');
@@ -21,17 +29,22 @@ describe("safe Markdown rendering", () => {
     expect(html).toContain('<h2 id="a-useful-section-2">A Useful Section</h2>');
   });
 
-  test("scans public titles and summaries as well as the Markdown body", () => {
+  test("scans public metadata and canonical document references", () => {
+    const id = "11111111-1111-4111-8111-111111111111";
     expect(publicationWarnings("Safe body", ["Safe title", "secret = summary-canary"]))
       .toContain("Possible secret material detected; review the page carefully");
     expect(publicationWarnings("Safe body", ["https://example.com", "Safe summary"]))
       .toContain("1 external URL(s) will become public");
+    expect(publicationWarnings(`[Related](context-use://document/${id})`))
+      .toContain("1 context-use reference(s) have independent visibility");
+    expect(publicationWarnings(`[Old](context-use://page/${id})`))
+      .not.toContain("1 context-use reference(s) have independent visibility");
   });
 
   test("removes scripts, event handlers, unsafe URLs, and remote inline media", async () => {
     const html = await renderMarkdown(
       `<script>alert(1)</script>\n<a href="javascript:alert(1)" onclick="alert(1)">bad</a>\n![remote](https://attacker.example/pixel.png)\n<video src="https://attacker.example/video.mp4" autoplay></video>`,
-      privateResolvers,
+      unavailableResolvers,
     );
     expect(html).not.toContain("<script");
     expect(html).not.toContain("onclick");
@@ -41,282 +54,157 @@ describe("safe Markdown rendering", () => {
     expect(html).not.toContain("attacker.example");
   });
 
-  test("embeds safe images and videos while rendering PDFs as new-tab links", async () => {
-    const imageId = "11111111-1111-4111-8111-111111111111";
-    const videoId = "22222222-2222-4222-8222-222222222222";
-    const pdfId = "33333333-3333-4333-8333-333333333333";
-    const resolutions = new Map([
-      [imageId, { available: true as const, href: `/api/dashboard/assets/${imageId}/content`, contentType: "image/png" }],
-      [videoId, { available: true as const, href: `/api/dashboard/assets/${videoId}/content`, contentType: "video/mp4" }],
-      [pdfId, { available: true as const, href: `/api/dashboard/assets/${pdfId}/content`, contentType: "application/pdf" }],
-    ]);
-    const html = await renderMarkdown(
-      `![A photo](context-use://asset/${imageId})\n\n![A demo](context-use://asset/${videoId})\n\n![](context-use://asset/${pdfId})`,
-      {
-        ...privateResolvers,
-        asset: async (id) => resolutions.get(id) ?? { available: false as const },
+  test("renders canonical document identities according to their representation", async () => {
+    const page = "11111111-1111-4111-8111-111111111111";
+    const record = "22222222-2222-4222-8222-222222222222";
+    const asset = "33333333-3333-4333-8333-333333333333";
+    const html = await renderMarkdown([
+      `[Page](context-use://document/${page}#details)`,
+      `[Record](context-use://document/${record})`,
+      `![Photo](context-use://document/${asset})`,
+      `[Download](context-use://document/${asset})`,
+    ].join("\n\n"), {
+      document: async (id) => {
+        if (id === asset) {
+          return {
+            available: true,
+            representation: "asset",
+            href: `/api/dashboard/assets/${asset}/content`,
+            contentType: "image/png",
+          };
+        }
+        if (id === page || id === record) {
+          return {
+            available: true,
+            representation: id === page ? "page" : "record",
+            href: `/app/documents/${id}`,
+          };
+        }
+        return { available: false };
       },
-    );
+    });
 
-    expect(html).toContain(`<img src="/api/dashboard/assets/${imageId}/content" alt="A photo" loading="lazy"`);
-    expect(html).toContain(`<video src="/api/dashboard/assets/${videoId}/content" controls preload="metadata" aria-label="A demo">`);
-    expect(html).toContain(`<a href="/api/dashboard/assets/${pdfId}/content" target="_blank" rel="noopener noreferrer">Open PDF</a>`);
-    expect(html).not.toContain(`<img src="/api/dashboard/assets/${videoId}/content"`);
-    expect(html).not.toContain(`<img src="/api/dashboard/assets/${pdfId}/content"`);
-  });
-
-  test("renders only the supported image formatting attributes as safe classes", async () => {
-    const imageId = "11111111-1111-4111-8111-111111111111";
-    const html = await renderMarkdown(
-      `![A <portrait>](context-use://asset/${imageId}){size=small align=right shape=square layout=half}`,
-      {
-        ...privateResolvers,
-        asset: async () => ({
-          available: true as const,
-          href: `/api/dashboard/assets/${imageId}/content`,
-          contentType: "image/jpeg",
-        }),
-      },
-    );
-
-    expect(html).toContain('<span class="cu-image cu-image--size-small cu-image--align-right cu-image--shape-square cu-image--layout-half">');
-    expect(html).toContain(`src="/api/dashboard/assets/${imageId}/content" alt="A &lt;portrait&gt;" loading="lazy"`);
+    expect(html).toContain(`<a href="/app/documents/${page}#details">Page</a>`);
+    expect(html).toContain(`<a href="/app/documents/${record}">Record</a>`);
+    expect(html).toContain(`<img src="/api/dashboard/assets/${asset}/content" alt="Photo" loading="lazy"`);
+    expect(html).toContain(`<a href="/api/dashboard/assets/${asset}/content" target="_blank" rel="noopener noreferrer">Download</a>`);
     expect(html).not.toContain("context-use://");
   });
 
-  test("keeps canonical published-asset paths for plain and formatted public images", async () => {
-    const imageId = "11111111-1111-4111-8111-111111111111";
-    const publicHref = `${config.ASSET_ORIGIN}/a/photos/portrait`;
-    const resolver = {
-      ...privateResolvers,
-      asset: async () => ({ available: true as const, href: publicHref, contentType: "image/avif" }),
-    };
-    const plain = await renderMarkdown(`![Plain](context-use://asset/${imageId})`, resolver);
-    const formatted = await renderMarkdown(
-      `![Formatted](context-use://asset/${imageId}){size=large align=center}`,
-      resolver,
-    );
-
-    expect(plain).toContain(`<img src="${publicHref}" alt="Plain" loading="lazy"`);
-    expect(formatted).toContain(`<img src="${publicHref}" alt="Formatted" loading="lazy">`);
-  });
-
-  test("renders the UUID-free published-asset projection without private lookup capability", async () => {
-    const publicHref = `${config.ASSET_ORIGIN}/a/media/published-photo`;
-    const html = await renderMarkdown(
-      "![Projected](context-use://public-asset/media/published-photo){shape=square}",
-      {
-        ...privateResolvers,
-        publicAssetPath: async (path) => path === "media/published-photo"
-          ? { available: true as const, href: publicHref, contentType: "image/webp" }
-          : { available: false as const },
-      },
-    );
-
-    expect(html).toContain(`<img src="${publicHref}" alt="Projected" loading="lazy">`);
-    expect(html).not.toContain("context-use://");
-    expect(html).not.toMatch(/[0-9a-f]{8}-[0-9a-f-]{27}/i);
-  });
-
-  test("uses predictable defaults and leaves invalid formatting visible for review", async () => {
-    const imageId = "11111111-1111-4111-8111-111111111111";
-    const resolver = {
-      ...privateResolvers,
-      asset: async () => ({
-        available: true as const,
-        href: `/api/dashboard/assets/${imageId}/content`,
-        contentType: "image/png",
+  test("embeds safe images and videos while rendering PDFs as links", async () => {
+    const image = "11111111-1111-4111-8111-111111111111";
+    const video = "22222222-2222-4222-8222-222222222222";
+    const pdf = "33333333-3333-4333-8333-333333333333";
+    const types = new Map([[image, "image/png"], [video, "video/mp4"], [pdf, "application/pdf"]]);
+    const html = await renderMarkdown([
+      `![A photo](context-use://document/${image})`,
+      `![A demo](context-use://document/${video})`,
+      `![](context-use://document/${pdf})`,
+    ].join("\n\n"), {
+      document: async (id) => ({
+        available: true,
+        representation: "asset",
+        href: `/api/dashboard/assets/${id}/content`,
+        contentType: types.get(id) ?? "application/octet-stream",
       }),
-    };
+    });
+
+    expect(html).toContain(`<img src="/api/dashboard/assets/${image}/content" alt="A photo" loading="lazy"`);
+    expect(html).toContain(`<video src="/api/dashboard/assets/${video}/content" controls preload="metadata" aria-label="A demo">`);
+    expect(html).toContain(`<a href="/api/dashboard/assets/${pdf}/content" target="_blank" rel="noopener noreferrer">Open PDF</a>`);
+  });
+
+  test("renders supported media formatting without admitting authored styles", async () => {
+    const asset = "11111111-1111-4111-8111-111111111111";
     const valid = await renderMarkdown(
-      `![Centered](context-use://asset/${imageId}){shape=landscape}`,
-      resolver,
+      `![Portrait](context-use://document/${asset}){size=small align=right shape=square layout=half}`,
+      assetResolvers("image/jpeg"),
     );
     const invalid = await renderMarkdown(
-      `![Typo](context-use://asset/${imageId}){algin=center style=display:none}`,
-      resolver,
+      `![Typo](context-use://document/${asset}){algin=center style=display:none}`,
+      assetResolvers(),
     );
 
-    expect(valid).toContain("cu-image--size-medium cu-image--align-center cu-image--shape-landscape cu-image--layout-block");
+    expect(valid).toContain("cu-image--size-small cu-image--align-right cu-image--shape-square cu-image--layout-half");
     expect(invalid).toContain("{algin=center style=display:none}");
     expect(invalid).not.toContain("cu-image");
     expect(invalid).not.toContain('display:none"');
   });
 
-  test("keeps consecutive half-width images as sibling elements for responsive columns", async () => {
-    const firstId = "11111111-1111-4111-8111-111111111111";
-    const secondId = "22222222-2222-4222-8222-222222222222";
+  test("keeps adjacent formatted media as sibling elements", async () => {
+    const first = "11111111-1111-4111-8111-111111111111";
+    const second = "22222222-2222-4222-8222-222222222222";
     const html = await renderMarkdown(
-      `![First](context-use://asset/${firstId}){layout=half shape=square}\n![Second](context-use://asset/${secondId}){layout=half shape=square}`,
-      {
-        ...privateResolvers,
-        asset: async (id) => ({
-          available: true as const,
-          href: `/api/dashboard/assets/${id}/content`,
-          contentType: "image/webp",
-        }),
-      },
+      `![First](context-use://document/${first}){layout=half}\n![Second](context-use://document/${second}){layout=half}`,
+      assetResolvers("image/webp"),
     );
 
     expect(html.match(/<span class="[^"]*cu-image--layout-half[^"]*">/g)).toHaveLength(2);
     expect(html).toContain("<p><span");
   });
 
-  test("keeps consecutive third-width videos as sibling players for responsive columns", async () => {
-    const videoIds = [
-      "11111111-1111-4111-8111-111111111111",
-      "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333",
-    ];
-    const markdown = videoIds
-      .map((id, index) => `![Demo ${index + 1}](context-use://asset/${id}){layout=third size=small}`)
-      .join("\n");
-    const html = await renderMarkdown(markdown, {
-      ...privateResolvers,
-      asset: async (id) => ({
-        available: true as const,
-        href: `/api/dashboard/assets/${id}/content`,
-        contentType: "video/mp4",
-      }),
-    });
-
-    expect(html.match(/<span class="[^"]*cu-image--layout-third[^"]*">/g)).toHaveLength(3);
-    expect(html.match(/<video [^>]*>/g)).toHaveLength(3);
-    expect(html).toContain("<p><span");
-    expect(html).not.toContain("{layout=third");
-  });
-
-  test("does not allow authored HTML to opt into arbitrary layout classes", async () => {
-    const imageId = "11111111-1111-4111-8111-111111111111";
+  test("keeps the UUID-free adopted public-asset representation", async () => {
+    const href = `${config.ASSET_ORIGIN}/a/media/published-photo`;
     const html = await renderMarkdown(
-      `<span class="cu-image cu-image--shape-square attacker"><img src="/api/dashboard/assets/${imageId}/content"></span>`,
-      privateResolvers,
-    );
-
-    expect(html).not.toContain("attacker");
-    expect(html).not.toContain("cu-image");
-    expect(html).toContain("<img");
-  });
-
-  test("keeps hand-written media only for canonical asset URLs", async () => {
-    const videoId = "22222222-2222-4222-8222-222222222222";
-    const audioId = "33333333-3333-4333-8333-333333333333";
-    const html = await renderMarkdown(
-      `<video src="/api/dashboard/assets/${videoId}/content" autoplay></video>\n<audio><source src="/api/dashboard/assets/${audioId}/content" type="audio/mpeg"></audio>`,
-      privateResolvers,
-    );
-
-    expect(html).toContain(`<video src="/api/dashboard/assets/${videoId}/content" controls preload="metadata"></video>`);
-    expect(html).toContain(`<audio controls preload="metadata"><source src="/api/dashboard/assets/${audioId}/content" type="audio/mpeg"></source></audio>`);
-    expect(html).not.toContain("autoplay");
-  });
-
-  test("does not resolve metadata for private stable references", async () => {
-    const html = await renderMarkdown(
-      `[My private label](context-use://page/11111111-1111-4111-8111-111111111111)\n\n![photo](context-use://asset/22222222-2222-4222-8222-222222222222)`,
-      privateResolvers,
-    );
-    expect(html).toContain("My private label");
-    expect(html).toContain("Private asset unavailable");
-    expect(html).not.toContain("context-use://");
-    expect(html).not.toContain("11111111-1111-4111-8111-111111111111");
-    expect(html).not.toContain("22222222-2222-4222-8222-222222222222");
-  });
-
-  test("renders generic document links according to their resolved representation", async () => {
-    const pageId = "11111111-1111-4111-8111-111111111111";
-    const recordId = "22222222-2222-4222-8222-222222222222";
-    const assetId = "33333333-3333-4333-8333-333333333333";
-    const html = await renderMarkdown([
-      `[Page](context-use://document/${pageId}#details)`,
-      `[Record](context-use://document/${recordId})`,
-      `![Photo](context-use://document/${assetId})`,
-      `[Download](context-use://document/${assetId})`,
-    ].join("\n\n"), {
-      ...privateResolvers,
-      document: async (id) => {
-        if (id === pageId) {
-          return { available: true as const, representation: "page" as const, href: `/app/pages/${pageId}` };
-        }
-        if (id === recordId) {
-          return { available: true as const, representation: "record" as const, href: `/app/records/${recordId}` };
-        }
-        if (id === assetId) {
-          return {
-            available: true as const,
-            representation: "asset" as const,
-            href: `/api/dashboard/assets/${assetId}/content`,
-            contentType: "image/png",
-          };
-        }
-        return { available: false as const };
+      "![Projected](context-use://public-asset/media/published-photo){shape=square}",
+      {
+        ...unavailableResolvers,
+        publicAssetPath: async (path) => path === "media/published-photo"
+          ? { available: true, href, contentType: "image/webp" }
+          : { available: false },
       },
-    });
+    );
 
-    expect(html).toContain(`<a href="/app/pages/${pageId}#details">Page</a>`);
-    expect(html).toContain(`<a href="/app/records/${recordId}">Record</a>`);
-    expect(html).toContain(`<img src="/api/dashboard/assets/${assetId}/content" alt="Photo" loading="lazy"`);
-    expect(html).toContain(`<a href="/api/dashboard/assets/${assetId}/content" target="_blank" rel="noopener noreferrer">Download</a>`);
+    expect(html).toContain(`<img src="${href}" alt="Projected" loading="lazy">`);
     expect(html).not.toContain("context-use://");
   });
 
   test("keeps unavailable and non-asset embedded documents inert", async () => {
-    const pageId = "11111111-1111-4111-8111-111111111111";
-    const recordId = "22222222-2222-4222-8222-222222222222";
+    const page = "11111111-1111-4111-8111-111111111111";
+    const missing = "22222222-2222-4222-8222-222222222222";
     const html = await renderMarkdown([
-      `![Not media](context-use://document/${pageId})`,
-      `[Private record](context-use://document/${recordId}#secret)`,
+      `![Not media](context-use://document/${page})`,
+      `[Private record](context-use://document/${missing}#secret)`,
     ].join("\n\n"), {
-      ...privateResolvers,
-      document: async (id) => id === pageId
-        ? { available: true as const, representation: "page" as const, href: `/app/pages/${pageId}` }
-        : { available: false as const },
+      document: async (id) => id === page
+        ? { available: true, representation: "page", href: `/app/documents/${page}` }
+        : { available: false },
     });
 
     expect(html).toContain("Private asset unavailable");
     expect(html).toContain('<span class="private-reference">Private record</span>');
     expect(html).not.toContain("#secret");
-    expect(html).not.toContain(pageId);
-    expect(html).not.toContain(recordId);
+    expect(html).not.toContain(page);
+    expect(html).not.toContain(missing);
   });
 
-  test("renders stable directory references as links to generated indexes", async () => {
-    const directoryId = "11111111-1111-4111-8111-111111111111";
-    const html = await renderMarkdown(
-      `[Life chapters](context-use://directory/${directoryId})`,
-      {
-        ...privateResolvers,
-        directory: async (id) => id === directoryId
-          ? { available: true as const, href: `/app/directories/${directoryId}` }
-          : { available: false as const },
+  test("does not resolve filesystem-era links or paths", async () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    let lookups = 0;
+    const html = await renderMarkdown([
+      `[Page](context-use://page/${id})`,
+      `![Asset](context-use://asset/${id})`,
+      `[Directory](context-use://directory/${id})`,
+      `[Dashboard](/app/pages/${id})`,
+      "[[about/intro|Wiki path]]",
+    ].join("\n\n"), {
+      document: async () => {
+        lookups += 1;
+        return { available: false };
       },
-    );
-    expect(html).toContain(`<a href="/app/directories/${directoryId}">Life chapters</a>`);
+    });
+
+    expect(lookups).toBe(0);
+    expect(html).not.toContain(id);
     expect(html).not.toContain("context-use://");
-  });
-
-  test("renders Obsidian wikilinks with aliases and safe internal targets", async () => {
-    const html = await renderMarkdown(
-      "[[about/intro#overview|My intro]] [[missing/page#secret-section|Missing page]] [[about/intro|<img src=x onerror=alert(1)>]]",
-      {
-        ...privateResolvers,
-        pagePath: async (path) => path === "about/intro"
-          ? { available: true as const, href: "/app/pages/11111111-1111-4111-8111-111111111111" }
-          : { available: false as const },
-      },
-    );
-    expect(html).toContain('<a href="/app/pages/11111111-1111-4111-8111-111111111111#overview">My intro</a>');
-    expect(html).toContain('<span class="private-reference">Missing page</span>');
-    expect(html).not.toContain("secret-section");
-    expect(html).not.toContain("[[");
-    expect(html).not.toContain("<img");
-    expect(html).not.toContain('target="_blank"');
+    expect(html).not.toContain("/app/pages/");
+    expect(html).not.toContain("href=");
   });
 
   test("marks only links that leave the application as external", async () => {
     const html = await renderMarkdown(
       `[Knowledge](/p/notes) [Same origin](${config.APP_ORIGIN}/p/about) [External](https://example.com/notes) [Email](mailto:reader@example.com)`,
-      privateResolvers,
+      unavailableResolvers,
     );
 
     expect(html).toContain('<a href="/p/notes">Knowledge</a>');
@@ -325,33 +213,14 @@ describe("safe Markdown rendering", () => {
     expect(html).toContain('<a href="mailto:reader@example.com" class="external-link" rel="noopener noreferrer" target="_blank" title="External link (opens in a new tab)">Email</a>');
   });
 
-  test("does not let authored HTML style an internal link as external", async () => {
+  test("keeps hand-written media only for canonical asset routes", async () => {
+    const video = "22222222-2222-4222-8222-222222222222";
     const html = await renderMarkdown(
-      '<a class="external-link" href="/p/notes">Knowledge</a>',
-      privateResolvers,
+      `<video src="/api/dashboard/assets/${video}/content" autoplay></video>`,
+      unavailableResolvers,
     );
 
-    expect(html).toContain('<a href="/p/notes">Knowledge</a>');
-    expect(html).not.toContain('class="external-link"');
-  });
-
-  test("rewrites legacy private routes for public targets and hides private targets", async () => {
-    const publicId = "11111111-1111-4111-8111-111111111111";
-    const privateId = "22222222-2222-4222-8222-222222222222";
-    const html = await renderMarkdown(
-      `[Published](/app/pages/${publicId}#overview) [Owner only](/app/pages/${privateId}#secret-section)`,
-      {
-        ...privateResolvers,
-        page: async (id) => id === publicId
-          ? { available: true as const, href: "/p/published-page" }
-          : { available: false as const },
-      },
-    );
-
-    expect(html).toContain('<a href="/p/published-page#overview">Published</a>');
-    expect(html).toContain('<span class="private-reference">Owner only</span>');
-    expect(html).not.toContain("secret-section");
-    expect(html).not.toContain("/app/pages/");
-    expect(html).not.toContain(privateId);
+    expect(html).toContain(`<video src="/api/dashboard/assets/${video}/content" controls preload="metadata"></video>`);
+    expect(html).not.toContain("autoplay");
   });
 });

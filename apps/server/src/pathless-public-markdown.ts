@@ -1,7 +1,4 @@
-import {
-  normalizeInternalDocumentLinks,
-  type PathlessPublicationProjectionTarget,
-} from "@context-use/database";
+import type { PathlessPublicationProjectionTarget } from "@context-use/database";
 
 const UUID_SOURCE = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const UUID_GLOBAL = new RegExp(UUID_SOURCE, "gi");
@@ -35,7 +32,7 @@ export function projectPathlessPublicMarkdown(
     return `__CONTEXT_USE_PUBLIC_ROUTE_${index}__`;
   };
 
-  let projected = normalizeInternalDocumentLinks(markdown)
+  let projected = markdown
     .replace(/<!--.*?-->/gis, "")
     .replace(/<!--.*$/gis, "")
     .replace(/<script(?:\s[^>]*)?>.*?<\/script\s*>/gis, "")

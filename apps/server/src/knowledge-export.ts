@@ -4,7 +4,6 @@ import type {
   KnowledgeExportPage,
   KnowledgeExportSnapshot,
 } from "@context-use/database";
-import { normalizeInternalDocumentLinks } from "@context-use/database";
 import type { ObjectStorage } from "./storage.ts";
 import {
   addKnowledgeZipDirectory,
@@ -80,7 +79,7 @@ export function planKnowledgeExport(snapshot: KnowledgeExportSnapshot): PlannedK
     .map((page) => ({
       ...page,
       archivePath: `documents/${page.document_id}.md`,
-      body: normalizeInternalDocumentLinks(page.body_markdown),
+      body: page.body_markdown,
     }));
   const assets = [...snapshot.assets]
     .sort((left, right) => left.document_id.localeCompare(right.document_id))

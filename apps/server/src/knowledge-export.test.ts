@@ -20,8 +20,8 @@ function snapshot(): KnowledgeExportSnapshot {
         title: "Q3 Brief",
         summary: "The current Acme briefing.",
         body_markdown: [
-          `[Other](context-use://page/${documentTwo}#overview)`,
-          `![Site photo](context-use://asset/${assetOne})`,
+          `[Other](context-use://document/${documentTwo}#overview)`,
+          `![Site photo](context-use://document/${assetOne})`,
         ].join("\n\n"),
       },
       {
@@ -90,6 +90,13 @@ describe("portable knowledge export", () => {
     expect(serialized).not.toContain("current_path");
     expect(serialized).not.toContain("public_path");
     expect(serialized).not.toContain("s3_object_key");
+  });
+
+  test("preserves immutable stored Markdown instead of rewriting old private links", () => {
+    const source = snapshot();
+    source.pages[0]!.body_markdown = `[Historical](context-use://page/${documentTwo})`;
+
+    expect(planKnowledgeExport(source).pages[0]!.body).toBe(source.pages[0]!.body_markdown);
   });
 
   test("streams a standard ZIP graph containing the manifest, Markdown and original asset bytes", async () => {
