@@ -160,7 +160,6 @@ async function pathlessPageResponse(
       summary: route.public_summary,
       canonicalPath: route.canonical_path,
       entrypointPublicPath: null,
-      pathless: true,
     },
   ), { headers: htmlHeaders });
 }

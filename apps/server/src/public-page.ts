@@ -12,15 +12,6 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
-type PublicIndexEntry = {
-  kind: "directory" | "page";
-  path: string;
-  title: string | null;
-  summary: string | null;
-  published_count: number;
-  default_page_path: string | null;
-};
-
 type Introduction = {
   title: string;
   summary: string;
@@ -34,7 +25,6 @@ type PublicDocumentMetadata = {
   canonicalPath?: string | undefined;
   profileLinks?: string[] | undefined;
   entrypointPublicPath?: string | null | undefined;
-  pathless?: boolean | undefined;
 };
 
 function normalizedOrigin(value: string): string {
@@ -64,7 +54,7 @@ function renderDocumentMetadata(input: {
   title: string;
   description: string;
   canonicalPath: string;
-  kind: "landing" | "index" | "page";
+  kind: "landing" | "page";
   publicPath?: string | undefined;
   lastEditedAt?: string | Date | undefined;
   metadata: PublicDocumentMetadata;
@@ -99,7 +89,7 @@ function renderDocumentMetadata(input: {
   }];
   if (input.kind !== "landing") {
     graph.push({
-      "@type": isProfile ? "ProfilePage" : input.kind === "index" ? "CollectionPage" : "WebPage",
+      "@type": isProfile ? "ProfilePage" : "WebPage",
       "@id": pageId,
       url: canonicalUrl,
       name: pageTitle,
@@ -144,36 +134,7 @@ function renderDocumentMetadata(input: {
   ].join("");
 }
 
-function humanizePath(path: string): string {
-  const leaf = path.split("/").at(-1) ?? "knowledge";
-  return leaf
-    .split(/[-_]+/)
-    .filter(Boolean)
-    .map((word) => `${word.slice(0, 1).toUpperCase()}${word.slice(1)}`)
-    .join(" ");
-}
-
-function indexHref(path: string): string {
-  return path ? `/p/${path}/` : "/p/";
-}
-
-export function publicPageHref(path: string | null): string | null {
-  return path ? `/p/${path}` : null;
-}
-
-function renderKnowledgeNavigation(currentPath: string, currentLabel: string): string {
-  const segments = currentPath.split("/").filter(Boolean);
-  const knowledge = currentPath
-    ? '<li><span class="breadcrumb-separator" aria-hidden="true">/</span><a href="/p/">Knowledge</a></li>'
-    : "";
-  const ancestors = segments.slice(0, -1).map((segment, position) => {
-    const path = segments.slice(0, position + 1).join("/");
-    return `<li><span class="breadcrumb-separator" aria-hidden="true">/</span><a href="${escapeHtml(indexHref(path))}">${escapeHtml(humanizePath(segment))}</a></li>`;
-  }).join("");
-  return `<nav class="knowledge-navigation" aria-label="Breadcrumb"><ol><li><a href="/">Home</a></li>${knowledge}${ancestors}<li aria-current="page"><span class="breadcrumb-separator" aria-hidden="true">/</span>${escapeHtml(currentLabel)}</li></ol></nav>`;
-}
-
-function renderPathlessNavigation(currentLabel: string): string {
+function renderKnowledgeNavigation(currentLabel: string): string {
   return `<nav class="knowledge-navigation" aria-label="Breadcrumb"><ol><li><a href="/">Home</a></li><li aria-current="page"><span class="breadcrumb-separator" aria-hidden="true">/</span>${escapeHtml(currentLabel)}</li></ol></nav>`;
 }
 
@@ -208,11 +169,7 @@ export function renderPublicPageDocument(
   lastEditedAt?: string | Date,
   metadata: PublicDocumentMetadata = {},
 ): string {
-  const navigation = publicPath === undefined
-    ? ""
-    : metadata.pathless
-      ? renderPathlessNavigation(title)
-      : renderKnowledgeNavigation(publicPath, title);
+  const navigation = publicPath === undefined ? "" : renderKnowledgeNavigation(title);
   const markdownAlternate = publicPath === undefined
     ? ""
     : `<link rel="alternate" type="text/markdown" href="/p/${escapeHtml(publicPath)}.md" title="${escapeHtml(title)} as Markdown">`;
@@ -232,41 +189,6 @@ export function renderPublicPageDocument(
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">${documentMetadata}${markdownAlternate}<link rel="stylesheet" href="/public.css"><link rel="stylesheet" href="/content.css"></head><body><main class="public-page">${navigation}<article>${content}</article>${renderFootnote(publicPath, lastEditedAt)}</main></body></html>`;
 }
 
-export function renderPublicIndexDocument(index: {
-  path: string;
-  title: string;
-  summary?: string | null | undefined;
-  default_page_path: string | null;
-  entries: PublicIndexEntry[];
-  siteOrigin?: string | undefined;
-  introduction?: Introduction | undefined;
-  entrypointPublicPath?: string | null | undefined;
-}): string {
-  const title = index.title;
-  const navigation = renderKnowledgeNavigation(index.path, title);
-  const entries = index.entries.map((entry) => {
-    const entryTitle = entry.title ?? humanizePath(entry.path);
-    const description = entry.summary?.trim() || (entry.kind === "page" ? "Published page." : "Published folder.");
-    const href = entry.kind === "page"
-      ? publicPageHref(entry.path)!
-      : publicPageHref(entry.default_page_path) ?? indexHref(entry.path);
-    return `<li><a href="${href}">${escapeHtml(entryTitle)}</a><span>— ${escapeHtml(description)}</span></li>`;
-  }).join("");
-  const description = index.summary?.trim() || `${title}: browse the published knowledge in this section.`;
-  const documentMetadata = renderDocumentMetadata({
-    title,
-    description,
-    canonicalPath: index.path ? `/p/${index.path}/` : "/p/",
-    kind: "index",
-    metadata: {
-      siteOrigin: index.siteOrigin,
-      introduction: index.introduction,
-      entrypointPublicPath: index.entrypointPublicPath,
-    },
-  });
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">${documentMetadata}<link rel="stylesheet" href="/public.css"></head><body><main class="public-page public-index">${navigation}<header class="public-index-header"><h1>${escapeHtml(title)}</h1>${index.summary?.trim() ? `<p>${escapeHtml(index.summary.trim())}</p>` : ""}</header><ol class="public-index-list">${entries}</ol>${renderFootnote()}</main></body></html>`;
-}
-
 export function renderPublicLandingDocument(options: {
   siteOrigin?: string | undefined;
   introduction?: Introduction | undefined;
@@ -279,10 +201,9 @@ export function renderPublicLandingDocument(options: {
   const heading = profileName
     ? `${escapeHtml(profileName)}’s public context.`
     : "A public billboard<br>for what I choose to share.";
-  const primaryHref = options.entrypointPublicPath
-    ? `/p/${options.entrypointPublicPath}`
-    : "/p/";
-  const primaryLabel = options.introduction ? "Read my biography" : "Explore my knowledge base";
+  const primaryAction = options.entrypointPublicPath
+    ? `<div class="landing-actions"><a class="landing-cta" href="/p/${escapeHtml(options.entrypointPublicPath)}">Read my biography <span aria-hidden="true">→</span></a></div>`
+    : "";
   const documentMetadata = renderDocumentMetadata({
     title: profileName ? `${profileName} — Public knowledge` : "My public context",
     description,
@@ -295,9 +216,9 @@ export function renderPublicLandingDocument(options: {
       entrypointPublicPath: options.entrypointPublicPath,
     },
   });
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">${documentMetadata}<link rel="stylesheet" href="/public.css"></head><body><main class="public-landing"><section class="billboard"><p class="landing-kicker">Public knowledge</p><h1>${heading}</h1><p class="landing-lede">${escapeHtml(description)}</p><div class="landing-actions"><a class="landing-cta" href="${primaryHref}">${primaryLabel} <span aria-hidden="true">→</span></a></div></section><footer class="landing-footer"><p class="landing-credit">self-hosted with ❤️ using <a class="external-link" href="${CONTEXT_USE_URL}" target="_blank" rel="noopener noreferrer" title="External link (opens in a new tab)">context-use</a>.</p><p class="landing-utilities">A self-hostable knowledge base that stays private until I choose otherwise. <a href="/llms.txt" type="text/plain">AI-readable site index</a>.</p></footer></main></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">${documentMetadata}<link rel="stylesheet" href="/public.css"></head><body><main class="public-landing"><section class="billboard"><p class="landing-kicker">Public knowledge</p><h1>${heading}</h1><p class="landing-lede">${escapeHtml(description)}</p>${primaryAction}</section><footer class="landing-footer"><p class="landing-credit">self-hosted with ❤️ using <a class="external-link" href="${CONTEXT_USE_URL}" target="_blank" rel="noopener noreferrer" title="External link (opens in a new tab)">context-use</a>.</p><p class="landing-utilities">A self-hostable knowledge base that stays private until I choose otherwise. <a href="/llms.txt" type="text/plain">AI-readable site index</a>.</p></footer></main></body></html>`;
 }
 
-export const publicPageStyles = `body{margin:0;background:#f7f7f4;color:#20201d;font:17px/1.65 ui-serif,Georgia,serif}.public-page{max-width:760px;margin:8vh auto;padding:0 24px}h1,h2,h3{line-height:1.2}.public-index-header p{max-width:680px;margin:1rem 0 0;color:#66625c;font-size:1.08rem;line-height:1.55}.public-page article :is(h1,h2,h3,h4,h5,h6)[id]{scroll-margin-top:1.5rem}a{color:#315a4a}.public-page article a,.context-use-footnote a{text-underline-offset:.16em}.external-link{text-decoration-style:dotted}.external-link::after{display:inline-block;margin-left:.16em;font:650 .68em/1 ui-sans-serif,system-ui,sans-serif;text-decoration:none;vertical-align:.25em;content:"↗"}.private-reference{color:#777;font-style:italic}pre{overflow:auto;padding:16px;background:#ecece7;border-radius:8px}img,video{max-width:100%;height:auto}video,audio{width:100%}.knowledge-navigation{margin-bottom:3rem;color:#858078;font:600 13px/1.4 ui-sans-serif,system-ui,sans-serif}.knowledge-navigation ol{display:flex;flex-wrap:wrap;align-items:center;gap:.35rem 0;margin:0;padding:0;list-style:none}.breadcrumb-separator{margin:0 .55rem;color:#aaa59d}.knowledge-navigation a{color:#64605a;text-decoration:none}.knowledge-navigation a:hover{text-decoration:underline}.knowledge-navigation [aria-current="page"]{color:#858078}.public-index-header{margin-bottom:2.5rem}.public-index-header h1{margin:0;font-size:clamp(2.4rem,7vw,4.5rem);font-weight:500;letter-spacing:-.04em}.public-index-list{margin:0;padding-left:1.7rem}.public-index-list li{padding:.32rem 0 .32rem .25rem}.public-index-list a{font-style:italic;text-decoration-style:dotted;text-underline-offset:.18em}.public-index-list span{margin-left:.35em}.context-use-footnote{margin-top:4rem;padding-top:1.25rem;border-top:1px solid #d9d9d2;color:#7b7a73;font:12px/1.55 ui-sans-serif,system-ui,sans-serif}.context-use-footnote p{margin:0}.context-use-credit{color:#3f3f3a;font-size:15px}.context-use-credit a{font-weight:750}.context-use-footnote .context-use-utilities{display:flex;flex-wrap:wrap;align-items:center;gap:.25rem .6rem;margin-top:.45rem}.context-use-utilities a{color:#66665f;font-weight:550}.footer-separator{color:#aaa8a0}.public-landing{box-sizing:border-box;display:flex;flex-direction:column;max-width:1240px;min-height:100vh;margin:0 auto;padding:clamp(2rem,6vw,5.5rem)}.billboard{margin:auto 0}.landing-kicker{margin:0 0 1.25rem;color:#99602d;font:700 12px/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:.18em;text-transform:uppercase}.billboard h1{max-width:950px;margin:0;font-size:clamp(3.2rem,7.5vw,7rem);font-weight:500;letter-spacing:-.055em;line-height:.91}.landing-lede{max-width:650px;margin:2rem 0;color:#55554f;font-size:clamp(1.15rem,2vw,1.5rem);line-height:1.5}.landing-actions{display:flex;flex-wrap:wrap;align-items:center;gap:1rem 1.25rem}.landing-cta{display:inline-flex;gap:.75rem;align-items:center;padding:.85rem 1.15rem;border:1px solid #20201d;border-radius:999px;color:#20201d;font:700 14px/1 ui-sans-serif,system-ui,sans-serif;text-decoration:none;white-space:nowrap}.landing-cta:hover{background:#20201d;color:#f7f7f4}.landing-footer{margin-top:clamp(3rem,8vw,7rem);padding-top:1.25rem;border-top:1px solid #d9d9d2;color:#77766f;font:12px/1.55 ui-sans-serif,system-ui,sans-serif}.landing-footer p{margin:0}.landing-credit{color:#3f3f3a;font-size:15px}.landing-credit a{font-weight:750}.landing-footer .landing-utilities{margin-top:.45rem}.landing-utilities a{color:#66665f;font-weight:550}@media(max-width:800px){.public-landing{min-height:auto}.billboard{padding:8vh 0 2vh}.public-page{margin:5vh auto}.public-index-list span{display:block;margin-left:0}}`;
+export const publicPageStyles = `body{margin:0;background:#f7f7f4;color:#20201d;font:17px/1.65 ui-serif,Georgia,serif}.public-page{max-width:760px;margin:8vh auto;padding:0 24px}h1,h2,h3{line-height:1.2}.public-page article :is(h1,h2,h3,h4,h5,h6)[id]{scroll-margin-top:1.5rem}a{color:#315a4a}.public-page article a,.context-use-footnote a{text-underline-offset:.16em}.external-link{text-decoration-style:dotted}.external-link::after{display:inline-block;margin-left:.16em;font:650 .68em/1 ui-sans-serif,system-ui,sans-serif;text-decoration:none;vertical-align:.25em;content:"↗"}.private-reference{color:#777;font-style:italic}pre{overflow:auto;padding:16px;background:#ecece7;border-radius:8px}img,video{max-width:100%;height:auto}video,audio{width:100%}.knowledge-navigation{margin-bottom:3rem;color:#858078;font:600 13px/1.4 ui-sans-serif,system-ui,sans-serif}.knowledge-navigation ol{display:flex;flex-wrap:wrap;align-items:center;gap:.35rem 0;margin:0;padding:0;list-style:none}.breadcrumb-separator{margin:0 .55rem;color:#aaa59d}.knowledge-navigation a{color:#64605a;text-decoration:none}.knowledge-navigation a:hover{text-decoration:underline}.knowledge-navigation [aria-current="page"]{color:#858078}.context-use-footnote{margin-top:4rem;padding-top:1.25rem;border-top:1px solid #d9d9d2;color:#7b7a73;font:12px/1.55 ui-sans-serif,system-ui,sans-serif}.context-use-footnote p{margin:0}.context-use-credit{color:#3f3f3a;font-size:15px}.context-use-credit a{font-weight:750}.context-use-footnote .context-use-utilities{display:flex;flex-wrap:wrap;align-items:center;gap:.25rem .6rem;margin-top:.45rem}.context-use-utilities a{color:#66665f;font-weight:550}.footer-separator{color:#aaa8a0}.public-landing{box-sizing:border-box;display:flex;flex-direction:column;max-width:1240px;min-height:100vh;margin:0 auto;padding:clamp(2rem,6vw,5.5rem)}.billboard{margin:auto 0}.landing-kicker{margin:0 0 1.25rem;color:#99602d;font:700 12px/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:.18em;text-transform:uppercase}.billboard h1{max-width:950px;margin:0;font-size:clamp(3.2rem,7.5vw,7rem);font-weight:500;letter-spacing:-.055em;line-height:.91}.landing-lede{max-width:650px;margin:2rem 0;color:#55554f;font-size:clamp(1.15rem,2vw,1.5rem);line-height:1.5}.landing-actions{display:flex;flex-wrap:wrap;align-items:center;gap:1rem 1.25rem}.landing-cta{display:inline-flex;gap:.75rem;align-items:center;padding:.85rem 1.15rem;border:1px solid #20201d;border-radius:999px;color:#20201d;font:700 14px/1 ui-sans-serif,system-ui,sans-serif;text-decoration:none;white-space:nowrap}.landing-cta:hover{background:#20201d;color:#f7f7f4}.landing-footer{margin-top:clamp(3rem,8vw,7rem);padding-top:1.25rem;border-top:1px solid #d9d9d2;color:#77766f;font:12px/1.55 ui-sans-serif,system-ui,sans-serif}.landing-footer p{margin:0}.landing-credit{color:#3f3f3a;font-size:15px}.landing-credit a{font-weight:750}.landing-footer .landing-utilities{margin-top:.45rem}.landing-utilities a{color:#66665f;font-weight:550}@media(max-width:800px){.public-landing{min-height:auto}.billboard{padding:8vh 0 2vh}.public-page{margin:5vh auto}}`;
 
 export { IMAGE_LAYOUT_STYLES };
