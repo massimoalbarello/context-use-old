@@ -129,6 +129,42 @@ describe("Nango source-record reader", () => {
     expect(seen.some((request) => new URL(request.url).pathname === "/scripts/config")).toBe(false);
   });
 
+  test("defaults to one complete record per fresh-session working set", async () => {
+    const cursorsSeen: Array<string | null> = [];
+    const sourceReader = reader(async (request) => {
+      const url = new URL(request.url);
+      if (url.pathname === "/connections") {
+        return Response.json({
+          connections: [{ id: 1, connection_id: "owner", provider_config_key: "github" }],
+        });
+      }
+      const cursor = url.searchParams.get("cursor");
+      cursorsSeen.push(cursor);
+      return cursor === null
+        ? Response.json({
+            records: [pipelineRecord("meeting", "# Meeting summary\n\nComplete evidence.", "cursor-one")],
+            next_cursor: "more",
+          })
+        : Response.json({
+            records: [pipelineRecord("pull-request", "# Pull request\n\nComplete description.", "cursor-two")],
+            next_cursor: null,
+          });
+    }, { sources: [GITHUB] });
+
+    const first = await sourceReader.read({});
+    expect(first.records.map(({ markdown }) => markdown)).toEqual([
+      "# Meeting summary\n\nComplete evidence.",
+    ]);
+    expect(first.has_more).toBe(true);
+
+    const second = await sourceReader.read({ checkpoint: first.next_checkpoint });
+    expect(second.records.map(({ markdown }) => markdown)).toEqual([
+      "# Pull request\n\nComplete description.",
+    ]);
+    expect(second.has_more).toBe(false);
+    expect(cursorsSeen).toEqual([null, "cursor-one"]);
+  });
+
   test("rejects an oversized declared Nango response before parsing without retrying", async () => {
     let recordsRequests = 0;
     const sourceReader = reader(async (request) => {

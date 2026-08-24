@@ -32,12 +32,11 @@ import {
  * `mcp-app.ts` reaches it through a specifier the module graph cannot resolve
  * statically. Development bind-mounts the repository, so it resolves there.
  *
- * One read advances through exactly one corpus batch. `has_more` stays true while that
- * batch still holds records, then the checkpoint moves to the next one. An automation run
- * therefore consumes one batch and stops, the way a scheduled production run consumes
- * whatever a source has produced since its last checkpoint. What a batch means belongs to
- * the corpus — a calendar day for `amara-life-v1`, a slice of the page order for
- * `world-v1` — and nothing here needs to know which.
+ * One read advances through one bounded working set. `has_more` stays true while the current
+ * corpus batch still holds records, then the checkpoint moves to the next one. Each working
+ * set is therefore consumed by a fresh automation run, matching production. What a batch
+ * means belongs to the corpus — a calendar day for `amara-life-v1`, a slice of the page order
+ * for `world-v1` — and nothing here needs to know which.
  *
  * Nango's 30-day freshness window is deliberately absent: it exists because Nango
  * backfills historical records, which a fixed corpus never does. Corpus dates are
@@ -108,7 +107,7 @@ function planConversationWorkingSets(corpus: Corpus): Corpus {
 const CHECKPOINT_PREFIX = "cu-corpus-v3.";
 const CHECKPOINT_CORPUS_DIGEST_LENGTH = 12;
 const CHECKPOINT_CHECKSUM_LENGTH = 16;
-const DEFAULT_RECORD_LIMIT = 50;
+const DEFAULT_RECORD_LIMIT = 1;
 const MAX_RECORD_LIMIT = 100;
 const DEFAULT_RESPONSE_BYTE_BUDGET = 5_000_000;
 // A conversation session — LongMemEval's or LoCoMo's — is much larger than an email or
