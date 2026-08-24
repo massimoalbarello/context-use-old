@@ -212,6 +212,14 @@ docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-
   --env-file "${oauth2_validation_env}" \
   -v "${secrets}/nango-owner-email:/etc/oauth2-proxy/authorized-emails:ro" \
   "${CONTEXT_USE_OAUTH2_PROXY_IMAGE}" --config-test
+# The released v0.1.84 ledger can retain authored directory metadata without a
+# canonical document. Preserve it through the old release's running storage
+# broker before any daemon reconciliation or maintenance shutdown. The command
+# verifies the exact ledger itself and is a no-op for every other release.
+if [ -n "$(docker compose --env-file "${secrets}/runtime.env" ps --status running --quiet storage)" ]; then
+  docker compose --env-file "${secrets}/runtime.env" --profile migration run --rm --no-deps \
+    released-v084-directory-upgrade
+fi
 # Docker's built-in address pools hold 31 subnets and cover 172.30.0.0/16, which
 # contains the fixed OAuth browser subnets below. An instance provisioned before
 # this pool was pinned exhausts the pool and collides with those subnets, so

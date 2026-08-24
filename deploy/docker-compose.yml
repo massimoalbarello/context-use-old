@@ -117,6 +117,19 @@ services:
     command: ["bun", "packages/database/src/initialize.ts"]
     networks: [migration_data]
 
+  released-v084-directory-upgrade:
+    <<: *locked-service
+    restart: "no"
+    profiles: [migration]
+    environment:
+      NODE_ENV: production
+      MIGRATOR_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/context_use
+      STORAGE_SOCKET_PATH: /run/context-use-storage/storage.sock
+      STORAGE_DASHBOARD_TOKEN: ${STORAGE_DASHBOARD_TOKEN}
+    command: ["bun", "apps/server/src/released-v084-directory-upgrade-command.ts"]
+    volumes: [storage-socket:/run/context-use-storage:ro]
+    networks: [migration_data]
+
   hypermedia-bootstrap:
     <<: *locked-service
     restart: "no"
