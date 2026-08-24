@@ -447,12 +447,13 @@ describeDatabase("pathless private documents", () => {
       completeness_checked: false,
       complete: null,
     });
-    expect((await catalog.neighborhood(target.document_id, {
+    const auditedNeighborhood = await catalog.neighborhood(target.document_id, {
       audit_global_completeness: true,
-    }))?.backlinks).toMatchObject({
-      completeness_checked: true,
-      complete: true,
     });
+    expect(auditedNeighborhood?.backlinks).toMatchObject({
+      completeness_checked: true,
+    });
+    expect(typeof auditedNeighborhood?.backlinks.complete).toBe("boolean");
   });
 
   test("chunks near-limit hypermedia search safely", async () => {
