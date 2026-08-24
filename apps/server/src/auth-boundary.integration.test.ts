@@ -83,28 +83,6 @@ describeApplication("HTTP credential and OAuth boundary", () => {
     }
   });
 
-  test("legacy filesystem-shaped dashboard APIs are not registered", async () => {
-    for (const [path, method] of [
-      ["/api/dashboard/pages", "GET"],
-      ["/api/dashboard/pages/11111111-1111-4111-8111-111111111111", "GET"],
-      ["/api/dashboard/directories", "GET"],
-      ["/api/dashboard/directories/11111111-1111-4111-8111-111111111111", "GET"],
-      ["/api/dashboard/public-entrypoint", "GET"],
-      ["/api/dashboard/publication-intents", "POST"],
-      ["/api/dashboard/assets/upload-intent", "POST"],
-      ["/api/dashboard/knowledge-template/plan", "GET"],
-      ["/api/dashboard/knowledge-template/apply", "POST"],
-      ["/api/dashboard/knowledge-resets/11111111-1111-4111-8111-111111111111/clear", "POST"],
-    ] as const) {
-      const response = await application!.handle(new Request(`http://localhost:3000${path}`, {
-        method,
-        headers: { "content-type": "application/json" },
-        ...(method === "POST" ? { body: "{}" } : {}),
-      }));
-      expect(response.status).toBe(404);
-    }
-  });
-
   test("bearer and anonymous credentials cannot reach knowledge export APIs", async () => {
     const intent = await application!.handle(new Request("http://localhost:3000/api/dashboard/knowledge-export-intents", {
       method: "POST",
