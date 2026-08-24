@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { AssetRepository } from "@context-use/database";
+import type { DocumentAssetRepository } from "@context-use/database";
 import { createAssetCapability, verifyAssetCapability } from "./mcp-asset-capability.ts";
 import { createMcpAssetDownloadHandler } from "./mcp-asset-download.ts";
 import type { ByteRange, ObjectStorage } from "./storage.ts";
@@ -10,19 +10,18 @@ const principal = { clientId: "mcp-client", sessionId: "mcp-session" };
 
 function fixture() {
   const asset = {
-    id: assetId,
-    current_path: "documents/private-asset",
+    document_id: assetId,
     filename: "private.pdf",
     content_type: "application/pdf",
     size_bytes: bytes.byteLength,
     content_hash: "a".repeat(64),
-    s3_object_key: `objects/${assetId}`,
+    object_key: `objects/${assetId}`,
   };
   const assets = {
-    async get(id: string, includeObjectKey: boolean) {
-      return id === assetId && includeObjectKey ? asset : null;
+    async getForStorage(id: string) {
+      return id === assetId ? asset : null;
     },
-  } as unknown as AssetRepository;
+  } as unknown as DocumentAssetRepository;
   const reads: Array<{ objectKey: string; range?: ByteRange }> = [];
   const storage = {
     async read(objectKey: string, range?: ByteRange) {
@@ -90,7 +89,7 @@ describe("MCP asset download capabilities", () => {
 
   test("rejects a signed capability after its MCP lineage is revoked", async () => {
     const capability = createAssetCapability("download", assetId, principal);
-    const revoked = createMcpAssetDownloadHandler({} as AssetRepository, {} as ObjectStorage, async () => false);
+    const revoked = createMcpAssetDownloadHandler({} as DocumentAssetRepository, {} as ObjectStorage, async () => false);
 
     expect((await revoked(downloadRequest(capability.token), assetId)).status).toBe(401);
   });

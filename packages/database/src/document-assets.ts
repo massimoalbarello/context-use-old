@@ -27,6 +27,10 @@ export type DocumentAssetCreateResult = {
   storage: { object_key: string };
 };
 
+export type DocumentAssetStorageObject = DocumentAsset & {
+  object_key: string;
+};
+
 async function transaction<T>(pool: Pool, work: (client: PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();
   try {
@@ -46,12 +50,13 @@ function compatibilityPath(): string {
   return `pathless-asset-${randomUUID()}`;
 }
 
-const ASSET_SELECT = `
-  SELECT asset.id AS document_id,resource.public_id,
+const ASSET_COLUMNS = `asset.id AS document_id,resource.public_id,
     asset.filename,asset.content_type,asset.size_bytes,asset.content_hash,
     asset.width,asset.height,asset.duration_seconds,
     asset.public_path IS NOT NULL AS legacy_published,
-    asset.created_at,asset.deleted_at
+    asset.created_at,asset.deleted_at`;
+
+const ASSET_FROM = `
   FROM assets asset
   JOIN hypermedia_documents document
     ON document.id=asset.id
@@ -60,10 +65,16 @@ const ASSET_SELECT = `
   LEFT JOIN public_resources resource ON resource.document_id=asset.id
 `;
 
+const ASSET_SELECT = `SELECT ${ASSET_COLUMNS}${ASSET_FROM}`;
+const ASSET_STORAGE_SELECT = `
+  SELECT ${ASSET_COLUMNS},asset.s3_object_key AS object_key${ASSET_FROM}
+`;
+
 type DocumentAssetDatabaseRow = Omit<DocumentAsset, "size_bytes" | "duration_seconds"> & {
   size_bytes: number | string;
   duration_seconds: number | string | null;
 };
+type DocumentAssetStorageRow = DocumentAssetDatabaseRow & { object_key: string };
 
 function normalizeAsset(row: DocumentAssetDatabaseRow): DocumentAsset {
   return {
@@ -111,6 +122,18 @@ export class DocumentAssetRepository {
       [documentId],
     );
     return result.rows[0] ? normalizeAsset(result.rows[0]) : null;
+  }
+
+  /** Exact private byte locator for the isolated MCP storage capability route. */
+  async getForStorage(documentId: string): Promise<DocumentAssetStorageObject | null> {
+    const result = await this.pool.query<DocumentAssetStorageRow>(
+      `${ASSET_STORAGE_SELECT} WHERE asset.id=$1`,
+      [documentId],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    const { object_key, ...asset } = row;
+    return { ...normalizeAsset(asset), object_key };
   }
 
   async archive(input: ArchiveDocumentAssetInput): Promise<DocumentAsset | null> {

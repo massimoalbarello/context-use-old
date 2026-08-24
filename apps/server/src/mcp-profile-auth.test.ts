@@ -2,7 +2,6 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import type {
   DocumentLinkRepository,
   KnowledgeSettingsRepository,
-  PageRepository,
 } from "@context-use/database";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { config } from "./config.ts";
@@ -61,7 +60,6 @@ describe("MCP audience binding", () => {
     spyOn(globalThis, "fetch").mockImplementation(fetchJwks);
 
     const knowledge = createMcpRequestHandler(
-      {} as PageRepository,
       undefined,
       undefined,
       {} as KnowledgeSettingsRepository,
@@ -99,7 +97,6 @@ describe("MCP audience binding", () => {
     spyOn(globalThis, "fetch").mockImplementation(fetchAuthorization);
 
     const knowledge = createMcpRequestHandler(
-      {} as PageRepository,
       undefined,
       undefined,
       {} as KnowledgeSettingsRepository,

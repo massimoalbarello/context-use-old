@@ -1,7 +1,6 @@
 import {
   DocumentLinkRepository,
   KnowledgeSettingsRepository,
-  PageRepository,
   SourceRecordRepository,
 } from "@context-use/database";
 import { MCP_SCOPE } from "@context-use/shared";
@@ -46,7 +45,6 @@ function contextFromJwt(jwt: JWTPayload): McpContext | null {
 }
 
 export function createMcpRequestHandler(
-  pages: PageRepository,
   sourceRecords: SourceRecordReader | undefined,
   recordDocuments: SourceRecordRepository | undefined,
   knowledgeSettings: KnowledgeSettingsRepository,
@@ -94,7 +92,6 @@ export function createMcpRequestHandler(
     const transport = createStatelessMcpTransport();
     const server = await createMcpServer(
       context,
-      pages,
       sourceRecords,
       recordDocuments,
       knowledgeSettings,

@@ -1,16 +1,23 @@
 import { diffLines, type Change } from "diff";
 
-export type PageVersionForDelta = {
-  path: string;
+export type DocumentRevisionForDelta = {
   title: string;
   summary: string;
   body_markdown: string;
+};
+
+export type PageVersionForDelta = DocumentRevisionForDelta & {
+  path: string;
 };
 
 export type PageMetadataChange = {
   field: "path" | "title" | "summary";
   before: string | null;
   after: string;
+};
+
+export type DocumentMetadataChange = Omit<PageMetadataChange, "field"> & {
+  field: "title" | "summary";
 };
 
 export type MarkdownChange = {
@@ -65,6 +72,23 @@ export async function pageDelta(
 ): Promise<{ metadata_changes: PageMetadataChange[]; markdown_changes: MarkdownChange[] }> {
   const metadataChanges: PageMetadataChange[] = [];
   for (const field of ["path", "title", "summary"] as const) {
+    const before = previous?.[field] ?? null;
+    if (before !== current[field]) {
+      metadataChanges.push({ field, before, after: current[field] });
+    }
+  }
+  return {
+    metadata_changes: metadataChanges,
+    markdown_changes: await markdownChanges(previous?.body_markdown ?? "", current.body_markdown),
+  };
+}
+
+export async function documentDelta(
+  previous: DocumentRevisionForDelta | null,
+  current: DocumentRevisionForDelta,
+): Promise<{ metadata_changes: DocumentMetadataChange[]; markdown_changes: MarkdownChange[] }> {
+  const metadataChanges: DocumentMetadataChange[] = [];
+  for (const field of ["title", "summary"] as const) {
     const before = previous?.[field] ?? null;
     if (before !== current[field]) {
       metadataChanges.push({ field, before, after: current[field] });

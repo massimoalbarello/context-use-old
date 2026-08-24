@@ -4,7 +4,6 @@ import type {
   DocumentLinkRepository,
   KnowledgeSettingsRepository,
   KnowledgeDocumentRepository,
-  PageRepository,
   PrivateDocumentCatalogRepository,
 } from "@context-use/database";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -50,7 +49,7 @@ async function mcpRequest(serverOrPromise: McpServer | Promise<McpServer>, body:
 const DEFAULT_MCP_CONTEXT = { clientId: "mcp-client", sessionId: "mcp-session" };
 
 function serverWith(
-  pages = {} as PageRepository,
+  knowledgeDocuments = documentsWithGuidance(),
   options: {
     context?: { clientId: string; sessionId: string };
     knowledgeSettings?: KnowledgeSettingsRepository;
@@ -70,19 +69,7 @@ function serverWith(
     },
   } as KnowledgeSettingsRepository;
   const documents = options.documents ?? {
-    knowledgeDocuments: {
-      async revision(documentId: string, revisionNumber: number) {
-        if (documentId !== rootGuide.id || revisionNumber !== rootGuide.version_number) return null;
-        return {
-          document_id: rootGuide.id,
-          revision_id: rootGuide.current_version_id,
-          revision_number: rootGuide.version_number,
-          title: rootGuide.title,
-          summary: "Test global guide.",
-          body_markdown: rootGuide.body_markdown,
-        };
-      },
-    } as KnowledgeDocumentRepository,
+    knowledgeDocuments,
     documentAssets: {} as DocumentAssetRepository,
     documentCatalog: {} as PrivateDocumentCatalogRepository,
   } satisfies McpDocumentRepositories;
@@ -93,7 +80,6 @@ function serverWith(
   } as unknown as DocumentLinkRepository;
   return createMcpServer(
     options.context ?? DEFAULT_MCP_CONTEXT,
-    pages,
     undefined,
     undefined,
     knowledgeSettings,
@@ -111,17 +97,21 @@ const rootGuide = {
   body_markdown: "Root guide",
 };
 
-function pagesWithGuidance(overrides: Record<string, unknown> = {}): PageRepository {
+function documentsWithGuidance(overrides: Record<string, unknown> = {}): KnowledgeDocumentRepository {
   return {
-    async version(documentId: string, versionNumber: number) {
-      if (documentId !== rootGuide.id || versionNumber !== rootGuide.version_number) return null;
-      return { ...rootGuide, id: rootGuide.current_version_id };
-    },
-    async guidesForPath() {
-      return [rootGuide];
+    async revision(documentId: string, revisionNumber: number) {
+      if (documentId !== rootGuide.id || revisionNumber !== rootGuide.version_number) return null;
+      return {
+        document_id: rootGuide.id,
+        revision_id: rootGuide.current_version_id,
+        revision_number: rootGuide.version_number,
+        title: rootGuide.title,
+        summary: "Test global guide.",
+        body_markdown: rootGuide.body_markdown,
+      };
     },
     ...overrides,
-  } as unknown as PageRepository;
+  } as unknown as KnowledgeDocumentRepository;
 }
 
 const rootGuidanceReceipt = createKnowledgeGuideReceipt({
@@ -165,30 +155,18 @@ describe("MCP knowledge tools", () => {
       updated_at: document.updated_at,
       current_path: "must-not-leak",
     };
-    const documents = {
-      knowledgeDocuments: {
-        async get(id: string) { return id === documentId ? document : null; },
-        async create() { return document; },
-      } as unknown as KnowledgeDocumentRepository,
-      documentAssets: {} as DocumentAssetRepository,
-      documentCatalog: {
-        async get(id: string) { return id === documentId ? catalogItem : null; },
-        async search() {
-          return { documents: [catalogItem], next_cursor: null, has_more: false };
-        },
-      } as unknown as PrivateDocumentCatalogRepository,
-    } satisfies McpDocumentRepositories;
-    const pathlessPages = pagesWithGuidance({
+    const knowledgeDocuments = documentsWithGuidance({
+      async get(id: string) { return id === documentId ? document : null; },
+      async create() { return document; },
       async changesSince() {
         return {
           changes: [{
             cursor: "cu-page-changes-v1.1",
-            page_id: documentId,
-            version_id: revisionId,
-            version_number: 1,
-            previous_version_number: null,
+            document_id: documentId,
+            revision_id: revisionId,
+            revision_number: 1,
+            previous_revision_number: null,
             change_kind: "created",
-            path: "retained/compatibility/path",
             title: document.title,
             commit_message: "Create stable document",
             actor_kind: "mcp",
@@ -200,7 +178,17 @@ describe("MCP knowledge tools", () => {
         };
       },
     });
-    const tools = await mcpRequest(serverWith(pathlessPages, { documents }), {
+    const documents = {
+      knowledgeDocuments,
+      documentAssets: {} as DocumentAssetRepository,
+      documentCatalog: {
+        async get(id: string) { return id === documentId ? catalogItem : null; },
+        async search() {
+          return { documents: [catalogItem], next_cursor: null, has_more: false };
+        },
+      } as unknown as PrivateDocumentCatalogRepository,
+    } satisfies McpDocumentRepositories;
+    const tools = await mcpRequest(serverWith(knowledgeDocuments, { documents }), {
       jsonrpc: "2.0",
       id: 1,
       method: "tools/list",
@@ -246,7 +234,7 @@ describe("MCP knowledge tools", () => {
         .not.toHaveProperty("path");
     }
 
-    const changes = await mcpRequest(serverWith(pathlessPages, { documents }), {
+    const changes = await mcpRequest(serverWith(knowledgeDocuments, { documents }), {
       jsonrpc: "2.0",
       id: 2,
       method: "tools/call",
@@ -260,9 +248,9 @@ describe("MCP knowledge tools", () => {
         previous_revision_number: null,
       }],
     });
-    expect(changes.result?.content?.[0]?.text).not.toContain("retained/compatibility/path");
+    expect(changes.result?.content?.[0]?.text).not.toContain("path");
 
-    const searched = await mcpRequest(serverWith(pathlessPages, { documents }), {
+    const searched = await mcpRequest(serverWith(knowledgeDocuments, { documents }), {
       jsonrpc: "2.0",
       id: 3,
       method: "tools/call",
@@ -277,7 +265,7 @@ describe("MCP knowledge tools", () => {
     });
     expect(searchResult.documents[0]).not.toHaveProperty("current_path");
 
-    const created = await mcpRequest(serverWith(pathlessPages, { documents }), {
+    const created = await mcpRequest(serverWith(knowledgeDocuments, { documents }), {
       jsonrpc: "2.0",
       id: 4,
       method: "tools/call",
@@ -301,18 +289,17 @@ describe("MCP knowledge tools", () => {
 
   test("reads a fixed, deduplicated knowledge-change window with harness-owned cursors", async () => {
     const calls: unknown[] = [];
-    const pages = pagesWithGuidance({
+    const revisions = documentsWithGuidance({
       async changesSince(input: unknown) {
         calls.push(input);
         return {
           changes: [{
             cursor: "cu-page-changes-v1.9",
-            page_id: "11111111-1111-4111-8111-111111111111",
-            version_id: "22222222-2222-4222-8222-222222222222",
-            version_number: 4,
-            previous_version_number: 2,
+            document_id: "11111111-1111-4111-8111-111111111111",
+            revision_id: "22222222-2222-4222-8222-222222222222",
+            revision_number: 4,
+            previous_revision_number: 2,
             change_kind: "updated",
-            path: "about/intro",
             title: "Introduction",
             commit_message: "Reconcile introduction",
             actor_kind: "mcp",
@@ -325,7 +312,7 @@ describe("MCP knowledge tools", () => {
         };
       },
     });
-    const response = await mcpRequest(serverWith(pages), {
+    const response = await mcpRequest(serverWith(revisions), {
       jsonrpc: "2.0",
       id: 15,
       method: "tools/call",
@@ -350,8 +337,8 @@ describe("MCP knowledge tools", () => {
 
   test("returns one clean compact delta for multiple distant changes", async () => {
     const calls: unknown[] = [];
-    const pages = pagesWithGuidance({
-      async version(pageId: string, versionNumber: number) {
+    const revisions = documentsWithGuidance({
+      async revision(pageId: string, versionNumber: number) {
         calls.push({ pageId, versionNumber });
         const versions = {
           2: {
@@ -390,7 +377,7 @@ describe("MCP knowledge tools", () => {
         return versions[versionNumber as keyof typeof versions] ?? null;
       },
     });
-    const response = await mcpRequest(serverWith(pages), {
+    const response = await mcpRequest(serverWith(revisions), {
       jsonrpc: "2.0",
       id: 16,
       method: "tools/call",
@@ -434,8 +421,8 @@ describe("MCP knowledge tools", () => {
 
   test("falls back to the oldest retained version when the exact baseline was pruned", async () => {
     const fallbackCalls: unknown[] = [];
-    const pages = pagesWithGuidance({
-      async version(_pageId: string, versionNumber: number) {
+    const revisions = documentsWithGuidance({
+      async revision(_pageId: string, versionNumber: number) {
         return versionNumber === 8 ? {
           path: "people/ada/intro",
           title: "Ada",
@@ -443,22 +430,21 @@ describe("MCP knowledge tools", () => {
           body_markdown: "# Ada\n\nStarted a new role.\n",
         } : null;
       },
-      async oldestRetainedVersionAfter(
+      async oldestRetainedRevisionAfter(
         pageId: string,
         afterVersionNumber: number,
         throughVersionNumber: number,
       ) {
         fallbackCalls.push({ pageId, afterVersionNumber, throughVersionNumber });
         return {
-          version_number: 4,
-          path: "people/ada/intro",
+          revision_number: 4,
           title: "Ada",
           summary: "A collaborator.",
           body_markdown: "# Ada\n\nConsidered a new role.\n",
         };
       },
     });
-    const response = await mcpRequest(serverWith(pages), {
+    const response = await mcpRequest(serverWith(revisions), {
       jsonrpc: "2.0",
       id: 17,
       method: "tools/call",
@@ -494,12 +480,12 @@ describe("MCP knowledge tools", () => {
   });
 
   test("reports an unavailable window end without substituting another version", async () => {
-    const pages = pagesWithGuidance({
-      async version() {
+    const revisions = documentsWithGuidance({
+      async revision() {
         return null;
       },
     });
-    const response = await mcpRequest(serverWith(pages), {
+    const response = await mcpRequest(serverWith(revisions), {
       jsonrpc: "2.0",
       id: 18,
       method: "tools/call",
