@@ -84,6 +84,28 @@ jobs:
       - run: bun audit --production
       - run: bun run typecheck
       - run: bun --cwd apps/server build
+      - name: Validate S3 semantics against MinIO
+        run: |
+          container=context-use-test-minio
+          trap 'docker rm -f "${container}" >/dev/null 2>&1 || true' EXIT
+          docker run --detach --name "${container}" \
+            -p 127.0.0.1:59000:9000 \
+            -e MINIO_ROOT_USER=context-use \
+            -e MINIO_ROOT_PASSWORD=test-only-minio-secret \
+            quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
+            server /data
+          for _ in $(seq 1 30); do
+            curl --fail --silent http://127.0.0.1:59000/minio/health/ready >/dev/null && break
+            sleep 1
+          done
+          curl --fail http://127.0.0.1:59000/minio/health/ready
+          TEST_S3_ENDPOINT=http://127.0.0.1:59000 \
+            AWS_ACCESS_KEY_ID=context-use \
+            AWS_SECRET_ACCESS_KEY=test-only-minio-secret \
+            AWS_EC2_METADATA_DISABLED=true \
+            bun test apps/server/src/minio-storage.integration.test.ts
+          docker rm -f "${container}"
+          trap - EXIT
       - run: bun test apps packages
       - name: Apply migrations and verify database roles
         env:

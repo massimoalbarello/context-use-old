@@ -18,7 +18,6 @@ import { Elysia } from "elysia";
 import { z } from "zod";
 import { config } from "./config.ts";
 import {
-  FilesystemStorage,
   ObjectAlreadyExistsError,
   S3Storage,
   type ByteRange,
@@ -100,13 +99,11 @@ function filenameHeader(request: Request): string {
   return z.string().min(1).max(1_024).parse(decodeURIComponent(encoded));
 }
 
-const defaultStorage: ObjectStorageBackend = config.STORAGE_DRIVER === "s3"
-  ? new S3Storage(undefined, {
-      region: config.AWS_REGION,
-      bucket: config.ASSET_BUCKET,
-      kmsKeyId: config.KMS_KEY_ID,
-    })
-  : new FilesystemStorage(config.STORAGE_PATH);
+const defaultStorage: ObjectStorageBackend = new S3Storage(undefined, {
+  region: config.AWS_REGION,
+  bucket: config.ASSET_BUCKET,
+  kmsKeyId: config.KMS_KEY_ID || null,
+});
 
 const storagePool = createPool(config.STORAGE_DATABASE_URL, { application_name: "context-use-storage-boundary" });
 const defaultPrivateAssets = new DocumentAssetRepository(storagePool);
