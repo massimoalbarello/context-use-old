@@ -277,12 +277,6 @@ export const commandTree: RuntimeNode = {
       literalChildren: {},
       paramChild: null,
     },
-    'template': {
-      segment: { kind: 'literal', value: 'template' },
-      command: null,
-      literalChildren: {},
-      paramChild: null,
-    },
     'update': {
       segment: { kind: 'literal', value: 'update' },
       command: { path: 'update', load: () => import('./commands/update.ts').then((m) => m.command) },
