@@ -224,6 +224,57 @@ describeDatabase("PostgreSQL security roles", () => {
     }
   });
 
+  test("fresh hypermedia bootstrap allocations remain corpus-only and immutable", async () => {
+    for (const signature of [
+      "begin_hypermedia_bootstrap()",
+      "complete_hypermedia_bootstrap()",
+    ]) {
+      expect((await admin.query<{ allowed: boolean }>(
+        "SELECT has_function_privilege('context_use_corpus',$1,'EXECUTE') AS allowed",
+        [signature],
+      )).rows[0]?.allowed).toBe(true);
+      const routine = (await admin.query<{ owner: string; security_definer: boolean }>(
+        `SELECT pg_get_userbyid(proowner) AS owner,prosecdef AS security_definer
+         FROM pg_proc WHERE oid=$1::regprocedure`,
+        [signature],
+      )).rows[0];
+      expect(routine).toEqual({
+        owner: "context_use_boundary_owner",
+        security_definer: true,
+      });
+      for (const role of [
+        "context_use_auth", "context_use_dashboard", "context_use_mcp",
+        "context_use_public", "context_use_confirmation", "context_use_storage",
+      ]) {
+        expect((await admin.query<{ allowed: boolean }>(
+          "SELECT has_function_privilege($1,$2,'EXECUTE') AS allowed",
+          [role, signature],
+        )).rows[0]?.allowed).toBe(false);
+      }
+    }
+    for (const column of ["document_kind", "document_id", "revision_id"]) {
+      expect((await admin.query<{ allowed: boolean }>(
+        `SELECT has_column_privilege(
+           'context_use_corpus','hypermedia_bootstrap_allocations',$1,'SELECT'
+         ) AS allowed`,
+        [column],
+      )).rows[0]?.allowed).toBe(true);
+    }
+    for (const privilege of ["INSERT", "UPDATE", "DELETE"]) {
+      expect((await admin.query<{ allowed: boolean }>(
+        `SELECT has_table_privilege(
+           'context_use_corpus','hypermedia_bootstrap_allocations',$1
+         ) AS allowed`,
+        [privilege],
+      )).rows[0]?.allowed).toBe(false);
+    }
+    expect((await admin.query<{ allowed: boolean }>(
+      `SELECT has_table_privilege(
+         'context_use_backup','hypermedia_bootstrap_allocations','SELECT'
+       ) AS allowed`,
+    )).rows[0]?.allowed).toBe(true);
+  });
+
   test("page writers retain history without receiving deletion or pruning access", async () => {
     for (const role of ["context_use_dashboard", "context_use_mcp"]) {
       expect((await admin.query<{ allowed: boolean }>(

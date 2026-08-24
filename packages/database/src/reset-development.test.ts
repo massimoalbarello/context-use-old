@@ -51,6 +51,11 @@ describe("development data reset", () => {
     expect(truncateStatements[0]?.toUpperCase()).not.toContain("CASCADE");
   });
 
+  test("clears crash-replayable hypermedia bootstrap allocations", () => {
+    expect(DEVELOPMENT_RESET_TABLES).toContain("hypermedia_bootstrap_allocations");
+    expect(developmentResetSql()).toContain("hypermedia_bootstrap_allocations");
+  });
+
   test("recreates the root required by the default template", () => {
     expect(developmentResetSql()).toContain("INSERT INTO knowledge_directories");
     expect(developmentResetSql()).toContain("gen_random_uuid(),''");

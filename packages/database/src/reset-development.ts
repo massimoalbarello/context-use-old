@@ -13,6 +13,7 @@ export const DEVELOPMENT_RESET_TABLES = [
   "pathless_publication_adoption_staging",
   "pathless_publication_adoptions",
   "public_artifact_id_reservations",
+  "hypermedia_bootstrap_allocations",
   "hypermedia_cutover_state",
   "pathless_publication_settings",
   "public_visibility_generations",

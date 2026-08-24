@@ -1,0 +1,181 @@
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { Client, Pool } from "pg";
+import {
+  AutomationRegistryRepository,
+  HypermediaBootstrapRepository,
+  KnowledgeSettingsRepository,
+  knowledgeTemplateMigrationContract,
+  markdownObjectMetadata,
+  type MarkdownObjectMetadata,
+  type MarkdownObjectStore,
+} from "@context-use/database";
+import { disposableDatabaseUrl } from "@context-use/database/disposable-database";
+import { developmentResetSql } from "../../../packages/database/src/reset-development.ts";
+import {
+  applyHypermediaBootstrap,
+  hypermediaBootstrapDocuments,
+} from "./hypermedia-bootstrap-command.ts";
+
+const enabled = process.env.TEST_HYPERMEDIA_BOOTSTRAP_ISOLATED === "1";
+const describeBootstrap = enabled ? describe : describe.skip;
+const adminUrl = await disposableDatabaseUrl();
+const corpusUrl = process.env.CORPUS_DATABASE_URL;
+const admin = enabled ? new Client({ connectionString: adminUrl }) : null;
+const corpus = enabled && corpusUrl ? new Pool({ connectionString: corpusUrl }) : null;
+let baselineDirectories: Array<{
+  id: string;
+  current_path: string;
+  version_number: number;
+  title: string;
+  summary: string;
+  search_vector: string;
+  created_at: Date | string;
+  updated_at: Date | string;
+}> = [];
+const objects = new Map<string, string>();
+const bodies: MarkdownObjectStore = {
+  async write(revisionId, markdown) {
+    const metadata = markdownObjectMetadata(revisionId, markdown);
+    const existing = objects.get(metadata.body_object_key);
+    if (existing !== undefined && existing !== markdown) {
+      throw new Error("Bootstrap object changed across replay");
+    }
+    objects.set(metadata.body_object_key, markdown);
+    return metadata;
+  },
+  async read(metadata: MarkdownObjectMetadata) {
+    const markdown = objects.get(metadata.body_object_key);
+    if (markdown === undefined) throw new Error("Bootstrap object is missing");
+    return markdown;
+  },
+};
+
+describeBootstrap("fresh hypermedia bootstrap", () => {
+  beforeAll(async () => {
+    if (!corpusUrl) throw new Error("CORPUS_DATABASE_URL is required");
+    await admin!.connect();
+    baselineDirectories = (await admin!.query(
+      `SELECT id,current_path,version_number,title,summary,
+         search_vector::text AS search_vector,created_at,updated_at
+       FROM knowledge_directories
+       ORDER BY length(current_path),current_path`,
+    )).rows;
+    await admin!.query(developmentResetSql());
+  });
+
+  afterAll(async () => {
+    try {
+      await corpus?.end();
+      await admin?.query(developmentResetSql());
+      for (const directory of baselineDirectories.filter(({ current_path }) => current_path)) {
+        await admin?.query(
+          `INSERT INTO knowledge_directories(
+             id,current_path,version_number,title,summary,
+             search_vector,created_at,updated_at
+           ) VALUES ($1,$2,$3,$4,$5,$6::tsvector,$7,$8)`,
+          [directory.id, directory.current_path, directory.version_number,
+            directory.title, directory.summary, directory.search_vector,
+            directory.created_at, directory.updated_at],
+        );
+      }
+    } finally {
+      await admin?.end();
+    }
+  });
+
+  test("installs and replays an identity-wired object-backed knowledge contract", async () => {
+    const bootstrap = new HypermediaBootstrapRepository(corpus!, bodies);
+    const retainedDocumentId = crypto.randomUUID();
+    await admin!.query(
+      `INSERT INTO hypermedia_documents(id,authority,representation)
+       VALUES ($1,'source','markdown')`,
+      [retainedDocumentId],
+    );
+    await expect(bootstrap.begin()).rejects.toThrow(
+      "requires a completed v0.1.82 hypermedia cutover",
+    );
+    expect((await admin!.query(
+      "SELECT count(*)::integer AS count FROM hypermedia_bootstrap_allocations",
+    )).rows[0]?.count).toBe(0);
+    await admin!.query("DELETE FROM hypermedia_documents WHERE id=$1", [retainedDocumentId]);
+
+    const allocations = await bootstrap.begin();
+    expect(await bootstrap.begin()).toEqual(allocations);
+    const allocatedIds = allocations.flatMap(({ document_id, revision_id }) => [
+      document_id,
+      revision_id,
+    ]);
+    expect((await admin!.query<{ reserved: boolean }>(
+      `SELECT bool_and(public_uuid_has_private_identity(id)) AS reserved
+       FROM unnest($1::uuid[]) AS id`,
+      [allocatedIds],
+    )).rows[0]?.reserved).toBe(true);
+    await admin!.query("BEGIN");
+    try {
+      await expect(admin!.query(
+        `UPDATE hypermedia_bootstrap_allocations
+         SET document_id=gen_random_uuid()
+         WHERE document_kind='global_guide'`,
+      )).rejects.toMatchObject({ code: "55000" });
+    } finally {
+      await admin!.query("ROLLBACK");
+    }
+    const contract = await knowledgeTemplateMigrationContract();
+    const documents = hypermediaBootstrapDocuments(contract, allocations);
+    const completedAt = await applyHypermediaBootstrap({
+      allocations,
+      contract,
+      repositories: {
+        bootstrap,
+        settings: new KnowledgeSettingsRepository(corpus!),
+        registry: new AutomationRegistryRepository(corpus!),
+      },
+    });
+
+    expect(allocations).toHaveLength(5);
+    expect(completedAt).toBeTruthy();
+    expect(await bootstrap.begin()).toEqual([]);
+    for (const document of documents) await bootstrap.ensureDocument(document);
+    expect(await bootstrap.complete()).toEqual(completedAt);
+
+    const state = await admin!.query<{
+      finalized: boolean;
+      documents: string;
+      revisions: string;
+      contracts: string;
+      search: string;
+      completed_allocations: string;
+      automations: string;
+      guide_configured: boolean;
+      entrypoint_latched: boolean;
+    }>(
+      `SELECT
+         (SELECT finalized_at IS NOT NULL FROM hypermedia_cutover_state WHERE singleton)
+           AS finalized,
+         (SELECT count(*)::text FROM knowledge_pages) AS documents,
+         (SELECT count(*)::text FROM hypermedia_document_revisions) AS revisions,
+         (SELECT count(*)::text FROM knowledge_revision_contracts) AS contracts,
+         (SELECT count(*)::text FROM pathless_knowledge_search) AS search,
+         (SELECT count(*)::text FROM hypermedia_bootstrap_allocations
+           WHERE completed_at IS NOT NULL) AS completed_allocations,
+         (SELECT count(*)::text FROM automation_registry WHERE disabled_at IS NULL)
+           AS automations,
+         (SELECT global_guide_document_id IS NOT NULL FROM knowledge_settings WHERE singleton)
+           AS guide_configured,
+         (SELECT updated_at IS NOT NULL FROM pathless_publication_settings WHERE singleton)
+           AS entrypoint_latched`,
+    );
+    expect(state.rows[0]).toEqual({
+      finalized: true,
+      documents: "5",
+      revisions: "5",
+      contracts: "5",
+      search: "5",
+      completed_allocations: "5",
+      automations: "2",
+      guide_configured: true,
+      entrypoint_latched: true,
+    });
+    expect(objects.size).toBe(5);
+  }, 15_000);
+});

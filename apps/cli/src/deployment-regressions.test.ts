@@ -678,12 +678,12 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   const stopClients = "stop \\\n  dashboard-edge app auth private-mcp public-web confirmation storage backup";
   const restoreStorage = "up -d --wait storage";
   const prepareKnowledge = "--exit-code-from knowledge-prepare knowledge-prepare";
-  const compatibilityMigration = "-e MIGRATOR_MAX_VERSION=035_hydrate_ready_corpus_knowledge.sql";
+  const bootstrapMigration = "-e MIGRATOR_MAX_VERSION=040_hypermedia_bootstrap.sql";
   const contractionMigration = "--profile migration run --rm migrate";
   const restorePublic = "up -d --wait --no-deps public-web";
   const restoreDashboard = "up -d --wait --no-deps \\\n  dashboard-edge";
-  expect(deployScript.indexOf(stopClients)).toBeLessThan(deployScript.indexOf(compatibilityMigration));
-  expect(deployScript.indexOf(compatibilityMigration)).toBeLessThan(deployScript.indexOf(restoreStorage));
+  expect(deployScript.indexOf(stopClients)).toBeLessThan(deployScript.indexOf(bootstrapMigration));
+  expect(deployScript.indexOf(bootstrapMigration)).toBeLessThan(deployScript.indexOf(restoreStorage));
   expect(deployScript.indexOf(restoreStorage)).toBeLessThan(deployScript.indexOf(prepareKnowledge));
   const contractionIndex = deployScript.indexOf(
     contractionMigration,
@@ -870,7 +870,7 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   expect(knowledgePrepareService).toContain("storage: { condition: service_healthy }");
   expect(knowledgePrepareService).not.toContain("template-command.ts");
   expect(knowledgePrepareService).not.toContain("--force-template");
-  expect(knowledgePrepareService).toContain("corpus-migration-command.ts");
+  expect(knowledgePrepareService).toContain("hypermedia-bootstrap-command.ts");
   expect(knowledgePrepareService).not.toContain("AWS_REGION:");
   expect(knowledgePrepareService).not.toContain("STORAGE_MCP_TOKEN");
   expect(knowledgePrepareService).not.toContain("STORAGE_PUBLIC_TOKEN");

@@ -141,7 +141,7 @@ services:
       - -ec
       - >-
         until [ -S /run/context-use-storage/storage.sock ]; do sleep 0.1; done;
-        exec bun apps/server/src/corpus-migration-command.ts
+        exec bun apps/server/src/hypermedia-bootstrap-command.ts
     volumes:
       - .:/app
       - dependencies:/app/node_modules

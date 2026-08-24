@@ -39,14 +39,14 @@ describe("knowledge preparation command", () => {
     expect(unavailableCalls).toHaveLength(1);
   });
 
-  test("root bootstrap uses the isolated preparation entrypoint", async () => {
+  test("root bootstrap uses the hypermedia-only entrypoint", async () => {
     const manifest = await Bun.file(new URL("../../../package.json", import.meta.url)).json() as {
       scripts?: Record<string, string>;
     };
     expect(manifest.scripts?.["db:bootstrap"]).toBe(
-      "bun apps/server/src/corpus-migration-command.ts",
+      "bun apps/server/src/hypermedia-bootstrap-command.ts",
     );
-    expect(manifest.scripts?.["db:bootstrap"]).not.toContain("template-command.ts");
+    expect(manifest.scripts?.["db:bootstrap"]).not.toContain("corpus-migration-command.ts");
   });
 
   test("opens only the isolated corpus database credential", async () => {
