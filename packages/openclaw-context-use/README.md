@@ -7,7 +7,9 @@ This package is the thin OpenClaw binding for Context-use. It keeps the reusable
 - After a completed owner turn, it launches a curator through OpenClaw's own subagent runtime, explicitly reusing the parent turn's provider and model.
 - Inbound assets receive opaque, turn-scoped handles. The curator can inspect them and stream their exact bytes only to a signed upload URL on the configured Context-use HTTPS origin.
 
-The curator follows the live Context-use template by calling `context-use__prepare_change` before writes. Direct user statements do not receive synthetic Nango/source-record provenance.
+The curator opens a knowledge session, reads the live global hypermedia-maintenance guide, and
+reuses its receipt for stable-ID document and asset mutations. Direct user statements do not
+receive synthetic Nango/source-record provenance.
 
 ## Install (linked and reversible)
 
