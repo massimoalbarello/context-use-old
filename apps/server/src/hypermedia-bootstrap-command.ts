@@ -20,6 +20,17 @@ type BootstrapRepositories = {
   registry: Pick<AutomationRegistryRepository, "register">;
 };
 
+type BootstrapAllocator = Pick<HypermediaBootstrapRepository,
+  "retainedInstallationReady" | "begin"
+>;
+
+export async function hypermediaBootstrapAllocations(
+  bootstrap: BootstrapAllocator,
+): Promise<HypermediaBootstrapAllocation[] | null> {
+  if (await bootstrap.retainedInstallationReady()) return null;
+  return bootstrap.begin();
+}
+
 function documentInput(
   document: HypermediaBootstrapTemplate["documents"][HypermediaBootstrapDocumentKind],
   templateName: string,
@@ -107,7 +118,11 @@ export async function runHypermediaBootstrapCommand(): Promise<void> {
     const storage = new BrokeredStorage({ socketPath, token });
     const bodies = new BrokeredMarkdownObjectStore(storage);
     const bootstrap = new HypermediaBootstrapRepository(pool, bodies);
-    const allocations = await bootstrap.begin();
+    const allocations = await hypermediaBootstrapAllocations(bootstrap);
+    if (allocations === null) {
+      console.log(JSON.stringify({ event: "hypermedia_bootstrap_retained_installation_ready" }));
+      return;
+    }
     if (!allocations.length) {
       console.log(JSON.stringify({ event: "hypermedia_bootstrap_already_finalized" }));
       return;
