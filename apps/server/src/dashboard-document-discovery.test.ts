@@ -37,7 +37,7 @@ const catalogItem: PrivateDocumentCatalogItem = {
   connection_id: null,
   source_model: null,
   source_record_id: null,
-  operational_roles: ["directory_hub"],
+  operational_roles: ["automation_instructions"],
   public_id: "44444444-4444-4444-8444-444444444444",
   current_link_contract: "generic_document_v1",
   links_indexed_at: "2026-08-23T10:00:00.000Z",
@@ -104,7 +104,7 @@ describe("dashboard document discovery", () => {
       summary: "A concise summary of the current investment thesis.",
       filename: null,
       content_type: null,
-      operational_roles: ["directory_hub"],
+      operational_roles: ["automation_instructions"],
       updated_at: "2026-08-23T10:00:00.000Z",
     });
     const encoded = JSON.stringify(summary);

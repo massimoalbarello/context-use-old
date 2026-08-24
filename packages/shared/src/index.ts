@@ -227,7 +227,6 @@ export const dashboardDocumentOperationalRoleSchema = z.enum([
   "global_guide",
   "automation_instructions",
   "automation_state",
-  "directory_hub",
 ]);
 
 /** Pathless, locator-free document metadata safe for the authenticated dashboard. */

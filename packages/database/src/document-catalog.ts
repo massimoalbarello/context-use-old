@@ -6,8 +6,7 @@ export type PrivateDocumentLifecycle = "active" | "archived" | "deleted";
 export type PrivateDocumentOperationalRole =
   | "global_guide"
   | "automation_instructions"
-  | "automation_state"
-  | "directory_hub";
+  | "automation_state";
 
 export type PrivateDocumentCatalogFilters = {
   authority?: "knowledge" | "source";

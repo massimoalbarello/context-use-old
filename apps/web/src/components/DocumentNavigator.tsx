@@ -21,7 +21,6 @@ export function documentDisplaySummary(document: DashboardDocumentSummary): stri
 }
 
 function documentKindLabel(document: DashboardDocumentSummary): string {
-  if (document.operational_roles.includes("directory_hub")) return "Hub";
   if (document.operational_roles.includes("global_guide")) return "Guide";
   if (document.operational_roles.includes("automation_instructions")) return "Instructions";
   if (document.operational_roles.includes("automation_state")) return "Automation state";

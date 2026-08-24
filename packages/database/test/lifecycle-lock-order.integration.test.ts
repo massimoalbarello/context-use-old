@@ -48,21 +48,12 @@ describeDatabase("knowledge lifecycle lock ordering", () => {
     expect(columns.rows).toEqual([]);
   });
 
-  test("corpus inventory locks retain the legacy relation order through the narrow routing helper", async () => {
-    for (const functionName of [
-      "lock_corpus_migration_audit_tables()",
-      "lock_corpus_migration_hub_apply_tables()",
-    ]) {
-      const definition = (await pool.query<{ definition: string }>(
-        "SELECT pg_get_functiondef($1::regprocedure) AS definition",
-        [functionName],
-      )).rows[0]!.definition;
-      const privatePrefix = definition.indexOf("LOCK TABLE knowledge_directories");
-      const routing = definition.indexOf("lock_public_routing_", privatePrefix);
-      const publicSuffix = definition.indexOf("LOCK TABLE public_projection_state", routing);
-      expect(privatePrefix).toBeGreaterThan(-1);
-      expect(routing).toBeGreaterThan(privatePrefix);
-      expect(publicSuffix).toBeGreaterThan(routing);
-    }
+  test("corpus migration and publication adoption control planes are retired", async () => {
+    const retired = await pool.query<{ relation: string | null; routine: string | null }>(
+      `SELECT to_regclass('public.corpus_migration_runs')::text AS relation,
+         to_regprocedure('public.lock_corpus_migration_audit_tables()')::text
+           AS routine`,
+    );
+    expect(retired.rows[0]).toEqual({ relation: null, routine: null });
   });
 });

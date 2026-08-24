@@ -21,7 +21,7 @@ const document: DashboardDocumentSummary = {
   summary: "A concise summary of the current investment thesis.",
   filename: null,
   content_type: null,
-  operational_roles: ["directory_hub"],
+  operational_roles: ["automation_instructions"],
   updated_at: "2026-08-23T10:00:00.000Z",
 };
 

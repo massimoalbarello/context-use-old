@@ -145,7 +145,7 @@ describe("strict mutation schemas", () => {
       summary: "A private knowledge document.",
       filename: null,
       content_type: null,
-      operational_roles: ["directory_hub" as const],
+      operational_roles: ["automation_instructions" as const],
       updated_at: "2026-08-23T12:34:56.789Z",
     };
     expect(dashboardDocumentSummarySchema.parse(summary)).toEqual(summary);
