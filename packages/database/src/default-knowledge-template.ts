@@ -41,11 +41,7 @@ function markdown(source: string): string {
   return source.trimEnd() + "\n";
 }
 
-/**
- * The only installation template is a compile-time hypermedia document set.
- * It has no directory tree, path resolver, filesystem discovery, or runtime
- * template selector.
- */
+/** The installation template is a compile-time hypermedia document set. */
 export const defaultHypermediaBootstrapTemplate: HypermediaBootstrapTemplate = {
   name: "default",
   documents: {

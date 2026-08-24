@@ -6,25 +6,24 @@ export const DEVELOPMENT_RESET_TABLES = [
   "public_page_artifacts",
   "public_asset_artifacts",
   "public_representation_token_reservations",
-  "pathless_publication_object_claims",
-  "pathless_publication_artifact_staging",
-  "pathless_publication_intents",
+  "publication_object_claims",
+  "publication_artifact_staging",
+  "publication_intents",
   "publication_intent_id_reservations",
   "public_artifact_id_reservations",
   "hypermedia_bootstrap_allocations",
-  "pathless_publication_settings",
+  "publication_settings",
   "public_visibility_generations",
   "publication_target_generations",
   "public_namespace_conflicts",
-  "pathless_knowledge_search_chunks",
-  "pathless_knowledge_search",
+  "knowledge_search_chunks",
+  "knowledge_search",
   "knowledge_revision_contracts",
   "automation_registry",
   "confirmation_challenges",
   "knowledge_export_intents",
   "page_deletion_intents",
-  "published_page_artifacts",
-  "public_knowledge_settings",
+  "retained_page_artifacts",
   "public_route_aliases",
   "public_resources",
   "knowledge_settings",
@@ -43,8 +42,7 @@ export const DEVELOPMENT_RESET_TABLES = [
 export function developmentResetSql(): string {
   return `
     TRUNCATE TABLE ${DEVELOPMENT_RESET_TABLES.join(", ")} RESTART IDENTITY;
-    INSERT INTO public_knowledge_settings(singleton) VALUES (true);
-    INSERT INTO pathless_publication_settings(
+    INSERT INTO publication_settings(
       singleton,entrypoint_public_id,updated_at
     ) VALUES (true,NULL,NULL);
     INSERT INTO knowledge_settings(singleton) VALUES (true);

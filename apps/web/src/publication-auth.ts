@@ -3,7 +3,7 @@ import { api } from "./api.ts";
 
 export type PublicationAction = "publish" | "unpublish";
 
-export function pathlessPublicationIntentBody({
+export function publicationIntentBody({
   action,
   targetKind,
   targetId,
@@ -38,13 +38,13 @@ export async function confirmPublicationChange({
   targetId: string;
   versionId: string | null;
 }): Promise<void> {
-  const intentBody = pathlessPublicationIntentBody({ action, targetKind, targetId, versionId });
+  const intentBody = publicationIntentBody({ action, targetKind, targetId, versionId });
   const intentId = crypto.randomUUID();
   try {
     const created = await api<{
       intent: { id: string };
       authentication_options: Parameters<typeof startAuthentication>[0]["optionsJSON"];
-    }>("/api/dashboard/pathless-publication-intents", {
+    }>("/api/dashboard/publication-intents", {
       method: "POST",
       headers: { "x-publication-intent-id": intentId },
       body: JSON.stringify(intentBody),
@@ -55,7 +55,7 @@ export async function confirmPublicationChange({
       body: JSON.stringify({ intent_id: created.intent.id, response }),
     });
   } catch (error) {
-    await api(`/api/dashboard/pathless-publication-intents/${intentId}`, {
+    await api(`/api/dashboard/publication-intents/${intentId}`, {
       method: "DELETE",
     }).catch(() => undefined);
     throw error;

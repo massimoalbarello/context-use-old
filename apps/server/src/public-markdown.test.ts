@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { projectPathlessPublicMarkdown } from "./pathless-public-markdown.ts";
+import { projectPublicMarkdown } from "./public-markdown.ts";
 
 const source = "11111111-1111-4111-8111-111111111111";
 const page = "22222222-2222-4222-8222-222222222222";
@@ -8,9 +8,9 @@ const privateDocument = "44444444-4444-4444-8444-444444444444";
 const publicPage = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const publicAsset = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
-describe("pathless public Markdown projection", () => {
+describe("canonical public Markdown projection", () => {
   test("uses canonical public UUID routes and strips every private identity", () => {
-    const result = projectPathlessPublicMarkdown([
+    const result = projectPublicMarkdown([
       `[Page](context-use://document/${page}#details)`,
       `![Photo](context-use://document/${asset}){size=medium}`,
       `[Old page](context-use://page/${page})`,
@@ -35,7 +35,7 @@ describe("pathless public Markdown projection", () => {
   });
 
   test("fails closed for inactive, conflicting and wrong-representation images", () => {
-    const projected = projectPathlessPublicMarkdown([
+    const projected = projectPublicMarkdown([
       `[Inactive](context-use://document/${page})`,
       `![Page as image](context-use://document/${source})`,
     ].join("\n"), [

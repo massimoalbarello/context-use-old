@@ -57,7 +57,7 @@ export class ConfirmationRepository {
          intent.expected_revision_id AS version_id,
          intent.owner_user_id,intent.session_id,ledger.challenge,intent.expires_at
        FROM publication_intent_id_reservations reservation
-       JOIN pathless_publication_intents intent ON intent.id=reservation.intent_id
+       JOIN publication_intents intent ON intent.id=reservation.intent_id
        LEFT JOIN confirmation_challenges ledger
          ON ledger.intent_kind='publication' AND ledger.intent_id=intent.id
        WHERE reservation.intent_id=$1

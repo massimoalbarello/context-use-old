@@ -1,57 +1,57 @@
 import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import type {
-  PathlessPublicationArtifactReceipt,
-  PathlessPublicationEntrypointInput,
-  PathlessPublicationIntentInput,
-  PathlessPublicRouteInput,
+  PublicationArtifactReceipt,
+  PublicationEntrypointInput,
+  PublicationIntentInput,
+  PublicRouteInput,
 } from "@context-use/shared";
 
-export type PathlessPublicationPrincipal = {
+export type PublicationPrincipal = {
   ownerUserId: string;
   sessionId: string;
 };
 
-export type PathlessDashboardPublicationStatus = {
+export type DashboardPublicationStatus = {
   public_id: string | null;
   published_revision_id: string | null;
   published_revision_number: number | null;
   active: boolean;
 };
 
-type PathlessPublicationIntentBase = {
+type PublicationIntentBase = {
   id: string;
   target_document_id: string;
   expires_at: Date | string;
 };
 
-export type PathlessPublicationIntent =
-  | PathlessPublicationIntentBase & {
+export type PublicationIntent =
+  | PublicationIntentBase & {
     action: "publish";
     target_kind: "page";
     expected_revision_id: string;
     candidate_public_id: string;
   }
-  | PathlessPublicationIntentBase & {
+  | PublicationIntentBase & {
     action: "publish";
     target_kind: "asset";
     expected_revision_id: null;
     candidate_public_id: string;
   }
-  | PathlessPublicationIntentBase & {
+  | PublicationIntentBase & {
     action: "unpublish";
     target_kind: "page";
     expected_revision_id: null;
     candidate_public_id: null;
   }
-  | PathlessPublicationIntentBase & {
+  | PublicationIntentBase & {
     action: "unpublish";
     target_kind: "asset";
     expected_revision_id: null;
     candidate_public_id: null;
   };
 
-export type PathlessPublicationProjectionOutcome =
+export type PublicationProjectionOutcome =
   | "self"
   | "active_public"
   | "inactive_public"
@@ -59,14 +59,14 @@ export type PathlessPublicationProjectionOutcome =
   | "private"
   | "dangling";
 
-export type PathlessPublicationProjectionTarget = {
+export type PublicationProjectionTarget = {
   target_document_id: string;
-  outcome: PathlessPublicationProjectionOutcome;
+  outcome: PublicationProjectionOutcome;
   public_id: string | null;
   public_target_kind: "page" | "asset" | null;
 };
 
-type PathlessPublicationWriteAuthorizationBase = {
+type PublicationWriteAuthorizationBase = {
   intent_id: string;
   candidate_public_id: string;
   artifact_id: string;
@@ -77,8 +77,8 @@ type PathlessPublicationWriteAuthorizationBase = {
   max_body_size_bytes: number | string;
 };
 
-export type PathlessPagePublicationWriteAuthorization =
-  PathlessPublicationWriteAuthorizationBase & {
+export type PagePublicationWriteAuthorization =
+  PublicationWriteAuthorizationBase & {
     target_kind: "page";
     public_title: string;
     public_summary: string;
@@ -90,11 +90,11 @@ export type PathlessPagePublicationWriteAuthorization =
     public_duration_seconds: null;
     projected_target_public_ids: string[];
     projection_receipt_hash: string;
-    target_projection: PathlessPublicationProjectionTarget[];
+    target_projection: PublicationProjectionTarget[];
   };
 
-export type PathlessAssetPublicationWriteAuthorization =
-  PathlessPublicationWriteAuthorizationBase & {
+export type AssetPublicationWriteAuthorization =
+  PublicationWriteAuthorizationBase & {
     target_kind: "asset";
     public_title: null;
     public_summary: null;
@@ -110,11 +110,11 @@ export type PathlessAssetPublicationWriteAuthorization =
   };
 
 /** Exact source, destination, metadata and projection frozen by a live intent. */
-export type PathlessPublicationWriteAuthorization =
-  | PathlessPagePublicationWriteAuthorization
-  | PathlessAssetPublicationWriteAuthorization;
+export type PublicationWriteAuthorization =
+  | PagePublicationWriteAuthorization
+  | AssetPublicationWriteAuthorization;
 
-type PathlessFinalizedObjectClaim = {
+type FinalizedObjectClaim = {
   claim_token: string;
   finalized: true;
   artifact_id: string;
@@ -123,8 +123,8 @@ type PathlessFinalizedObjectClaim = {
   body_content_hash: string;
 };
 
-export type PathlessPublicationObjectClaim<Authorization> =
-  | PathlessFinalizedObjectClaim
+export type PublicationObjectClaim<Authorization> =
+  | FinalizedObjectClaim
   | {
     claim_token: string;
     finalized: false;
@@ -133,13 +133,13 @@ export type PathlessPublicationObjectClaim<Authorization> =
     authorization: Authorization;
   };
 
-export type PathlessPublicationEntrypoint = {
+export type PublicationEntrypoint = {
   public_id: string | null;
   configured: boolean;
   active: boolean;
 };
 
-export type PathlessPublicationEntrypointCandidate = {
+export type PublicationEntrypointCandidate = {
   public_id: string;
   public_title: string;
   public_summary: string;
@@ -147,12 +147,12 @@ export type PathlessPublicationEntrypointCandidate = {
   representation_token: string;
 };
 
-export type PathlessPublicPage = PathlessPublicationEntrypointCandidate & {
+export type PublicPage = PublicationEntrypointCandidate & {
   canonical_path: string;
   markdown_path: string;
 };
 
-export type PathlessPublicAsset = {
+export type PublicAsset = {
   public_id: string;
   canonical_path: string;
   public_filename: string;
@@ -163,23 +163,23 @@ export type PathlessPublicAsset = {
   representation_token: string;
 };
 
-export type PathlessPublicRouteKind = "page" | "directory" | "markdown" | "asset";
+export type PublicRouteKind = "page" | "directory" | "markdown" | "asset";
 
-export type PathlessPublicUnassignedRoute = {
+export type PublicUnassignedRoute = {
   state: "unassigned";
-  route_kind: PathlessPublicRouteKind;
+  route_kind: PublicRouteKind;
 };
 
-export type PathlessPublicInactiveRoute = {
+export type PublicInactiveRoute = {
   state: "inactive";
-  route_kind: PathlessPublicRouteKind;
+  route_kind: PublicRouteKind;
 };
 
-export type PathlessPublicUnavailableRoute =
-  | PathlessPublicUnassignedRoute
-  | PathlessPublicInactiveRoute;
+export type PublicUnavailableRoute =
+  | PublicUnassignedRoute
+  | PublicInactiveRoute;
 
-export type PathlessPublicActivePageRoute = {
+export type PublicActivePageRoute = {
   state: "active";
   route_kind: "page" | "directory" | "markdown";
   canonical_path: string;
@@ -190,7 +190,7 @@ export type PathlessPublicActivePageRoute = {
   public_last_edited_at: string;
 };
 
-export type PathlessPublicActiveAssetRoute = {
+export type PublicActiveAssetRoute = {
   state: "active";
   route_kind: "asset";
   canonical_path: string;
@@ -203,14 +203,14 @@ export type PathlessPublicActiveAssetRoute = {
   public_duration_seconds: string | null;
 };
 
-export type PathlessPublicRouteResolution =
-  | PathlessPublicUnavailableRoute
-  | PathlessPublicActivePageRoute
-  | PathlessPublicActiveAssetRoute;
+export type PublicRouteResolution =
+  | PublicUnavailableRoute
+  | PublicActivePageRoute
+  | PublicActiveAssetRoute;
 
-type PathlessPublicRouteRow = {
+type PublicRouteRow = {
   state: "unassigned" | "inactive" | "active";
-  route_kind: PathlessPublicRouteKind;
+  route_kind: PublicRouteKind;
   canonical_path: string | null;
   public_id: string | null;
   representation_token: string | null;
@@ -224,7 +224,7 @@ type PathlessPublicRouteRow = {
   public_duration_seconds: string | null;
 };
 
-export type PathlessStorageRoute = {
+export type StorageRoute = {
   resource_kind: "page" | "asset";
   representation_token: string;
   body_object_key: string;
@@ -237,14 +237,14 @@ function requireRow<T>(row: T | undefined, description: string): T {
   return row;
 }
 
-function publicRoute(row: PathlessPublicRouteRow): PathlessPublicRouteResolution {
+function publicRoute(row: PublicRouteRow): PublicRouteResolution {
   if (row.state !== "active") {
     return { state: row.state, route_kind: row.route_kind };
   }
   if (row.route_kind === "asset") {
     if (!row.canonical_path || !row.public_id || !row.representation_token
       || !row.public_filename || !row.public_content_type) {
-      throw new Error("Active pathless asset route is incomplete");
+      throw new Error("Active asset route is incomplete");
     }
     return {
       state: "active",
@@ -261,7 +261,7 @@ function publicRoute(row: PathlessPublicRouteRow): PathlessPublicRouteResolution
   }
   if (!row.canonical_path || !row.public_id || !row.representation_token
     || !row.public_title || !row.public_summary || !row.public_last_edited_at) {
-    throw new Error("Active pathless page route is incomplete");
+    throw new Error("Active page route is incomplete");
   }
   return {
     state: "active",
@@ -275,19 +275,19 @@ function publicRoute(row: PathlessPublicRouteRow): PathlessPublicRouteResolution
   };
 }
 
-export class PathlessPublicationRepository {
+export class PublicationRepository {
   constructor(private readonly dashboardPool: Pool) {}
 
   /** Reuse `intentId` after a lost response to replay the same immutable plan. */
   async begin(
-    input: PathlessPublicationIntentInput,
-    principal: PathlessPublicationPrincipal,
+    input: PublicationIntentInput,
+    principal: PublicationPrincipal,
     intentId: string = randomUUID(),
-  ): Promise<PathlessPublicationIntent> {
-    const result = await this.dashboardPool.query<PathlessPublicationIntent>(
+  ): Promise<PublicationIntent> {
+    const result = await this.dashboardPool.query<PublicationIntent>(
       `SELECT id,action,target_kind,target_document_id,expected_revision_id,
          candidate_public_id,expires_at
-       FROM begin_pathless_publication_intent($1,$2,$3,$4,$5,$6,$7)`,
+       FROM begin_publication_intent($1,$2,$3,$4,$5,$6,$7)`,
       [
         intentId,
         input.action,
@@ -299,13 +299,13 @@ export class PathlessPublicationRepository {
       ],
     );
     const intent = result.rows[0];
-    if (!intent) throw new Error("Pathless publication intent was not returned");
+    if (!intent) throw new Error("Publication intent was not returned");
     return intent;
   }
 
-  async cancel(intentId: string, principal: PathlessPublicationPrincipal): Promise<void> {
+  async cancel(intentId: string, principal: PublicationPrincipal): Promise<void> {
     await this.dashboardPool.query(
-      "SELECT cancel_pathless_publication_intent($1,$2,$3)",
+      "SELECT cancel_publication_intent($1,$2,$3)",
       [intentId, principal.ownerUserId, principal.sessionId],
     );
   }
@@ -313,17 +313,17 @@ export class PathlessPublicationRepository {
   async status(
     targetKind: "page" | "asset",
     targetDocumentId: string,
-  ): Promise<PathlessDashboardPublicationStatus> {
-    const result = await this.dashboardPool.query<PathlessDashboardPublicationStatus>(
+  ): Promise<DashboardPublicationStatus> {
+    const result = await this.dashboardPool.query<DashboardPublicationStatus>(
       `SELECT public_id,published_revision_id,published_revision_number,active
-       FROM get_pathless_dashboard_publication_status($1,$2)`,
+       FROM get_dashboard_publication_status($1,$2)`,
       [targetKind, targetDocumentId],
     );
-    return requireRow(result.rows[0], "Pathless dashboard publication status");
+    return requireRow(result.rows[0], "Dashboard publication status");
   }
 }
 
-export class PathlessStoragePublicationRepository {
+export class StoragePublicationRepository {
   constructor(private readonly storagePool: Pool) {}
 
   private claimRow<Authorization>(row: {
@@ -334,8 +334,8 @@ export class PathlessStoragePublicationRepository {
     body_size_bytes: number | string | null;
     body_content_hash: string | null;
     authorization: Authorization | null;
-  } | undefined): PathlessPublicationObjectClaim<Authorization> {
-    const claim = requireRow(row, "Pathless publication object claim");
+  } | undefined): PublicationObjectClaim<Authorization> {
+    const claim = requireRow(row, "Publication object claim");
     if (claim.finalized) {
       if (claim.body_size_bytes === null || claim.body_content_hash === null) {
         throw new Error("Finalized publication claim is missing its byte receipt");
@@ -362,7 +362,7 @@ export class PathlessStoragePublicationRepository {
   async claimIntent(
     intentId: string,
     requestedClaimToken = randomUUID(),
-  ): Promise<PathlessPublicationObjectClaim<PathlessPublicationWriteAuthorization>> {
+  ): Promise<PublicationObjectClaim<PublicationWriteAuthorization>> {
     const result = await this.storagePool.query<{
       claim_token: string;
       finalized: boolean;
@@ -370,20 +370,20 @@ export class PathlessStoragePublicationRepository {
       body_object_key: string;
       body_size_bytes: number | string | null;
       body_content_hash: string | null;
-      authorization: PathlessPublicationWriteAuthorization | null;
+      authorization: PublicationWriteAuthorization | null;
     }>(
       `SELECT claim_token,finalized,artifact_id,body_object_key,
          body_size_bytes,body_content_hash,"authorization"
-       FROM claim_pathless_publication_artifact($1,$2)`,
+       FROM claim_publication_artifact($1,$2)`,
       [intentId, requestedClaimToken],
     );
     return this.claimRow(result.rows[0]);
   }
 
-  async finalizeIntent(claimToken: string, receipt: PathlessPublicationArtifactReceipt): Promise<void> {
+  async finalizeIntent(claimToken: string, receipt: PublicationArtifactReceipt): Promise<void> {
     const page = receipt.target_kind === "page";
     await this.storagePool.query(
-      `SELECT finalize_pathless_publication_artifact_claim(
+      `SELECT finalize_publication_artifact_claim(
          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16
        )`,
       [
@@ -407,37 +407,37 @@ export class PathlessStoragePublicationRepository {
     );
   }
 
-  async resolve(representationToken: string): Promise<PathlessStorageRoute | null> {
-    const result = await this.storagePool.query<PathlessStorageRoute>(
+  async resolve(representationToken: string): Promise<StorageRoute | null> {
+    const result = await this.storagePool.query<StorageRoute>(
       `SELECT resource_kind,representation_token,body_object_key,
          body_size_bytes,body_content_hash
-       FROM resolve_pathless_storage_route($1)`,
+       FROM resolve_storage_route($1)`,
       [representationToken],
     );
     if (result.rows.length > 1) {
-      throw new Error("Pathless representation token resolves ambiguously");
+      throw new Error("Canonical representation token resolves ambiguously");
     }
     return result.rows[0] ?? null;
   }
 }
 
-export class PathlessPublicEntrypointRepository {
+export class PublicEntrypointRepository {
   constructor(private readonly dashboardPool: Pool) {}
 
-  async get(): Promise<PathlessPublicationEntrypoint> {
-    const result = await this.dashboardPool.query<PathlessPublicationEntrypoint>(
+  async get(): Promise<PublicationEntrypoint> {
+    const result = await this.dashboardPool.query<PublicationEntrypoint>(
       `SELECT public_id,configured,active
-       FROM get_pathless_publication_entrypoint()`,
+       FROM get_publication_entrypoint()`,
     );
-    const row = requireRow(result.rows[0], "Pathless publication entrypoint");
+    const row = requireRow(result.rows[0], "Publication entrypoint");
     return { public_id: row.public_id, configured: row.configured, active: row.active };
   }
 
-  async candidates(): Promise<PathlessPublicationEntrypointCandidate[]> {
-    const result = await this.dashboardPool.query<PathlessPublicationEntrypointCandidate>(
+  async candidates(): Promise<PublicationEntrypointCandidate[]> {
+    const result = await this.dashboardPool.query<PublicationEntrypointCandidate>(
       `SELECT public_id,public_title,public_summary,public_last_edited_at,
          representation_token
-       FROM list_pathless_publication_entrypoint_candidates()
+       FROM list_publication_entrypoint_candidates()
        ORDER BY public_title,public_id`,
     );
     return result.rows.map((row) => ({
@@ -449,25 +449,25 @@ export class PathlessPublicEntrypointRepository {
     }));
   }
 
-  async set(input: PathlessPublicationEntrypointInput): Promise<PathlessPublicationEntrypoint> {
-    const result = await this.dashboardPool.query<PathlessPublicationEntrypoint>(
+  async set(input: PublicationEntrypointInput): Promise<PublicationEntrypoint> {
+    const result = await this.dashboardPool.query<PublicationEntrypoint>(
       `SELECT public_id,configured,active
-       FROM set_pathless_publication_entrypoint($1)`,
+       FROM set_publication_entrypoint($1)`,
       [input.public_id],
     );
-    const row = requireRow(result.rows[0], "Pathless publication entrypoint");
+    const row = requireRow(result.rows[0], "Publication entrypoint");
     return { public_id: row.public_id, configured: row.configured, active: row.active };
   }
 }
 
-export class PathlessPublicRepository {
+export class PublicRepository {
   constructor(private readonly publicPool: Pool) {}
 
-  async pages(): Promise<PathlessPublicPage[]> {
-    const result = await this.publicPool.query<PathlessPublicPage>(
+  async pages(): Promise<PublicPage[]> {
+    const result = await this.publicPool.query<PublicPage>(
       `SELECT public_id,canonical_path,markdown_path,public_title,public_summary,
          public_last_edited_at,representation_token
-       FROM pathless_public_pages
+       FROM public_pages
        ORDER BY public_id`,
     );
     return result.rows.map((row) => ({
@@ -481,11 +481,11 @@ export class PathlessPublicRepository {
     }));
   }
 
-  async assets(): Promise<PathlessPublicAsset[]> {
-    const result = await this.publicPool.query<PathlessPublicAsset>(
+  async assets(): Promise<PublicAsset[]> {
+    const result = await this.publicPool.query<PublicAsset>(
       `SELECT public_id,canonical_path,public_filename,public_content_type,
          public_width,public_height,public_duration_seconds,representation_token
-       FROM pathless_public_assets
+       FROM public_assets
        ORDER BY public_id`,
     );
     return result.rows.map((row) => ({
@@ -500,20 +500,20 @@ export class PathlessPublicRepository {
     }));
   }
 
-  async entrypoint(): Promise<PathlessPublicRouteResolution> {
+  async entrypoint(): Promise<PublicRouteResolution> {
     return this.resolve("/p/");
   }
 
-  async resolve(route: PathlessPublicRouteInput): Promise<PathlessPublicRouteResolution> {
-    const result = await this.publicPool.query<PathlessPublicRouteRow>(
+  async resolve(route: PublicRouteInput): Promise<PublicRouteResolution> {
+    const result = await this.publicPool.query<PublicRouteRow>(
       `SELECT state,route_kind,canonical_path,public_id,representation_token,
          public_title,public_summary,public_last_edited_at,public_filename,
          public_content_type,public_width,public_height,public_duration_seconds
-       FROM resolve_pathless_public_route($1)`,
+       FROM resolve_public_route($1)`,
       [route],
     );
     if (result.rows.length !== 1) {
-      throw new Error("Pathless public route did not resolve to exactly one state");
+      throw new Error("Public route did not resolve to exactly one state");
     }
     return publicRoute(result.rows[0]!);
   }

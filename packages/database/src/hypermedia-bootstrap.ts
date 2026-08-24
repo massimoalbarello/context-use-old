@@ -99,7 +99,7 @@ export class HypermediaBootstrapRepository {
          LEFT JOIN knowledge_revision_contracts contract
            ON contract.revision_id=version.id AND contract.document_id=page.id
             AND contract.link_contract='generic_document_v1'
-         LEFT JOIN pathless_knowledge_search search
+         LEFT JOIN knowledge_search search
            ON search.document_id=page.id AND search.revision_id=version.id
          WHERE hypermedia.id=$1 AND hypermedia.authority='knowledge'
            AND hypermedia.representation='markdown' AND page.archived_at IS NULL
@@ -155,10 +155,6 @@ export class HypermediaBootstrapRepository {
         [document.revision_id, document.input.body_markdown, targets],
       );
     });
-  }
-
-  async seedEntrypoint(): Promise<void> {
-    await this.pool.query("SELECT seed_pathless_publication_entrypoint()");
   }
 
   async complete(): Promise<Date | string> {

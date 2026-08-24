@@ -7,7 +7,7 @@ describe("development data reset", () => {
     expect(DEVELOPMENT_RESET_TABLES).toContain("assets");
     expect(DEVELOPMENT_RESET_TABLES).toContain("source_records");
     expect(DEVELOPMENT_RESET_TABLES).toContain("source_record_search_chunks");
-    expect(DEVELOPMENT_RESET_TABLES).toContain("pathless_knowledge_search_chunks");
+    expect(DEVELOPMENT_RESET_TABLES).toContain("knowledge_search_chunks");
     expect(DEVELOPMENT_RESET_TABLES).toContain("hypermedia_documents");
     expect(DEVELOPMENT_RESET_TABLES).toContain("public_resources");
 
@@ -18,31 +18,31 @@ describe("development data reset", () => {
     }
   });
 
-  test("clears every pathless publication table in the same explicit truncate", () => {
-    const pathlessPublicationTables = [
+  test("clears every publication table in the same explicit truncate", () => {
+    const publicationTables = [
       "public_artifact_id_reservations",
       "public_representation_token_reservations",
-      "pathless_publication_intents",
+      "publication_intents",
       "publication_intent_id_reservations",
-      "pathless_publication_object_claims",
-      "pathless_publication_artifact_staging",
+      "publication_object_claims",
+      "publication_artifact_staging",
       "public_page_artifacts",
       "public_asset_artifacts",
       "page_publications",
       "asset_publications",
-      "pathless_publication_settings",
+      "publication_settings",
       "public_visibility_generations",
       "publication_target_generations",
       "public_namespace_conflicts",
     ] as const;
 
-    for (const table of pathlessPublicationTables) {
+    for (const table of publicationTables) {
       expect(DEVELOPMENT_RESET_TABLES).toContain(table);
     }
     const sql = developmentResetSql();
     const truncateStatements = sql.match(/TRUNCATE TABLE[\s\S]*?;/gi) ?? [];
     expect(truncateStatements).toHaveLength(1);
-    for (const table of pathlessPublicationTables) {
+    for (const table of publicationTables) {
       expect(truncateStatements[0]).toContain(table);
     }
     expect(truncateStatements[0]?.toUpperCase()).not.toContain("CASCADE");
@@ -53,9 +53,9 @@ describe("development data reset", () => {
     expect(developmentResetSql()).toContain("hypermedia_bootstrap_allocations");
   });
 
-  test("recreates canonical singleton settings for bootstrap", () => {
+  test("recreates singleton settings for bootstrap", () => {
     expect(developmentResetSql()).toContain("INSERT INTO knowledge_settings(singleton)");
-    expect(developmentResetSql()).toContain("INSERT INTO pathless_publication_settings(");
+    expect(developmentResetSql()).toContain("INSERT INTO publication_settings(");
     expect(developmentResetSql()).toContain("VALUES (true,NULL,NULL)");
   });
 });

@@ -74,7 +74,7 @@ describe("public page presentation", () => {
       "2026-08-23T12:00:00Z",
       {
         siteOrigin: "https://massimo.example",
-        summary: "A pathless public page.",
+        summary: "A canonical public page.",
         canonicalPath: `/p/${publicId}`,
         entrypointPublicPath: null,
       },

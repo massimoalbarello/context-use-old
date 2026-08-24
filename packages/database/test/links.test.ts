@@ -15,7 +15,7 @@ describe("canonical document links", () => {
     expect(extractDocumentLinks(markdown)).toEqual([first, second]);
   });
 
-  test("does not interpret filesystem-era private links", () => {
+  test("ignores unsupported private link schemes", () => {
     const markdown = [
       `[Page](context-use://page/${first})`,
       `![Asset](context-use://asset/${first})`,

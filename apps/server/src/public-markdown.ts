@@ -1,9 +1,9 @@
-import type { PathlessPublicationProjectionTarget } from "@context-use/database";
+import type { PublicationProjectionTarget } from "@context-use/database";
 
 const UUID_SOURCE = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const UUID_GLOBAL = new RegExp(UUID_SOURCE, "gi");
 
-function routable(target: PathlessPublicationProjectionTarget | undefined) {
+function routable(target: PublicationProjectionTarget | undefined) {
   return target
     && (target.outcome === "self" || target.outcome === "active_public")
     && target.public_id
@@ -16,9 +16,9 @@ function routable(target: PathlessPublicationProjectionTarget | undefined) {
  * Project generic private document links into canonical UUID public routes.
  * Every non-public target and every otherwise-visible UUID is redacted.
  */
-export function projectPathlessPublicMarkdown(
+export function projectPublicMarkdown(
   markdown: string,
-  projection: PathlessPublicationProjectionTarget[],
+  projection: PublicationProjectionTarget[],
 ): { bodyMarkdown: string; observedPublicIds: string[] } {
   const targets = new Map(projection.map((target) => [
     target.target_document_id.toLowerCase(),

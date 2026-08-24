@@ -34,7 +34,7 @@ export type DashboardKnowledgeRevision = {
   created_at: Date | string;
 };
 
-export type DashboardPathlessRepublicationReview = {
+export type DashboardRepublicationReview = {
   published_version_number: number;
   metadata_changes: Array<{
     field: "title" | "summary";
@@ -118,11 +118,11 @@ export async function dashboardKnowledgeRevisionDelta(
   };
 }
 
-export async function dashboardPathlessRepublicationReview(
+export async function dashboardRepublicationReview(
   published: KnowledgeDocumentRevision,
   candidate: KnowledgeDocumentRevision,
   retainedHistory: KnowledgeDocumentRevision[],
-): Promise<DashboardPathlessRepublicationReview> {
+): Promise<DashboardRepublicationReview> {
   const queued = retainedHistory
     .filter((revision) => (
       revision.revision_number > published.revision_number

@@ -199,8 +199,8 @@ export function Settings({
   useEffect(() => {
     let active = true;
     Promise.all([
-      api<{ entrypoint: PublicEntrypoint["entrypoint"] }>("/api/dashboard/pathless-publication-entrypoint"),
-      api<{ candidates: PublicEntrypoint["candidates"] }>("/api/dashboard/pathless-publication-entrypoint/candidates"),
+      api<{ entrypoint: PublicEntrypoint["entrypoint"] }>("/api/dashboard/publication-entrypoint"),
+      api<{ candidates: PublicEntrypoint["candidates"] }>("/api/dashboard/publication-entrypoint/candidates"),
     ])
       .then(([entrypoint, candidates]) => {
         if (!active) return;
@@ -217,7 +217,7 @@ export function Settings({
     setPublicEntrypointWorking(true);
     setPublicEntrypointError("");
     try {
-      const result = await api<{ entrypoint: PublicEntrypoint["entrypoint"] }>("/api/dashboard/pathless-publication-entrypoint", {
+      const result = await api<{ entrypoint: PublicEntrypoint["entrypoint"] }>("/api/dashboard/publication-entrypoint", {
         method: "PUT",
         body: JSON.stringify({ public_id: publicEntrypointId || null }),
       });

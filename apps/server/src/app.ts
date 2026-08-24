@@ -8,8 +8,8 @@ import {
   type KnowledgeExportAsset,
   type KnowledgeExportSnapshot,
   PageDeletionRepository,
-  PathlessPublicationRepository,
-  PathlessPublicEntrypointRepository,
+  PublicationRepository,
+  PublicEntrypointRepository,
   SourceRecordRepository,
   createPool,
   extractDocumentLinks,
@@ -18,8 +18,8 @@ import {
 import {
   archiveKnowledgeDocumentSchema,
   createKnowledgeDocumentSchema,
-  pathlessPublicationEntrypointSchema,
-  pathlessPublicationIntentSchema,
+  publicationEntrypointSchema,
+  publicationIntentSchema,
   updateKnowledgeDocumentSchema,
 } from "@context-use/shared";
 import { Elysia } from "elysia";
@@ -45,7 +45,7 @@ import {
   dashboardKnowledgeDocument,
   dashboardKnowledgeRevision,
   dashboardKnowledgeRevisionDelta,
-  dashboardPathlessRepublicationReview,
+  dashboardRepublicationReview,
 } from "./dashboard-knowledge-documents.ts";
 import { bodyJson, json, problem, routeError } from "./http.ts";
 import { publicationWarnings, renderMarkdown } from "./markdown.ts";
@@ -71,8 +71,8 @@ const markdownObjects = new BrokeredMarkdownObjectStore(storage);
 const dashboardKnowledgeDocuments = new KnowledgeDocumentRepository(dashboardPool, markdownObjects);
 const pageDeletions = new PageDeletionRepository(dashboardPool);
 const dashboardAssets = new DocumentAssetRepository(dashboardPool);
-const pathlessPublications = new PathlessPublicationRepository(dashboardPool);
-const pathlessPublicEntrypoint = new PathlessPublicEntrypointRepository(dashboardPool);
+const publications = new PublicationRepository(dashboardPool);
+const publicEntrypoint = new PublicEntrypointRepository(dashboardPool);
 const knowledgeExports = new KnowledgeExportRepository(dashboardPool, markdownObjects);
 const dashboardDocumentCatalog = new PrivateDocumentCatalogRepository(dashboardPool);
 const dashboardAutomations = new AutomationRegistryRepository(dashboardPool);
@@ -86,7 +86,7 @@ async function dashboardAssetPublication(asset: {
   content_hash: string;
   created_at: Date | string;
 }) {
-  const status = await pathlessPublications.status("asset", asset.document_id);
+  const status = await publications.status("asset", asset.document_id);
   return {
     id: asset.document_id,
     filename: asset.filename,
@@ -150,9 +150,9 @@ function privateDocumentResolvers() {
 }
 
 async function dashboardKnowledgeDocumentResponse(documentId: string) {
-  const [document, pathlessStatus] = await Promise.all([
+  const [document, publicationStatus] = await Promise.all([
     dashboardKnowledgeDocuments.get(documentId),
-    pathlessPublications.status("page", documentId),
+    publications.status("page", documentId),
   ]);
   if (!document) return null;
   const renderedHtml = await renderMarkdown(
@@ -160,19 +160,19 @@ async function dashboardKnowledgeDocumentResponse(documentId: string) {
     privateDocumentResolvers(),
   );
   return dashboardKnowledgeDocument(document, renderedHtml, {
-    published_revision_id: pathlessStatus.active
-      ? pathlessStatus.published_revision_id
+    published_revision_id: publicationStatus.active
+      ? publicationStatus.published_revision_id
       : null,
-    published_revision_number: pathlessStatus.active
-      ? pathlessStatus.published_revision_number
+    published_revision_number: publicationStatus.active
+      ? publicationStatus.published_revision_number
       : null,
-    public_url: pathlessStatus.active && pathlessStatus.public_id
-      ? `${config.APP_ORIGIN}/p/${pathlessStatus.public_id}`
+    public_url: publicationStatus.active && publicationStatus.public_id
+      ? `${config.APP_ORIGIN}/p/${publicationStatus.public_id}`
       : null,
   });
 }
 
-type PathlessPreviewTarget = {
+type PreviewTarget = {
   kind: "page" | "asset" | "record" | "document";
   id: string;
   label: string;
@@ -181,14 +181,14 @@ type PathlessPreviewTarget = {
   contentType: string | null;
 };
 
-function pathlessPreviewTargets(
+function publicationPreviewTargets(
   publishingPage: { id: string; title: string },
 ) {
-  const cache = new Map<string, Promise<PathlessPreviewTarget>>();
-  const resolveTarget = (id: string): Promise<PathlessPreviewTarget> => {
+  const cache = new Map<string, Promise<PreviewTarget>>();
+  const resolveTarget = (id: string): Promise<PreviewTarget> => {
     const cached = cache.get(id);
     if (cached) return cached;
-    const pending = (async (): Promise<PathlessPreviewTarget> => {
+    const pending = (async (): Promise<PreviewTarget> => {
       if (id === publishingPage.id) {
         return {
           kind: "page",
@@ -213,7 +213,7 @@ function pathlessPreviewTargets(
         };
       }
       if (document.document_kind === "asset") {
-        const status = await pathlessPublications.status("asset", id);
+        const status = await publications.status("asset", id);
         return {
           kind: "asset",
           id,
@@ -226,7 +226,7 @@ function pathlessPreviewTargets(
         };
       }
       if (document.document_kind === "knowledge") {
-        const status = await pathlessPublications.status("page", id);
+        const status = await publications.status("page", id);
         return {
           kind: "page",
           id,
@@ -648,12 +648,12 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     const documentId = z.string().uuid().parse(params.id);
     const [document, status] = await Promise.all([
       dashboardKnowledgeDocuments.get(documentId),
-      pathlessPublications.status("page", documentId),
+      publications.status("page", documentId),
     ]);
     if (!document || document.archived_at) {
       return problem("Active knowledge document not found", 404, "not_found");
     }
-    const preview = pathlessPreviewTargets({ id: documentId, title: document.title });
+    const preview = publicationPreviewTargets({ id: documentId, title: document.title });
     const renderedHtml = await renderMarkdown(
       document.body_markdown,
       preview.markdownResolvers,
@@ -671,7 +671,7 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
       if (!published || !candidate) {
         return problem("Published revision evidence is unavailable", 409, "publication_state_invalid");
       }
-      republication = await dashboardPathlessRepublicationReview(
+      republication = await dashboardRepublicationReview(
         published,
         candidate,
         history.revisions,
@@ -728,7 +728,7 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     const documentId = z.string().uuid().parse(params.id);
     const [document, publication] = await Promise.all([
       dashboardKnowledgeDocuments.get(documentId),
-      pathlessPublications.status("page", documentId),
+      publications.status("page", documentId),
     ]);
     if (!document) return problem("Knowledge document not found", 404, "not_found");
     if (!document.archived_at || publication.active) {
@@ -844,17 +844,17 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     await ownerRequest(request);
     const asset = await dashboardAssets.getForStorage(z.string().uuid().parse(params.id));
     if (!asset) return problem("Asset not found", 404, "not_found");
-    const pathlessStatus = await pathlessPublications.status("asset", asset.document_id);
+    const publicationStatus = await publications.status("asset", asset.document_id);
     return json({
       content_available: await storage.verify(
         asset.object_key,
         Number(asset.size_bytes),
         asset.content_hash,
       ),
-      public_url: pathlessStatus.active && pathlessStatus.public_id
-        ? `${config.ASSET_ORIGIN}/a/${pathlessStatus.public_id}`
+      public_url: publicationStatus.active && publicationStatus.public_id
+        ? `${config.ASSET_ORIGIN}/a/${publicationStatus.public_id}`
         : null,
-      published: pathlessStatus.active,
+      published: publicationStatus.active,
     });
   })
   .get("/api/dashboard/assets/:id/content", async ({ request, params }) => {
@@ -871,14 +871,14 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     return json({ deleted: true });
   })
 
-  .post("/api/dashboard/pathless-publication-intents", async ({ request }) => {
+  .post("/api/dashboard/publication-intents", async ({ request }) => {
     const principal = await ownerRequest(request, true);
-    const input = pathlessPublicationIntentSchema.parse(await bodyJson(request));
+    const input = publicationIntentSchema.parse(await bodyJson(request));
     const suppliedIntentId = request.headers.get("x-publication-intent-id");
     const intentId = suppliedIntentId === null
       ? undefined
       : z.string().uuid().parse(suppliedIntentId);
-    const intent = await pathlessPublications.begin(input, {
+    const intent = await publications.begin(input, {
       ownerUserId: principal.userId,
       sessionId: principal.sessionId,
     }, intentId);
@@ -888,31 +888,31 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     const authenticationOptions = await issueConfirmationOptions("publication", intent.id);
     return json({ intent, authentication_options: authenticationOptions }, 201);
   })
-  .delete("/api/dashboard/pathless-publication-intents/:id", async ({ request, params }) => {
+  .delete("/api/dashboard/publication-intents/:id", async ({ request, params }) => {
     const principal = await ownerRequest(request, true);
-    await pathlessPublications.cancel(z.string().uuid().parse(params.id), {
+    await publications.cancel(z.string().uuid().parse(params.id), {
       ownerUserId: principal.userId,
       sessionId: principal.sessionId,
     });
     return json({ cancelled: true });
   })
-  .get("/api/dashboard/pathless-publication-entrypoint", async ({ request }) => {
+  .get("/api/dashboard/publication-entrypoint", async ({ request }) => {
     await ownerRequest(request);
-    return json({ entrypoint: await pathlessPublicEntrypoint.get() });
+    return json({ entrypoint: await publicEntrypoint.get() });
   })
-  .get("/api/dashboard/pathless-publication-entrypoint/candidates", async ({ request }) => {
+  .get("/api/dashboard/publication-entrypoint/candidates", async ({ request }) => {
     await ownerRequest(request);
     return json({
-      candidates: (await pathlessPublicEntrypoint.candidates()).map(({
+      candidates: (await publicEntrypoint.candidates()).map(({
         representation_token: _representationToken,
         ...candidate
       }) => candidate),
     });
   })
-  .put("/api/dashboard/pathless-publication-entrypoint", async ({ request }) => {
+  .put("/api/dashboard/publication-entrypoint", async ({ request }) => {
     await ownerRequest(request, true);
-    const input = pathlessPublicationEntrypointSchema.parse(await bodyJson(request));
-    return json({ entrypoint: await pathlessPublicEntrypoint.set(input) });
+    const input = publicationEntrypointSchema.parse(await bodyJson(request));
+    return json({ entrypoint: await publicEntrypoint.set(input) });
   });
 
 if (production) {

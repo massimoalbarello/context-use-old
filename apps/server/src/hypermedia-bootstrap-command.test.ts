@@ -52,9 +52,6 @@ describe("hypermedia bootstrap command", () => {
             events.push(`document:${document.document_kind}`);
             written.push(document);
           },
-          async seedEntrypoint() {
-            events.push("entrypoint");
-          },
           async complete() {
             events.push("complete");
             return completedAt;
@@ -80,7 +77,6 @@ describe("hypermedia bootstrap command", () => {
     expect(result).toBe(completedAt);
     expect(written).toHaveLength(5);
     expect(events.slice(0, 5)).toEqual(kinds.map((kind) => `document:${kind}`));
-    expect(events.at(-2)).toBe("entrypoint");
     expect(events.at(-1)).toBe("complete");
     expect(registrations).toEqual([
       expect.objectContaining({

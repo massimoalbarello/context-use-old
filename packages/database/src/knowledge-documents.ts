@@ -31,7 +31,7 @@ export class PublicationStateError extends Error {
 
 export type KnowledgeRevisionContractProvenance =
   | "authored"
-  | "corpus_migration";
+  | "imported";
 
 export type KnowledgeDocumentMetadata = {
   document_id: string;
@@ -42,7 +42,7 @@ export type KnowledgeDocumentMetadata = {
   summary: string;
   archived_at: Date | string | null;
   current_link_contract: "generic_document_v1" | null;
-  pathless_search_ready: boolean;
+  search_ready: boolean;
   created_at: Date | string;
   updated_at: Date | string;
 };
@@ -88,13 +88,6 @@ export type KnowledgeDocumentChangeBatch = {
   next_cursor: string;
   next_page_token?: string;
   has_more: boolean;
-};
-
-export type AdoptKnowledgeRevisionInput = {
-  document_id: string;
-  revision_id: string;
-  body_markdown: string;
-  provenance?: Exclude<KnowledgeRevisionContractProvenance, "authored">;
 };
 
 type StoredKnowledgeDocumentRow = KnowledgeDocumentMetadata & MarkdownObjectMetadata;
@@ -188,7 +181,7 @@ const CURRENT_DOCUMENT_SELECT = `
     version.version_number AS revision_number,version.title,version.summary,
     page.archived_at,
     contract.link_contract::text AS current_link_contract,
-    coalesce(search.revision_id=page.current_version_id,false) AS pathless_search_ready,
+    coalesce(search.revision_id=page.current_version_id,false) AS search_ready,
     page.created_at,page.updated_at,
     revision.body_object_key,revision.body_size_bytes,revision.body_content_hash
   FROM knowledge_pages page
@@ -203,7 +196,7 @@ const CURRENT_DOCUMENT_SELECT = `
   LEFT JOIN public_resources resource ON resource.document_id=page.id
   LEFT JOIN knowledge_revision_contracts contract
     ON contract.revision_id=page.current_version_id
-  LEFT JOIN pathless_knowledge_search search ON search.document_id=page.id
+  LEFT JOIN knowledge_search search ON search.document_id=page.id
 `;
 
 async function transaction<T>(pool: Pool, work: (client: PoolClient) => Promise<T>): Promise<T> {
@@ -645,21 +638,4 @@ export class KnowledgeDocumentRepository {
     };
   }
 
-  async adoptCurrent(input: AdoptKnowledgeRevisionInput): Promise<KnowledgeDocumentMetadata> {
-    const targets = genericDocumentTargets(input.body_markdown);
-    return transaction(this.pool, async (client) => {
-      await client.query(
-        `SELECT adopt_generic_knowledge_revision(
-           $1,$2,$3,$4::uuid[],$5::knowledge_revision_contract_provenance
-         )`,
-        [input.document_id, input.revision_id, input.body_markdown, targets,
-          input.provenance ?? "corpus_migration"],
-      );
-      const metadata = await this.getMetadataWith(client, input.document_id);
-      if (!metadata || metadata.current_revision_id !== input.revision_id) {
-        throw new Error("Adopted knowledge revision is no longer current");
-      }
-      return metadata;
-    });
-  }
 }

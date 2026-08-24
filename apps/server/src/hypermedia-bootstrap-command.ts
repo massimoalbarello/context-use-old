@@ -14,7 +14,7 @@ import { BrokeredStorage } from "./storage-client.ts";
 
 type BootstrapRepositories = {
   bootstrap: Pick<HypermediaBootstrapRepository,
-    "ensureDocument" | "seedEntrypoint" | "complete"
+    "ensureDocument" | "complete"
   >;
   settings: Pick<KnowledgeSettingsRepository, "updateGlobalGuide">;
   registry: Pick<AutomationRegistryRepository, "register">;
@@ -81,7 +81,6 @@ export async function applyHypermediaBootstrap(input: {
       state_document_id: state.document_id,
     });
   }
-  await input.repositories.bootstrap.seedEntrypoint();
   return input.repositories.bootstrap.complete();
 }
 

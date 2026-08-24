@@ -3,7 +3,7 @@ import { makeSignature } from "better-auth/crypto";
 import { Client, Pool } from "pg";
 import {
   DocumentAssetRepository,
-  PathlessStoragePublicationRepository,
+  StoragePublicationRepository,
 } from "@context-use/database";
 import { disposableDatabaseUrl } from "@context-use/database/disposable-database";
 import { config } from "./config.ts";
@@ -28,7 +28,7 @@ if (enabled) {
   const storageBroker = createStorageBrokerApp({
     storage: testStorage!,
     privateAssets: new DocumentAssetRepository(testStoragePool!),
-    pathlessPublications: new PathlessStoragePublicationRepository(testStoragePool!),
+    publications: new StoragePublicationRepository(testStoragePool!),
     tokens: {
       dashboard: config.STORAGE_DASHBOARD_TOKEN,
       mcp: config.STORAGE_MCP_TOKEN,
@@ -67,19 +67,19 @@ describeApplication("HTTP credential and OAuth boundary", () => {
     expect(confirm.status).toBe(401);
 
     for (const [path, method] of [
-      ["/api/dashboard/pathless-publication-intents", "POST"],
-      ["/api/dashboard/pathless-publication-intents/11111111-1111-4111-8111-111111111111", "DELETE"],
-      ["/api/dashboard/pathless-publication-entrypoint", "GET"],
-      ["/api/dashboard/pathless-publication-entrypoint/candidates", "GET"],
-      ["/api/dashboard/pathless-publication-entrypoint", "PUT"],
+      ["/api/dashboard/publication-intents", "POST"],
+      ["/api/dashboard/publication-intents/11111111-1111-4111-8111-111111111111", "DELETE"],
+      ["/api/dashboard/publication-entrypoint", "GET"],
+      ["/api/dashboard/publication-entrypoint/candidates", "GET"],
+      ["/api/dashboard/publication-entrypoint", "PUT"],
       ["/api/dashboard/knowledge-documents/11111111-1111-4111-8111-111111111111/publication-preview", "GET"],
     ] as const) {
-      const pathless = await application!.handle(new Request(`http://localhost:3000${path}`, {
+      const canonical = await application!.handle(new Request(`http://localhost:3000${path}`, {
         method,
         headers: { authorization: "Bearer forged", "content-type": "application/json" },
         ...(method === "POST" || method === "PUT" ? { body: "{}" } : {}),
       }));
-      expect(pathless.status).toBe(401);
+      expect(canonical.status).toBe(401);
     }
   });
 
@@ -322,7 +322,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
   });
 
 
-  test("an active pathless page is served only through its current representation token", async () => {
+  test("an active canonical page is served only through its current representation token", async () => {
     const client = new Client({ connectionString: requireDatabase() });
     const pageId = crypto.randomUUID();
     const revisionId = crypto.randomUUID();
@@ -331,9 +331,9 @@ describeApplication("HTTP credential and OAuth boundary", () => {
     const adoptionId = crypto.randomUUID();
     const representationToken = Buffer.from(await crypto.subtle.digest(
       "SHA-256",
-      new TextEncoder().encode(`pathless-route:${artifactId}`),
+      new TextEncoder().encode(`canonical-route:${artifactId}`),
     )).toString("hex");
-    const body = "PATHLESS-PUBLIC-CANARY\n\n[Follow another public page](/p/11111111-1111-4111-8111-111111111111).";
+    const body = "PUBLIC-PAGE-CANARY\n\n[Follow another public page](/p/11111111-1111-4111-8111-111111111111).";
     const bodyHash = Buffer.from(await crypto.subtle.digest(
       "SHA-256",
       new TextEncoder().encode(body),
@@ -350,7 +350,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
         updated_at: Date | null;
       }>(
         `SELECT entrypoint_public_id,updated_at
-         FROM pathless_publication_settings WHERE singleton`,
+         FROM publication_settings WHERE singleton`,
       )).rows[0];
       await client.query(
         "INSERT INTO knowledge_pages(id,current_version_id) VALUES ($1,$2)",
@@ -373,7 +373,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       await client.query(
         `INSERT INTO public_artifact_id_reservations(
            artifact_id,body_object_key,allocation_kind,allocation_id
-         ) VALUES ($1,$2,'pathless_adoption',$3)`,
+         ) VALUES ($1,$2,'retained_publication',$3)`,
         [artifactId, objectKey, adoptionId],
       );
       await client.query(
@@ -388,13 +388,13 @@ describeApplication("HTTP credential and OAuth boundary", () => {
            source_body_size_bytes,source_body_content_hash,body_object_key,
            body_size_bytes,body_content_hash,public_title,public_summary,
            public_last_edited_at,projection_receipt_hash,origin,
-           source_adoption_id,source_adoption_kind,legacy_source_artifact_id,
-           legacy_projection_generation,representation_token,
+           retained_source_id,retained_source_kind,retained_source_artifact_id,
+           retained_projection_generation,representation_token,
            reservation_allocation_kind,reservation_allocation_id
          ) VALUES (
-           $1,$2,$3,$4,$5,$6,$7,$5,$6,'Pathless route',
+           $1,$2,$3,$4,$5,$6,$7,$5,$6,'Canonical route',
            'A page without a filesystem path.','2026-08-23 12:34:56.123456+00',$8,
-           'legacy_adoption',$9,'legacy_page',$10,1,$11,'pathless_adoption',$9
+           'retained',$9,'page',$10,1,$11,'retained_publication',$9
          )`,
         [
           artifactId,
@@ -420,7 +420,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
         [retainedAlias, publicId],
       );
       await client.query(
-        `UPDATE pathless_publication_settings
+        `UPDATE publication_settings
          SET entrypoint_public_id=$1,updated_at=now() WHERE singleton`,
         [publicId],
       );
@@ -438,7 +438,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       const markdown = await application!.handle(new Request(`http://localhost:3000/p/${publicId}.md`));
       expect(html.status).toBe(200);
       const htmlText = await html.text();
-      expect(htmlText).toContain("PATHLESS-PUBLIC-CANARY");
+      expect(htmlText).toContain("PUBLIC-PAGE-CANARY");
       expect(htmlText).not.toContain(representationToken);
       expect(htmlText).not.toContain(objectKey);
       expect(markdown.status).toBe(200);
@@ -448,7 +448,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       );
       const aliased = await application!.handle(new Request(`http://localhost:3000${retainedAlias}`));
       expect(aliased.status).toBe(200);
-      expect(await aliased.text()).toContain("PATHLESS-PUBLIC-CANARY");
+      expect(await aliased.text()).toContain("PUBLIC-PAGE-CANARY");
       const entrypoint = await application!.handle(new Request("http://localhost:3000/p/"));
       expect(entrypoint.status).toBe(302);
       expect(entrypoint.headers.get("location")).toBe(`/p/${publicId}`);
@@ -467,7 +467,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       await client.query("SET LOCAL session_replication_role=replica").catch(() => undefined);
       if (previousEntrypoint) {
         await client.query(
-          `UPDATE pathless_publication_settings
+          `UPDATE publication_settings
            SET entrypoint_public_id=$1,updated_at=$2 WHERE singleton`,
           [previousEntrypoint.entrypoint_public_id, previousEntrypoint.updated_at],
         ).catch(() => undefined);

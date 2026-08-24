@@ -33,7 +33,7 @@ describe("local stack commands", () => {
     expect(stackVolumeName("minio-data")).toBe("context-use-dev_minio-data");
   });
 
-  test("development compose uses MinIO without filesystem storage fallbacks", () => {
+  test("development compose uses MinIO as its object store", () => {
     const compose = readFileSync(join(import.meta.dir, "..", "compose.dev.yml"), "utf8");
     expect(compose).toContain("S3_ENDPOINT: http://minio:9000");
     expect(compose).not.toContain("STORAGE_DRIVER");

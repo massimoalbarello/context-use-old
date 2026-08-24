@@ -53,7 +53,7 @@ describe("strict mutation schemas", () => {
     }).success).toBe(false);
   });
 
-  test("knowledge document writes are pathless and reject publication fields", () => {
+  test("knowledge document writes are canonical and reject publication fields", () => {
     expect(Object.keys(createKnowledgeDocumentSchema.shape).sort()).toEqual([
       "body_markdown", "commit_message", "summary", "title",
     ]);
@@ -98,7 +98,7 @@ describe("strict mutation schemas", () => {
       .toBe(false);
   });
 
-  test("pathless document asset writes reuse bounded metadata without accepting paths", () => {
+  test("canonical document asset writes reuse bounded metadata without accepting paths", () => {
     expect(Object.keys(createDocumentAssetSchema.shape).sort()).toEqual([
       "content_type", "duration_seconds", "filename", "height", "sha256", "size_bytes", "width",
     ]);

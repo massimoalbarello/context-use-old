@@ -124,14 +124,14 @@ describeBootstrap("fresh hypermedia bootstrap", () => {
          (SELECT count(*)::text FROM knowledge_pages) AS documents,
          (SELECT count(*)::text FROM hypermedia_document_revisions) AS revisions,
          (SELECT count(*)::text FROM knowledge_revision_contracts) AS contracts,
-         (SELECT count(*)::text FROM pathless_knowledge_search) AS search,
+         (SELECT count(*)::text FROM knowledge_search) AS search,
          (SELECT count(*)::text FROM hypermedia_bootstrap_allocations
            WHERE completed_at IS NOT NULL) AS completed_allocations,
          (SELECT count(*)::text FROM automation_registry WHERE disabled_at IS NULL)
            AS automations,
          (SELECT global_guide_document_id IS NOT NULL FROM knowledge_settings WHERE singleton)
            AS guide_configured,
-         (SELECT updated_at IS NOT NULL FROM pathless_publication_settings WHERE singleton)
+         (SELECT updated_at IS NOT NULL FROM publication_settings WHERE singleton)
            AS entrypoint_latched`,
     );
     expect(state.rows[0]).toEqual({
