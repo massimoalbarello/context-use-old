@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Pool } from "pg";
 import {
-  AssetRepository,
   DirectoryRepository,
   DirectoryVersionConflictError,
   PageRepository,
@@ -12,11 +11,24 @@ import { MemoryMarkdownStore } from "./memory-markdown-store.ts";
 const databaseUrl = await disposableDatabaseUrl();
 const describeDatabase = databaseUrl ? describe : describe.skip;
 
+async function createLegacyDirectoryAssetFixture(
+  pool: Pool,
+  input: { path: string; filename: string; contentType: string; contentHash: string },
+): Promise<{ id: string }> {
+  const id = crypto.randomUUID();
+  await pool.query(
+    `INSERT INTO assets(
+       id,current_path,filename,content_type,size_bytes,content_hash,s3_object_key
+     ) VALUES ($1,$2,$3,$4,1,$5,$6)`,
+    [id, input.path, input.filename, input.contentType, input.contentHash, `objects/${id}`],
+  );
+  return { id };
+}
+
 describeDatabase("first-class directory indexes", () => {
   const pool = new Pool({ connectionString: databaseUrl });
   const directories = new DirectoryRepository(pool);
   const pages = new PageRepository(pool, new MemoryMarkdownStore());
-  const indexAssets = new AssetRepository(pool);
   const suffix = crypto.randomUUID().slice(0, 8);
   const parentPath = `tests/directory-${suffix}`;
   const childPath = `${parentPath}/2020-2024_chapters`;
@@ -182,11 +194,10 @@ describeDatabase("first-class directory indexes", () => {
   });
 
   test("lists the assets whose own paths sit directly inside the directory", async () => {
-    const asset = await indexAssets.create({
-      currentPath: `${childPath}/paper`,
+    const asset = await createLegacyDirectoryAssetFixture(pool, {
+      path: `${childPath}/paper`,
       filename: "paper.pdf",
       contentType: "application/pdf",
-      sizeBytes: 1,
       contentHash: "e".repeat(64),
     });
     assetIds.push(asset.id);
@@ -223,7 +234,6 @@ describeDatabase("guarded directory deletion", () => {
   const pool = new Pool({ connectionString: databaseUrl });
   const directories = new DirectoryRepository(pool);
   const pages = new PageRepository(pool, new MemoryMarkdownStore());
-  const assets = new AssetRepository(pool);
 
   beforeAll(async () => {
     await pool.query(
@@ -266,11 +276,10 @@ describeDatabase("guarded directory deletion", () => {
       expected_version_number: archivedPage.version_number,
       commit_message: "Archive deletion blocker",
     }, { kind: "dashboard", subject: "directory-deletion-test" });
-    const asset = await assets.create({
-      currentPath: `${parentPath}/asset`,
+    const asset = await createLegacyDirectoryAssetFixture(pool, {
+      path: `${parentPath}/asset`,
       filename: "asset.txt",
       contentType: "text/plain",
-      sizeBytes: 1,
       contentHash: "d".repeat(64),
     });
 
