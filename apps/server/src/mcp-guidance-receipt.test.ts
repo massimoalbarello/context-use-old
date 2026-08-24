@@ -1,14 +1,8 @@
 import { expect, test } from "bun:test";
-import { createHmac } from "node:crypto";
-import { config } from "./config.ts";
 import {
-  createGuidanceReceipt,
   createKnowledgeGuideReceipt,
-  type GuidanceGuideVersion,
-  guidanceGuidesFromReceipt,
   type KnowledgeGuideReceiptContext,
   type KnowledgeGuideRevision,
-  verifyGuidanceReceipt,
   verifyKnowledgeGuideReceipt,
 } from "./mcp-guidance-receipt.ts";
 
@@ -80,76 +74,4 @@ test("rejects invalid guide or context inputs", () => {
     ...guide,
     revisionId: "not-a-revision-id",
   }, context)).toBe(false);
-});
-
-const guidanceChain: GuidanceGuideVersion[] = [{
-  current_path: "agents",
-  current_version_id: "22222222-2222-4222-8222-222222222222",
-}, {
-  current_path: "people/agents",
-  current_version_id: "33333333-3333-4333-8333-333333333333",
-}];
-
-test("scoped guidance receipts bind the exact guide chain to one MCP session", () => {
-  const receipt = createGuidanceReceipt(guidanceChain, context);
-  const [, encodedManifest] = receipt.split(".");
-
-  expect(receipt).toStartWith("cu-guidance-v3.");
-  expect(JSON.parse(Buffer.from(encodedManifest!, "base64url").toString("utf8"))).toEqual([
-    guidanceChain.map(({ current_path, current_version_id }) => [
-      current_path,
-      current_version_id,
-    ]),
-    context.clientId,
-    context.sessionId,
-  ]);
-  expect(guidanceGuidesFromReceipt(receipt, context)).toEqual(guidanceChain);
-  expect(verifyGuidanceReceipt(receipt, guidanceChain, context)).toBe(true);
-  expect(verifyGuidanceReceipt(receipt, guidanceChain.toReversed(), context)).toBe(false);
-  expect(verifyGuidanceReceipt(receipt, [{
-    ...guidanceChain[0]!,
-    current_version_id: "44444444-4444-4444-8444-444444444444",
-  }, guidanceChain[1]!], context)).toBe(false);
-
-  const otherClient = { ...context, clientId: "another-client" };
-  const otherSession = { ...context, sessionId: "another-session" };
-  expect(guidanceGuidesFromReceipt(receipt, otherClient)).toBeNull();
-  expect(guidanceGuidesFromReceipt(receipt, otherSession)).toBeNull();
-  expect(verifyGuidanceReceipt(receipt, guidanceChain, otherClient)).toBe(false);
-  expect(verifyGuidanceReceipt(receipt, guidanceChain, otherSession)).toBe(false);
-});
-
-test("does not authorize unbound v1 or v2 scoped guidance receipts", () => {
-  const versions = guidanceChain.map(({ current_path, current_version_id }) => [
-    current_path,
-    current_version_id,
-  ]);
-  const encodedManifest = Buffer.from(JSON.stringify(versions), "utf8").toString("base64url");
-  const v2Signature = createHmac("sha256", config.MCP_ASSET_CAPABILITY_SECRET)
-    .update("context-use:mcp-guidance:v2\0")
-    .update(encodedManifest)
-    .digest("base64url");
-  const v2Receipt = `cu-guidance-v2.${encodedManifest}.${v2Signature}`;
-  const v1Receipt = createHmac("sha256", config.MCP_ASSET_CAPABILITY_SECRET)
-    .update("context-use:mcp-guidance:v1\0")
-    .update(JSON.stringify(versions))
-    .digest("base64url");
-
-  expect(guidanceGuidesFromReceipt(v2Receipt, context)).toBeNull();
-  expect(verifyGuidanceReceipt(v2Receipt, guidanceChain, context)).toBe(false);
-  expect(verifyGuidanceReceipt(v1Receipt, guidanceChain, context)).toBe(false);
-});
-
-test("rejects invalid scoped guide chains or context inputs", () => {
-  expect(() => createGuidanceReceipt(guidanceChain, {
-    ...context,
-    sessionId: "",
-  })).toThrow("Guidance receipt context is invalid");
-  expect(() => createGuidanceReceipt([
-    guidanceChain[0]!,
-    { ...guidanceChain[1]!, current_path: guidanceChain[0]!.current_path },
-  ], context)).toThrow("Guidance guide chain is invalid");
-
-  const receipt = createGuidanceReceipt(guidanceChain, context);
-  expect(guidanceGuidesFromReceipt(receipt, { ...context, clientId: "" })).toBeNull();
 });

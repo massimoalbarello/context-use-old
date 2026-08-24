@@ -20,12 +20,6 @@ export const KnowledgePath = z
   .max(512)
   .regex(/^[a-z0-9][a-z0-9/_-]*$/, "Use lowercase path segments only")
   .refine((value) => !value.includes("//") && !value.endsWith("/"), "Invalid path");
-export const PagePath = KnowledgePath;
-export const DirectoryPath = z.union([z.literal(""), KnowledgePath]);
-const WritablePagePath = PagePath.refine(
-  (value) => value !== "about",
-  "about is a folder; store its introduction at about/intro",
-);
 export const CommitMessage = z.string().trim().min(3).max(240);
 export const KnowledgeSummary = z
   .string()
@@ -34,82 +28,35 @@ export const KnowledgeSummary = z
   .max(320)
   .refine((value) => !/[\r\n]/.test(value), "Use a single-line summary")
   .describe("Required one-sentence summary used in generated directory indexes and search results.");
-export const DirectorySummary = z
-  .string()
-  .trim()
-  .max(320)
-  .refine((value) => !/[\r\n]/.test(value), "Use a single-line summary")
-  .describe("Optional public-listing summary shown for this directory in its generated parent index.");
 const PageBodyMarkdown = z.string().max(2_000_000).describe(PAGE_MARKDOWN_BODY_DESCRIPTION);
 
-export const createPageSchema = z
+export const createKnowledgeDocumentSchema = z
   .object({
-    path: WritablePagePath,
     title: z.string().trim().min(1).max(240),
-    summary: KnowledgeSummary,
+    summary: KnowledgeSummary.describe(
+      "Required one-sentence summary used in document search and private link previews.",
+    ),
     body_markdown: PageBodyMarkdown,
     commit_message: CommitMessage,
   })
   .strict();
 
-export const updatePageSchema = z
+export const updateKnowledgeDocumentSchema = z
   .object({
-    path: WritablePagePath,
     title: z.string().trim().min(1).max(240),
-    summary: KnowledgeSummary,
+    summary: KnowledgeSummary.describe(
+      "Required one-sentence summary used in document search and private link previews.",
+    ),
     body_markdown: PageBodyMarkdown,
     commit_message: CommitMessage,
-    expected_version_number: z.number().int().positive(),
+    expected_revision_number: z.number().int().positive(),
   })
   .strict();
 
-export const createDirectorySchema = z.object({
-  path: KnowledgePath,
-  title: z.string().trim().min(1).max(240),
-  summary: DirectorySummary.default(""),
-}).strict();
-
-export const updateDirectorySchema = z.object({
-  title: z.string().trim().min(1).max(240),
-  summary: DirectorySummary,
-  expected_version_number: z.number().int().positive(),
-}).strict();
-
-export const deleteDirectorySchema = z.object({
-  expected_version_number: z.number().int().positive(),
-}).strict();
-
-export const archivePageSchema = z
+export const archiveKnowledgeDocumentSchema = z
   .object({
     commit_message: CommitMessage,
-    expected_version_number: z.number().int().positive(),
-  })
-  .strict();
-
-/** Path-independent authored knowledge mutation contracts. */
-export const createKnowledgeDocumentSchema = createPageSchema
-  .omit({ path: true })
-  .extend({
-    summary: KnowledgeSummary.describe(
-      "Required one-sentence summary used in document search and private link previews.",
-    ),
-  })
-  .strict();
-
-export const updateKnowledgeDocumentSchema = updatePageSchema
-  .omit({ path: true, expected_version_number: true })
-  .extend({
-    summary: KnowledgeSummary.describe(
-      "Required one-sentence summary used in document search and private link previews.",
-    ),
-    expected_revision_number: updatePageSchema.shape.expected_version_number,
-  })
-  .strict();
-
-export const archiveKnowledgeDocumentSchema = archivePageSchema
-  .omit({ expected_version_number: true })
-  .extend({
-    expected_revision_number: archivePageSchema.shape.expected_version_number,
+    expected_revision_number: z.number().int().positive(),
   })
   .strict();
 
@@ -157,8 +104,8 @@ function isPathlessPublicRoute(value: string): boolean {
 
   const suffix = value.slice(3);
   if (suffix.endsWith("/")) return KnowledgePath.safeParse(suffix.slice(0, -1)).success;
-  if (suffix.endsWith(".md")) return PagePath.safeParse(suffix.slice(0, -3)).success;
-  return PagePath.safeParse(suffix).success;
+  if (suffix.endsWith(".md")) return KnowledgePath.safeParse(suffix.slice(0, -3)).success;
+  return KnowledgePath.safeParse(suffix).success;
 }
 
 /** Exact canonical and grandfathered-alias routes accepted by the public resolver. */
@@ -260,12 +207,6 @@ export const archiveDocumentAssetSchema = z.object({
   asset_id: UUID,
 }).strict();
 
-export type CreatePageInput = z.infer<typeof createPageSchema>;
-export type UpdatePageInput = z.infer<typeof updatePageSchema>;
-export type CreateDirectoryInput = z.infer<typeof createDirectorySchema>;
-export type UpdateDirectoryInput = z.infer<typeof updateDirectorySchema>;
-export type DeleteDirectoryInput = z.infer<typeof deleteDirectorySchema>;
-export type ArchivePageInput = z.infer<typeof archivePageSchema>;
 export type PathlessPublicationIntentInput = z.infer<typeof pathlessPublicationIntentSchema>;
 export type PathlessPublicationArtifactReceipt = z.infer<
   typeof pathlessPublicationArtifactReceiptSchema
@@ -286,7 +227,6 @@ export const dashboardDocumentOperationalRoleSchema = z.enum([
   "global_guide",
   "automation_instructions",
   "automation_state",
-  "directory_hub",
 ]);
 
 /** Pathless, locator-free document metadata safe for the authenticated dashboard. */
@@ -347,188 +287,6 @@ export type DashboardDocumentNeighborhood = z.infer<typeof dashboardDocumentNeig
 export type Actor = {
   kind: "dashboard" | "mcp";
   subject: string;
-};
-
-export const TEMPLATE_ACTIONS = [
-  "create-directory",
-  "update-directory",
-  "create-guide",
-  "adopt-guide",
-  "update-guide",
-  "replace-guide",
-  "create-page",
-  "adopt-page",
-  "update-page",
-  "retire-page",
-  "unchanged",
-  "conflict",
-] as const;
-
-export type TemplateActionKind = typeof TEMPLATE_ACTIONS[number];
-
-export type TemplateAction = {
-  action: TemplateActionKind;
-  path: string;
-  detail: string;
-  replaces_local?: true;
-};
-
-export type TemplateResult = {
-  template: string;
-  applied: boolean;
-  actions: TemplateAction[];
-};
-
-export type TemplateSummary = {
-  changes: number;
-  conflicts: number;
-  unchanged: number;
-  replacements: number;
-};
-
-export function summarizeTemplateResult(result: TemplateResult): TemplateSummary {
-  return result.actions.reduce<TemplateSummary>((summary, action) => {
-    if (action.action === "conflict") summary.conflicts += 1;
-    else if (action.action === "unchanged") summary.unchanged += 1;
-    else summary.changes += 1;
-    if (action.replaces_local) summary.replacements += 1;
-    return summary;
-  }, { changes: 0, conflicts: 0, unchanged: 0, replacements: 0 });
-}
-
-export type Page = {
-  id: string;
-  current_path: string;
-  current_version_id: string;
-  published_version_id: string | null;
-  published_version_number: number | null;
-  public_path: string | null;
-  archived_at: string | null;
-  version_number: number;
-  title: string;
-  summary: string;
-  body_markdown: string;
-  created_at: string;
-  updated_at: string;
-};
-
-export type PageMetadata = Pick<
-  Page,
-  | "id"
-  | "current_path"
-  | "current_version_id"
-  | "published_version_id"
-  | "published_version_number"
-  | "public_path"
-  | "archived_at"
-  | "version_number"
-  | "title"
-  | "summary"
-  | "updated_at"
->;
-
-/**
- * What a reader of a page needs to know before writing to it. Publication pins one immutable
- * version, so a later edit is private until the owner republishes; `unpublished_changes`
- * reports that a published page and its current version have diverged.
- */
-export type PagePublication =
-  | { state: "private" }
-  | {
-    state: "published";
-    public_path: string;
-    published_version_number: number | null;
-    unpublished_changes: boolean;
-  };
-
-/** The publication columns every page read carries, whatever else the query selects. */
-export type PagePublicationSource = {
-  current_version_id?: string | null;
-  published_version_id?: string | null;
-  published_version_number?: number | null;
-  public_path?: string | null;
-};
-
-export function pagePublication(page: PagePublicationSource): PagePublication {
-  if (!page.published_version_id || !page.public_path) return { state: "private" };
-  return {
-    state: "published",
-    public_path: page.public_path,
-    published_version_number: page.published_version_number ?? null,
-    unpublished_changes: Boolean(
-      page.current_version_id && page.current_version_id !== page.published_version_id,
-    ),
-  };
-}
-
-export type Directory = {
-  id: string;
-  current_path: string;
-  version_number: number;
-  title: string;
-  summary: string;
-  created_at: string;
-  updated_at: string;
-};
-
-export type DirectoryIndexEntry = {
-  kind: "directory" | "page";
-  id: string;
-  path: string;
-  title: string;
-  summary: string;
-  default_page_id: string | null;
-} & PagePublicationSource;
-
-export type DirectoryAssetEntry = {
-  id: string;
-  path: string;
-  filename: string;
-  content_type: string;
-};
-
-export type DirectoryIndex = Directory & {
-  guide: KnowledgePageMetadata | null;
-  children: DirectoryIndexEntry[];
-  assets: DirectoryAssetEntry[];
-};
-
-export type KnowledgePageMetadata = {
-  id: string;
-  path: string;
-  version_number: number;
-  title: string;
-  summary: string;
-} & PagePublicationSource;
-
-export type DirectoryTreeNode = {
-  id: string;
-  path: string;
-  title: string;
-  summary: string;
-  guide: KnowledgePageMetadata | null;
-  pages: KnowledgePageMetadata[];
-  directories: DirectoryTreeNode[];
-  directories_omitted: number;
-};
-
-export type DirectoryTree = DirectoryTreeNode & {
-  requested_depth: number;
-  max_directories: number;
-  max_pages: number;
-  truncated: boolean;
-};
-
-export type Asset = {
-  id: string;
-  current_path: string;
-  public_path: string | null;
-  filename: string;
-  content_type: string;
-  size_bytes: number;
-  content_hash: string;
-  created_at: string;
-  deleted_at: string | null;
 };
 
 export const MCP_SCOPE = "mcp:access" as const;

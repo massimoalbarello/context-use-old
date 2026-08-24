@@ -6,6 +6,7 @@ import { DocumentDetails } from "./DocumentDetails.tsx";
 import { NewKnowledgeDocument } from "./NewKnowledgeDocument.tsx";
 import {
   DocumentNavigator,
+  documentCatalogUrl,
   documentDisplaySummary,
   documentDisplayTitle,
 } from "./DocumentNavigator.tsx";
@@ -21,7 +22,7 @@ const document: DashboardDocumentSummary = {
   summary: "A concise summary of the current investment thesis.",
   filename: null,
   content_type: null,
-  operational_roles: ["directory_hub"],
+  operational_roles: ["automation_instructions"],
   updated_at: "2026-08-23T10:00:00.000Z",
 };
 
@@ -46,7 +47,6 @@ describe("search-first document navigation", () => {
   test("renders a recent-document navigator before a query is entered", () => {
     const html = renderToStaticMarkup(createElement(DocumentNavigator, {
       query: "",
-      includeRetired: false,
       selectedId: null,
       refreshToken: 0,
       onCreate: () => undefined,
@@ -55,8 +55,19 @@ describe("search-first document navigation", () => {
     expect(html).toContain("Recently updated");
     expect(html).toContain("Pages");
     expect(html).toContain("Assets");
+    expect(html).toContain("Records");
+    expect(html).toContain("Archived");
     expect(html).toContain("New page");
     expect(html).not.toContain("folder");
+  });
+
+  test("scopes search to the selected document type", () => {
+    expect(documentCatalogUrl("quarterly plan", "knowledge"))
+      .toBe("/api/dashboard/documents?limit=40&q=quarterly+plan&kind=knowledge");
+    expect(documentCatalogUrl("quarterly plan", "record"))
+      .toBe("/api/dashboard/documents?limit=40&q=quarterly+plan&kind=record");
+    expect(documentCatalogUrl("quarterly plan", "archived"))
+      .toBe("/api/dashboard/documents?limit=40&q=quarterly+plan&lifecycle=archived");
   });
 
   test("creates documents without asking for a directory or path", () => {

@@ -10,8 +10,6 @@ export type KnowledgeDocumentPage = {
   summary: string;
   body_markdown: string;
   rendered_html: string;
-  legacy_published: boolean;
-  pathless_published: boolean;
   public_url: string | null;
   created_at: string;
   updated_at: string;
@@ -21,7 +19,6 @@ export type Version = {
   id: string;
   page_id: string;
   version_number: number;
-  path?: string;
   title: string;
   summary: string;
   body_markdown?: string;
@@ -43,7 +40,7 @@ export type PageVersionDiff = {
     to_version: number;
   };
   metadata_changes: Array<{
-    field: "path" | "title" | "summary";
+    field: "title" | "summary";
     before: string | null;
     after: string;
   }>;
@@ -76,7 +73,7 @@ export type KnowledgePageChangeBatch = {
 export type Asset = {
   id: string;
   public_id: string | null;
-  pathless_published: boolean;
+  published: boolean;
   filename: string;
   content_type: string;
   size_bytes: number;
@@ -87,7 +84,7 @@ export type Asset = {
 export type AssetStatus = {
   content_available: boolean;
   public_url: string | null;
-  pathless_published: boolean;
+  published: boolean;
 };
 
 /**
@@ -97,7 +94,7 @@ export type AssetStatus = {
  */
 export type RepublicationReview = {
   published_version_number: number;
-  metadata_changes: Array<{ field: "path" | "title" | "summary"; before: string | null; after: string }>;
+  metadata_changes: Array<{ field: "title" | "summary"; before: string | null; after: string }>;
   markdown_changes: Array<{ before: string; after: string }>;
   queued_versions: Array<{
     version_number: number;

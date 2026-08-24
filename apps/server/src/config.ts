@@ -48,8 +48,6 @@ const schema = z.object({
   MCP_RESOURCE: z.string().url().default("http://localhost:3000/mcp"),
   WEBAUTHN_RP_ID: z.string().min(1).default("localhost"),
   WEBAUTHN_RP_NAME: z.string().min(1).default("context-use"),
-  STORAGE_DRIVER: z.enum(["filesystem", "s3"]).default("filesystem"),
-  STORAGE_PATH: z.string().default("./data/assets"),
   STORAGE_SOCKET_PATH: z.string().min(1).default("/tmp/context-use-storage.sock"),
   STORAGE_DASHBOARD_TOKEN: z.string().min(32).default(developmentStorageTokens.dashboard),
   STORAGE_MCP_TOKEN: z.string().min(32).default(developmentStorageTokens.mcp),
@@ -58,6 +56,8 @@ const schema = z.object({
   AWS_REGION: z.string().default("eu-west-2"),
   AWS_CREDENTIALS_FILE: z.string().default(""),
   AWS_EC2_METADATA_DISABLED: z.enum(["true", "false"]).default("false"),
+  S3_ENDPOINT: z.union([z.literal(""), z.string().url()]).default(""),
+  S3_FORCE_PATH_STYLE: z.enum(["true", "false"]).default("false"),
   ASSET_BUCKET: z.string().default(""),
   KMS_KEY_ID: z.string().default(""),
   SESSION_IDLE_SECONDS: z.coerce.number().int().positive().default(43_200),
@@ -110,8 +110,10 @@ if (production) {
     config.STORAGE_MCP_TOKEN,
     config.STORAGE_PUBLIC_TOKEN,
   ]).size !== 3) insecure.push("storage capability tokens must be distinct");
-  if (config.SERVICE_MODE === "storage" && (!config.ASSET_BUCKET || config.STORAGE_DRIVER !== "s3")) insecure.push("production storage broker must use S3");
+  if (config.SERVICE_MODE === "storage" && !config.ASSET_BUCKET) insecure.push("ASSET_BUCKET is required");
   if (config.SERVICE_MODE === "storage" && !config.KMS_KEY_ID) insecure.push("KMS_KEY_ID is required");
+  if (config.SERVICE_MODE === "storage" && config.S3_ENDPOINT) insecure.push("production storage must use the AWS S3 endpoint");
+  if (config.SERVICE_MODE === "storage" && config.S3_FORCE_PATH_STYLE !== "false") insecure.push("production storage must use virtual-hosted S3 addressing");
   if (config.SERVICE_MODE === "storage" && config.AWS_CREDENTIALS_FILE !== "/run/context-use-aws-storage/credentials.json") insecure.push("storage must use the scoped AWS credential file");
   if (config.SERVICE_MODE === "storage" && config.AWS_EC2_METADATA_DISABLED !== "true") insecure.push("storage must disable EC2 instance metadata");
   if (config.SERVICE_MODE === "auth" && config.SESSION_MAX_SECONDS > 604_800) insecure.push("dashboard sessions cannot exceed seven days");

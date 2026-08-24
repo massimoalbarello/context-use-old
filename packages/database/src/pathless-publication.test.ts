@@ -8,12 +8,8 @@ import {
 import {
   PathlessPublicEntrypointRepository,
   PathlessPublicRepository,
-  PathlessPublicationAdoptionRepository,
   PathlessPublicationRepository,
   PathlessStoragePublicationRepository,
-  type PathlessPublicationAdoption,
-  type PathlessPublicationAdoptionArtifactReceipt,
-  type PathlessPublicationAdoptionWriteAuthorization,
   type PathlessPublicationIntent,
   type PathlessPublicationWriteAuthorization,
   type PathlessStorageRoute,
@@ -25,7 +21,6 @@ const intentId = "00000000-0000-4000-8000-000000000030";
 const publicId = "00000000-0000-4000-8000-000000000040";
 const artifactId = "00000000-0000-4000-8000-000000000050";
 const linkedPublicId = "00000000-0000-4000-8000-000000000060";
-const adoptionId = "00000000-0000-4000-8000-000000000070";
 const claimToken = "00000000-0000-4000-8000-000000000080";
 const hash = (digit: string): string => digit.repeat(64);
 
@@ -317,205 +312,6 @@ describe("pathless publication storage boundary", () => {
   });
 });
 
-describe("pathless publication adoption boundary", () => {
-  test("lists only the ordered, resumable corpus adoption worklist", async () => {
-    const rows = [{
-      adoption_kind: "legacy_page" as const,
-      source_document_id: documentId,
-      adoption_id: null,
-      source_body_object_key: "must-not-escape",
-    }, {
-      adoption_kind: "directory_hub" as const,
-      source_document_id: linkedPublicId,
-      adoption_id: adoptionId,
-      source_revision_id: revisionId,
-    }];
-    const corpus = recordingPool(rows);
-
-    expect(await new PathlessPublicationAdoptionRepository(corpus.pool).candidates())
-      .toEqual([
-        { adoption_kind: "legacy_page", source_document_id: documentId, adoption_id: null },
-        { adoption_kind: "directory_hub", source_document_id: linkedPublicId, adoption_id: adoptionId },
-      ]);
-    expect(corpus.calls[0]!.sql).toContain(
-      "FROM list_pathless_publication_adoption_candidates()",
-    );
-    expect(corpus.calls[0]!.sql).not.toContain("object_key");
-    expect(corpus.calls[0]!.sql).not.toContain("source_revision_id");
-  });
-
-  test("reports cutover blockers and exposes a separate fail-closed assertion", async () => {
-    const finalizedAt = new Date("2026-08-23T18:00:00Z");
-    const corpus = recordingPoolSequence([[
-      { blocker_code: "legacy_page_visibility_not_adopted", affected_count: "2" },
-    ], [], [{ finalized_at: finalizedAt }]]);
-    const adoptions = new PathlessPublicationAdoptionRepository(corpus.pool);
-
-    expect(await adoptions.cutoverBlockers()).toEqual([{
-      blocker_code: "legacy_page_visibility_not_adopted",
-      affected_count: 2,
-    }]);
-    await adoptions.assertCutoverReady();
-    expect(await adoptions.finalizeCutover()).toBe(finalizedAt);
-    expect(corpus.calls[0]!.sql).toContain("FROM list_hypermedia_cutover_blockers()");
-    expect(corpus.calls[1]).toEqual({
-      sql: "SELECT assert_hypermedia_cutover_ready()",
-      values: undefined,
-    });
-    expect(corpus.calls[2]).toEqual({
-      sql: "SELECT finalize_hypermedia_cutover() AS finalized_at",
-      values: undefined,
-    });
-  });
-
-  test("keeps corpus planning/apply separate from claimed storage materialization", async () => {
-    const plan: PathlessPublicationAdoption = {
-      id: adoptionId,
-      adoption_kind: "legacy_asset",
-      source_document_id: documentId,
-      source_revision_id: null,
-      public_id: publicId,
-      candidate_artifact_id: artifactId,
-      phase: "planned",
-    };
-    const entrypoint = { public_id: publicId, configured: true, active: true };
-    const corpus = recordingPoolSequence([[plan], [{ phase: "applied" }], [entrypoint]]);
-    const authorization: PathlessPublicationAdoptionWriteAuthorization = {
-      adoption_id: adoptionId,
-      adoption_kind: "legacy_asset",
-      resource_kind: "asset",
-      public_id: publicId,
-      artifact_id: artifactId,
-      source_body_object_key: `objects/${documentId}`,
-      source_body_size_bytes: "256",
-      source_body_content_hash: hash("c"),
-      body_object_key: `artifacts/public/${artifactId}`,
-      max_body_size_bytes: "5000000000",
-      public_title: null,
-      public_summary: null,
-      public_last_edited_at: null,
-      public_filename: "portrait.jpg",
-      public_content_type: "image/jpeg",
-      public_width: 1200,
-      public_height: 1500,
-      public_duration_seconds: "1234567890.12345678901234567890",
-      projected_target_public_ids: [],
-      projection_receipt_hash: hash("f"),
-      target_projection: [],
-    };
-    const storage = recordingPoolSequence([[
-      {
-        claim_token: claimToken,
-        finalized: false,
-        artifact_id: artifactId,
-        body_object_key: authorization.body_object_key,
-        body_size_bytes: null,
-        body_content_hash: null,
-        authorization,
-      },
-    ], []]);
-    const adoptions = new PathlessPublicationAdoptionRepository(corpus.pool);
-    const materialization = new PathlessStoragePublicationRepository(storage.pool);
-
-    expect(await adoptions.begin("legacy_asset", documentId, adoptionId)).toEqual(plan);
-    expect(await materialization.claimAdoption(adoptionId, claimToken)).toMatchObject({
-      claim_token: claimToken,
-      finalized: false,
-      authorization,
-    });
-    const receipt = {
-      adoption_id: adoptionId,
-      adoption_kind: "legacy_asset",
-      body_size_bytes: 256,
-      body_content_hash: hash("c"),
-      public_filename: "portrait.jpg",
-      public_content_type: "image/jpeg",
-      public_width: 1200,
-      public_height: 1500,
-      public_duration_seconds: "1234567890.12345678901234567890",
-      projection_receipt_hash: hash("f"),
-    } satisfies PathlessPublicationAdoptionArtifactReceipt;
-    await materialization.finalizeAdoption(claimToken, receipt);
-    expect(await adoptions.apply(adoptionId)).toBe("applied");
-    expect(await adoptions.seedEntrypoint()).toEqual(entrypoint);
-
-    expect(corpus.calls[0]).toEqual({
-      sql: expect.stringContaining("FROM begin_pathless_publication_adoption($1,$2,$3)"),
-      values: [adoptionId, "legacy_asset", documentId],
-    });
-    expect(corpus.calls[1]).toEqual({
-      sql: "SELECT apply_pathless_publication_adoption($1) AS phase",
-      values: [adoptionId],
-    });
-    expect(corpus.calls[2]!.sql).toContain("FROM seed_pathless_publication_entrypoint()");
-    expect(storage.calls[0]!.sql).toContain(
-      "FROM claim_pathless_publication_adoption_artifact($1,$2)",
-    );
-    expect(storage.calls[0]!.sql).toContain(
-      'body_size_bytes,body_content_hash,"authorization"',
-    );
-    expect(storage.calls[0]!.sql).not.toContain("representation_token");
-    expect(storage.calls[1]!.values).toEqual([
-      claimToken,
-      adoptionId,
-      "legacy_asset",
-      256,
-      hash("c"),
-      null,
-      null,
-      null,
-      "portrait.jpg",
-      "image/jpeg",
-      1200,
-      1500,
-      "1234567890.12345678901234567890",
-      [],
-      [],
-      hash("f"),
-    ]);
-  });
-
-  test("uses adoption_id and forwards the complete directory-hub receipt", async () => {
-    const projected = [publicId, linkedPublicId].sort();
-    const storage = recordingPool();
-    const materialization = new PathlessStoragePublicationRepository(storage.pool);
-    const receipt = {
-      adoption_id: adoptionId,
-      adoption_kind: "directory_hub",
-      body_size_bytes: 512,
-      body_content_hash: hash("b"),
-      public_title: "Directory hub",
-      public_summary: "A promoted public directory hub.",
-      public_last_edited_at: "2026-08-23T12:34:56.123456Z",
-      projected_target_public_ids: projected,
-      observed_public_uuid_tokens: projected,
-      projection_receipt_hash: hash("f"),
-    } satisfies PathlessPublicationAdoptionArtifactReceipt;
-
-    await materialization.finalizeAdoption(claimToken, receipt);
-
-    expect(storage.calls[0]!.sql).toContain("finalize_pathless_publication_adoption_claim");
-    expect(storage.calls[0]!.sql).not.toContain("intent_id");
-    expect(storage.calls[0]!.values).toEqual([
-      claimToken,
-      adoptionId,
-      "directory_hub",
-      512,
-      hash("b"),
-      "Directory hub",
-      "A promoted public directory hub.",
-      "2026-08-23T12:34:56.123456Z",
-      null,
-      null,
-      null,
-      null,
-      null,
-      projected,
-      projected,
-      hash("f"),
-    ]);
-  });
-});
 
 describe("pathless publication entrypoint dashboard boundary", () => {
   test("gets, lists, and sets only safe pathless entrypoint fields", async () => {
@@ -729,124 +525,50 @@ describe("pathless public read boundary", () => {
 });
 
 describe("publication confirmation family dispatch", () => {
-  test("normalizes pathless confirmation intent fields without publication evidence", async () => {
+  test("reads only pathless confirmation fields without publication evidence", async () => {
     const pathlessIntent: PublicationConfirmationIntent = {
-      intent_store: "pathless",
       id: intentId,
       action: "publish",
       target_kind: "page",
       target_id: documentId,
       version_id: revisionId,
-      public_path: null,
       owner_user_id: "context-use-owner",
       session_id: "session-1",
       challenge: "challenge",
       expires_at: new Date("2026-08-23T12:05:00.000Z"),
     };
-    const { calls, pool } = recordingPool([{
-      reserved_store: "pathless",
-      ...pathlessIntent,
-    }]);
+    const { calls, pool } = recordingPool([pathlessIntent]);
 
     expect(await new ConfirmationRepository(pool).publicationIntent(intentId))
       .toEqual(pathlessIntent);
-    expect(calls[0]!.sql).toContain("UNION ALL");
     expect(calls[0]!.sql).toContain("FROM publication_intent_id_reservations");
-    expect(calls[0]!.sql).toContain("FULL JOIN intent ON true");
-    expect(calls[0]!.sql).toContain("pathless.target_document_id AS target_id");
-    expect(calls[0]!.sql).toContain("pathless.expected_revision_id AS version_id");
+    expect(calls[0]!.sql).toContain("JOIN pathless_publication_intents");
+    expect(calls[0]!.sql).toContain("reservation.intent_store='pathless'");
+    expect(calls[0]!.sql).not.toContain("FROM publication_intents");
     expect(calls[0]!.sql).not.toContain("candidate_public_id");
     expect(calls[0]!.sql).not.toContain("candidate_artifact_id");
     expect(calls[0]!.sql).not.toContain("object_key");
     expect(calls[0]!.values).toEqual([intentId]);
   });
 
-  test("keeps the unified confirmation procedure and legacy normalized shape", async () => {
-    const legacyIntent: PublicationConfirmationIntent = {
-      intent_store: "legacy",
-      id: intentId,
-      action: "unpublish",
-      target_kind: "asset",
-      target_id: documentId,
-      version_id: null,
-      public_path: "media/portrait",
-      owner_user_id: "context-use-owner",
-      session_id: "session-legacy",
-      challenge: "challenge",
-      expires_at: new Date("2026-08-23T12:05:00.000Z"),
-    };
-    const { calls, pool } = recordingPool([{
-      reserved_store: "legacy",
-      ...legacyIntent,
-    }]);
+  test("keeps the checked confirmation procedure while hiding legacy intents", async () => {
+    const { calls, pool } = recordingPool();
     const confirmations = new ConfirmationRepository(pool);
 
-    expect(await confirmations.publicationIntent(intentId)).toEqual(legacyIntent);
+    expect(await confirmations.publicationIntent(intentId)).toBeNull();
     await confirmations.confirmPublication(intentId, {
       ownerUserId: "context-use-owner",
-      sessionId: "session-legacy",
+      sessionId: "session-1",
     }, { credentialId: "credential", expectedCounter: 4, newCounter: 5 });
 
     expect(calls[1]).toEqual({
       sql: "SELECT confirm_publication_intent($1,$2,$3,$4,$5,$6)",
-      values: [intentId, "context-use-owner", "session-legacy", "credential", 4, 5],
+      values: [intentId, "context-use-owner", "session-1", "credential", 4, 5],
     });
   });
 
-  test("fails closed on ambiguous or reservation-mismatched publication families", async () => {
-    const candidate = {
-      id: intentId,
-      action: "publish",
-      target_kind: "page",
-      target_id: documentId,
-      version_id: revisionId,
-      public_path: null,
-      owner_user_id: "context-use-owner",
-      session_id: "session-1",
-      challenge: null,
-      expires_at: new Date(),
-    };
-    const ambiguous = recordingPool([
-      { reserved_store: "legacy", intent_store: "legacy", ...candidate },
-      { reserved_store: "legacy", intent_store: "pathless", ...candidate },
-    ]);
-    await expect(new ConfirmationRepository(ambiguous.pool).publicationIntent(intentId))
-      .rejects.toThrow("ambiguous family");
-
-    const mismatched = recordingPool([{
-      reserved_store: "legacy",
-      intent_store: "pathless",
-      ...candidate,
-    }]);
-    await expect(new ConfirmationRepository(mismatched.pool).publicationIntent(intentId))
-      .rejects.toThrow("does not match its reservation");
-
-    const unreserved = recordingPool([{
-      reserved_store: null,
-      intent_store: "pathless",
-      ...candidate,
-    }]);
-    await expect(new ConfirmationRepository(unreserved.pool).publicationIntent(intentId))
-      .rejects.toThrow("does not match its reservation");
-  });
-
-  test("returns null only for an absent UUID or a legacy tombstone", async () => {
+  test("returns null when no active pathless intent is reserved", async () => {
     const absent = recordingPool();
     expect(await new ConfirmationRepository(absent.pool).publicationIntent(intentId)).toBeNull();
-
-    const tombstone = recordingPool([{
-      reserved_store: "legacy",
-      intent_store: null,
-      id: null,
-    }]);
-    expect(await new ConfirmationRepository(tombstone.pool).publicationIntent(intentId)).toBeNull();
-
-    const missingPathless = recordingPool([{
-      reserved_store: "pathless",
-      intent_store: null,
-      id: null,
-    }]);
-    await expect(new ConfirmationRepository(missingPathless.pool).publicationIntent(intentId))
-      .rejects.toThrow("has no live family");
   });
 });

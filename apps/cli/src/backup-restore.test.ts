@@ -126,9 +126,9 @@ test("Context Use restore captures and reconciles privileged object ownership ar
   expect(failureHandler).not.toContain("aws-credential-broker backup");
 });
 
-test("Context Use restore does not restart the completed knowledge preparation one-shot", () => {
+test("Context Use restore does not restart the completed hypermedia bootstrap", () => {
   const script = restoreCommands("backups", "postgres/2026-07-30T12-34-56Z.sql.gz").join("\n");
-  const prepare = "--exit-code-from knowledge-prepare knowledge-prepare";
+  const prepare = "--exit-code-from hypermedia-bootstrap hypermedia-bootstrap";
   const contract = "--profile migration run --rm migrate";
   const publicWeb = "up -d --wait --no-deps public-web";
   const authAndConfirmation = "up -d --wait --no-deps auth confirmation";
@@ -136,7 +136,7 @@ test("Context Use restore does not restart the completed knowledge preparation o
   const dashboardEdge = "up -d --wait --no-deps dashboard-edge";
   const caddyAndBackup = "up -d --remove-orphans --no-deps caddy backup";
 
-  expect(script.match(/--exit-code-from knowledge-prepare/g)).toHaveLength(1);
+  expect(script.match(/--exit-code-from hypermedia-bootstrap/g)).toHaveLength(1);
   for (const start of [publicWeb, authAndConfirmation, appAndMcp, dashboardEdge, caddyAndBackup]) {
     expect(script).toContain(start);
   }

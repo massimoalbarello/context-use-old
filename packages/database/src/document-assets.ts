@@ -16,6 +16,13 @@ export class AssetArchiveConflictError extends Error {
   }
 }
 
+function activePublicationBlocked(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { code?: unknown; message?: unknown };
+  return candidate.code === "23514"
+    && candidate.message === "an actively published v2 asset cannot be archived or deleted";
+}
+
 export type DocumentAsset = {
   document_id: string;
   public_id: string | null;
@@ -26,7 +33,6 @@ export type DocumentAsset = {
   width: number | null;
   height: number | null;
   duration_seconds: string | null;
-  legacy_published: boolean;
   created_at: Date | string;
   deleted_at: Date | string | null;
 };
@@ -61,14 +67,9 @@ async function transaction<T>(pool: Pool, work: (client: PoolClient) => Promise<
   }
 }
 
-function compatibilityPath(): string {
-  return `pathless-asset-${randomUUID()}`;
-}
-
 const ASSET_COLUMNS = `asset.id AS document_id,resource.public_id,
     asset.filename,asset.content_type,asset.size_bytes,asset.content_hash,
     asset.width,asset.height,asset.duration_seconds,
-    asset.public_path IS NOT NULL AS legacy_published,
     asset.created_at,asset.deleted_at`;
 
 const ASSET_FROM = `
@@ -105,21 +106,20 @@ export class DocumentAssetRepository {
   async create(input: CreateDocumentAssetInput): Promise<DocumentAssetCreateResult> {
     const documentId = randomUUID();
     const objectKey = `objects/${documentId}`;
-    const path = compatibilityPath();
     return transaction(this.pool, async (client) => {
       await client.query(
         "SELECT pg_advisory_xact_lock_shared(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
       );
       const result = await client.query<DocumentAssetDatabaseRow>(
         `INSERT INTO assets(
-           id,current_path,filename,content_type,size_bytes,content_hash,
+           id,filename,content_type,size_bytes,content_hash,
            s3_object_key,width,height,duration_seconds
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
          RETURNING id AS document_id,NULL::uuid AS public_id,
            filename,content_type,size_bytes,content_hash,
-           width,height,duration_seconds,false AS legacy_published,
+           width,height,duration_seconds,
            created_at,deleted_at`,
-        [documentId, path, input.filename, input.content_type,
+        [documentId, input.filename, input.content_type,
           input.size_bytes, input.sha256, objectKey,
           input.width ?? null, input.height ?? null, input.duration_seconds ?? null],
       );
@@ -232,9 +232,10 @@ export class DocumentAssetRepository {
       await client.query(
         "SELECT pg_advisory_xact_lock_shared(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
       );
-      const selected = await client.query<{ public_path: string | null }>(
-        `SELECT public_path FROM assets
-         WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`,
+      const selected = await client.query(
+        `SELECT 1 FROM assets asset
+         WHERE asset.id=$1 AND asset.deleted_at IS NULL
+         FOR UPDATE OF asset`,
         [documentId],
       );
       if (!selected.rowCount) {
@@ -243,9 +244,6 @@ export class DocumentAssetRepository {
           [documentId],
         );
         return existing.rows[0] ? normalizeAsset(existing.rows[0]) : null;
-      }
-      if (selected.rows[0]!.public_path !== null) {
-        throw new AssetArchiveConflictError("published");
       }
       const referenced = await client.query(
         `SELECT 1
@@ -263,10 +261,15 @@ export class DocumentAssetRepository {
         [documentId],
       );
       if (referenced.rowCount) throw new AssetArchiveConflictError("referenced");
-      await client.query(
-        "UPDATE assets SET deleted_at=now() WHERE id=$1 AND deleted_at IS NULL",
-        [documentId],
-      );
+      try {
+        await client.query(
+          "UPDATE assets SET deleted_at=now() WHERE id=$1 AND deleted_at IS NULL",
+          [documentId],
+        );
+      } catch (error) {
+        if (activePublicationBlocked(error)) throw new AssetArchiveConflictError("published");
+        throw error;
+      }
       await client.query(
         "UPDATE hypermedia_documents SET updated_at=now() WHERE id=$1",
         [documentId],

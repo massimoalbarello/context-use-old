@@ -148,9 +148,14 @@ button:disabled {
   background: var(--canvas);
 }
 
+.shell.sidebar-collapsed {
+  grid-template-columns: 0 0 minmax(0, 1fr);
+}
+
 .mobile-topbar,
 .mobile-sidebar-scrim,
-.sidebar-close-button { display: none; }
+.sidebar-close-button,
+.sidebar-open-button { display: none; }
 
 .shell > main {
   min-width: 0;
@@ -167,6 +172,45 @@ button:disabled {
   display: flex;
   flex-direction: column;
   color: #3d3a35;
+}
+
+.shell.sidebar-collapsed .sidebar {
+  width: 0;
+  padding-right: 0;
+  padding-left: 0;
+  overflow: hidden;
+  visibility: hidden;
+}
+
+.shell.sidebar-collapsed .sidebar-resizer { visibility: hidden; }
+
+.shell.sidebar-collapsed .sidebar-open-button {
+  position: fixed;
+  z-index: 14;
+  top: 20px;
+  left: 20px;
+  width: 38px;
+  min-height: 38px;
+  padding: 9px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(247, 244, 238, .94);
+  color: #625e57;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(12px);
+}
+
+.sidebar-open-button svg,
+.sidebar-collapse-button svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.45;
 }
 
 .sidebar-resizer {
@@ -228,6 +272,20 @@ button:disabled {
   color: var(--muted);
   font-size: 10px;
 }
+
+.sidebar-collapse-button {
+  width: 32px;
+  min-height: 32px;
+  margin-left: auto;
+  padding: 7px;
+  flex: 0 0 32px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #777168;
+}
+
+.sidebar-collapse-button:hover { background: rgba(255, 255, 255, .65); }
 
 .sidebar-section-nav {
   margin: 5px 0 16px;
@@ -339,6 +397,7 @@ button:disabled {
 .document-filter {
   padding: 1px 3px 7px;
   display: flex;
+  flex-wrap: wrap;
   gap: 3px;
 }
 
@@ -489,18 +548,6 @@ button:disabled {
 
 .document-inline-error { margin: 0 8px 5px; font-size: 9px; }
 
-.archive-toggle {
-  min-height: 28px;
-  padding: 4px 7px;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: #817c74;
-  font-size: 10px;
-}
-
-.archive-toggle input { accent-color: var(--accent); }
-
 .sidebar footer {
   margin-top: 10px;
   padding-top: 9px;
@@ -510,7 +557,22 @@ button:disabled {
   border-top: 1px solid var(--line);
 }
 
+.sidebar footer .sidebar-section-nav { margin: 0; }
+
 .settings-button { min-height: 36px; }
+
+.settings-button.settings-subnav {
+  min-height: 32px;
+  padding-left: 22px;
+  color: #777168;
+  font-size: 11px;
+}
+
+.settings-button.settings-subnav svg {
+  width: 15px;
+  height: 15px;
+  flex-basis: 15px;
+}
 
 .sidebar-account {
   padding: 5px 7px;
@@ -1062,7 +1124,7 @@ button:disabled {
 
 .document-neighborhood {
   width: min(920px, calc(100% - 84px));
-  margin: -46px auto 72px;
+  margin: 32px auto 72px;
   padding-top: 26px;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1072,8 +1134,10 @@ button:disabled {
 
 .document-neighborhood.compact {
   display: block;
+  padding: 28px 0;
   color: var(--muted);
   font-size: 11px;
+  text-align: center;
 }
 
 .document-neighborhood section { min-width: 0; }
@@ -1410,6 +1474,88 @@ button:disabled {
 }
 
 .knowledge-history-page { padding-bottom: 48px; }
+
+.automations-page { padding-bottom: 48px; }
+
+.automation-list,
+.automations-empty {
+  width: min(920px, 100%);
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.automation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.automation-list > article {
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface-strong);
+  box-shadow: 0 5px 18px rgba(47, 41, 31, .035);
+}
+
+.automation-list h2 {
+  margin: 0 0 12px;
+  color: #302d29;
+  font-size: 19px;
+  letter-spacing: -.02em;
+}
+
+.automation-list article > button {
+  width: 100%;
+  min-width: 0;
+  padding: 13px 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  border: 0;
+  border-radius: 10px;
+  background: #f3f0e9;
+  color: var(--ink);
+  text-align: left;
+}
+
+.automation-list article > button:hover strong { color: var(--accent-hover); }
+
+.automation-list article > button span {
+  color: #8b867e;
+  font-size: 8px;
+  font-weight: 720;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+.automation-list article > button strong,
+.automation-list article > button small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.automation-list article > button strong { font-size: 12px; }
+
+.automation-list article > button small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.automation-list article > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.automations-empty {
+  padding: 24px 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
 
 .knowledge-history-page > header { padding-bottom: 20px; }
 
@@ -2853,20 +2999,12 @@ button:disabled {
     padding: 7px;
   }
 
-  .mobile-section-nav {
-    min-width: 0;
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 4px;
-  }
-
-  .mobile-section-nav button {
+  .mobile-current-section {
     min-width: 0;
     overflow: hidden;
-  }
-
-  .mobile-section-nav button span {
-    overflow: hidden;
+    color: #4b4741;
+    font-size: 13px;
+    font-weight: 650;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -2894,6 +3032,15 @@ button:disabled {
     transform: translateX(-104%);
     transition: transform 220ms cubic-bezier(.22, 1, .36, 1), visibility 220ms;
   }
+
+  .shell.sidebar-collapsed .sidebar {
+    width: min(86vw, 360px);
+    padding: max(12px, env(safe-area-inset-top)) 12px max(10px, env(safe-area-inset-bottom));
+  }
+
+  .sidebar-open-button,
+  .sidebar-collapse-button,
+  .shell.sidebar-collapsed .sidebar-open-button { display: none; }
 
   .sidebar.mobile-open {
     visibility: visible;
@@ -2927,8 +3074,6 @@ button:disabled {
     stroke-width: 1.5;
   }
 
-  .sidebar-section-nav { display: none; }
-
   .sidebar-search {
     min-height: 44px;
     margin-bottom: 10px;
@@ -2947,11 +3092,6 @@ button:disabled {
   .page-tree .tree-label { font-size: 13px; }
 
   .document-result { min-height: 74px; padding-block: 10px; }
-
-  .archive-toggle {
-    min-height: 38px;
-    font-size: 11px;
-  }
 
   .sidebar footer { margin-top: 6px; }
 

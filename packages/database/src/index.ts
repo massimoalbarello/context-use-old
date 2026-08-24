@@ -1,5 +1,16 @@
 export { createPool } from "./pool.ts";
 export {
+  HypermediaBootstrapRepository,
+  type HypermediaBootstrapAllocation,
+  type HypermediaBootstrapDocument,
+  type HypermediaBootstrapDocumentKind,
+} from "./hypermedia-bootstrap.ts";
+export {
+  defaultHypermediaBootstrapTemplate,
+  type HypermediaBootstrapTemplate,
+  type HypermediaBootstrapTemplateDocument,
+} from "./default-knowledge-template.ts";
+export {
   assertMarkdownObject,
   MAX_KNOWLEDGE_PAGE_BYTES,
   MAX_MARKDOWN_DOCUMENT_BYTES,
@@ -10,8 +21,6 @@ export {
 } from "./documents.ts";
 export {
   DocumentMaintenanceRepository,
-  type PublishedProjectionPage,
-  type PublicProjectionSnapshot,
   type UnindexedDocumentRevision,
 } from "./document-maintenance.ts";
 export {
@@ -75,74 +84,19 @@ export {
   type SourceRecordWrite,
   type SourceRecordWriter,
 } from "./source-records.ts";
-export {
-  CorpusMigrationInventoryDriftError,
-  CorpusMigrationRepository,
-  neutralPublicDirectoryTitle,
-  type ApplyCorpusPageInput,
-  type ApplyDirectoryHubInput,
-  type BeginCorpusMigrationInput,
-  type CompleteExistingCorpusItemInput,
-  type CorpusDirectoryDisposition,
-  type CorpusMigrationBlocker,
-  type CorpusMigrationInspection,
-  type CorpusMigrationItemKind,
-  type CorpusMigrationPhase,
-  type CorpusMigrationPlan,
-  type CorpusReadyObject,
-  type CorpusMigrationStatus,
-  type CorpusObjectRef,
-  type CorpusPublishedArtifactRef,
-  type CorpusPublicAlias,
-  type LegacyCorpusAsset,
-  type LegacyCorpusDirectory,
-  type LegacyCorpusPage,
-  type LegacyCorpusRecord,
-  type PlannedCorpusAutomation,
-  type PlannedCorpusDirectory,
-  type PlannedCorpusPage,
-  type PlannedObjectWrite,
-  type PlannedRevisionRef,
-} from "./corpus-migration.ts";
 export { ConfirmationRepository } from "./confirmation.ts";
 export type {
   ConfirmationIntentKind,
   ConfirmationPasskey,
-  LegacyPublicationConfirmationIntent,
-  PathlessPublicationConfirmationIntent,
   PublicationConfirmationIntent,
   VerifiedPasskey,
 } from "./confirmation.ts";
 export { PageDeletionRepository } from "./page-deletion.ts";
 export type { PageDeletionPrincipal } from "./page-deletion.ts";
 export {
-  formatTemplateResult,
-  knowledgeTemplateBaseline,
-  knowledgeTemplateMigrationContract,
-  knowledgeTemplatePageContractMatches,
-  reconcileKnowledgeTemplate,
-  type KnowledgeTemplateBaseline,
-  type KnowledgeTemplateMigrationContract,
-  type KnowledgeTemplatePageContract,
-  type TemplateAction,
-  type TemplateRepositories,
-  type TemplateResult,
-} from "./knowledge-templates.ts";
-export {
-  DirectoryNotEmptyError,
-  DirectoryRepository,
-  DirectoryVersionConflictError,
-  RootDirectoryDeletionError,
-  type DirectoryContents,
-} from "./directories.ts";
-export {
-  PageRepository,
   PublicationStateError,
   VersionConflictError,
-  type KnowledgePageChange,
-  type KnowledgePageChangeBatch,
-  type KnowledgePageChangeKind,
-} from "./pages.ts";
+} from "./knowledge-documents.ts";
 export {
   KnowledgeExportRepository,
   type KnowledgeExportAsset,
@@ -154,16 +108,10 @@ export {
 export {
   PathlessPublicEntrypointRepository,
   PathlessPublicRepository,
-  PathlessPublicationAdoptionRepository,
   PathlessPublicationRepository,
   PathlessStoragePublicationRepository,
-  type PathlessAssetPublicationAdoptionArtifactReceipt,
-  type PathlessAssetPublicationAdoptionWriteAuthorization,
   type PathlessAssetPublicationWriteAuthorization,
   type PathlessDashboardPublicationStatus,
-  type HypermediaCutoverBlocker,
-  type PathlessPagePublicationAdoptionArtifactReceipt,
-  type PathlessPagePublicationAdoptionWriteAuthorization,
   type PathlessPagePublicationWriteAuthorization,
   type PathlessPublicActiveAssetRoute,
   type PathlessPublicActivePageRoute,
@@ -174,12 +122,6 @@ export {
   type PathlessPublicRouteResolution,
   type PathlessPublicUnassignedRoute,
   type PathlessPublicUnavailableRoute,
-  type PathlessPublicationAdoption,
-  type PathlessPublicationAdoptionCandidate,
-  type PathlessPublicationAdoptionArtifactReceipt,
-  type PathlessPublicationAdoptionKind,
-  type PathlessPublicationAdoptionPhase,
-  type PathlessPublicationAdoptionWriteAuthorization,
   type PathlessPublicationEntrypoint,
   type PathlessPublicationEntrypointCandidate,
   type PathlessPublicationIntent,
@@ -209,13 +151,3 @@ export {
   type AutomationRegistration,
   type RegisterAutomationInput,
 } from "./automation-registry.ts";
-export {
-  OperationalDocumentReplacementDriftError,
-  OperationalDocumentReplacementRepository,
-  type ApplyOperationalDocumentReplacementInput,
-  type BeginOperationalDocumentReplacementInput,
-  type ManagedOperationalDocument,
-  type OperationalAutomationStateTarget,
-  type OperationalDocumentReplacementPlan,
-  type OperationalDocumentReplacementTarget,
-} from "./operational-document-replacements.ts";

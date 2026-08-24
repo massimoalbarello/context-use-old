@@ -43,9 +43,7 @@ export async function cleanupPathlessPublicationFixtures(
     `SELECT public_id AS id FROM public_resources
      WHERE document_id=ANY($1::uuid[]) OR original_document_id=ANY($1::uuid[])
      UNION SELECT candidate_public_id FROM pathless_publication_intents
-     WHERE target_document_id=ANY($1::uuid[]) AND candidate_public_id IS NOT NULL
-     UNION SELECT public_id FROM pathless_publication_adoptions
-     WHERE source_document_id=ANY($1::uuid[])`,
+     WHERE target_document_id=ANY($1::uuid[]) AND candidate_public_id IS NOT NULL`,
     [documentIds],
   ));
   const revisionIds = unique(await selectIds(
@@ -54,9 +52,7 @@ export async function cleanupPathlessPublicationFixtures(
      WHERE document_id=ANY($1::uuid[])
      UNION SELECT id FROM knowledge_page_versions WHERE page_id=ANY($1::uuid[])
      UNION SELECT expected_revision_id FROM pathless_publication_intents
-     WHERE target_document_id=ANY($1::uuid[]) AND expected_revision_id IS NOT NULL
-     UNION SELECT source_revision_id FROM pathless_publication_adoptions
-     WHERE source_document_id=ANY($1::uuid[]) AND source_revision_id IS NOT NULL`,
+     WHERE target_document_id=ANY($1::uuid[]) AND expected_revision_id IS NOT NULL`,
     [documentIds],
   ));
   const intentIds = unique([
@@ -70,28 +66,6 @@ export async function cleanupPathlessPublicationFixtures(
       [documentIds],
     ),
   ]);
-  const adoptionIds = unique(await selectIds(
-    client,
-    `SELECT id FROM pathless_publication_adoptions
-     WHERE source_document_id=ANY($1::uuid[])`,
-    [documentIds],
-  ));
-  const runIds = unique(await selectIds(
-    client,
-    `SELECT migration_run_id AS id FROM directory_hub_migrations
-     WHERE document_id=ANY($1::uuid[])
-     UNION SELECT run_id FROM corpus_page_migration_plans
-     WHERE document_id=ANY($1::uuid[])
-        OR source_revision_id=ANY($2::uuid[])
-        OR rewrite_revision_id=ANY($2::uuid[])
-     UNION SELECT run_id FROM corpus_migration_automation_plans
-     WHERE instructions_document_id=ANY($1::uuid[])
-        OR state_document_id=ANY($1::uuid[])
-     UNION SELECT run_id FROM corpus_migration_completions
-     WHERE output_document_id=ANY($1::uuid[])
-        OR output_revision_id=ANY($2::uuid[])`,
-    [documentIds, revisionIds],
-  ));
   const artifactIds = unique(await selectIds(
     client,
     `SELECT artifact_id AS id FROM public_page_artifacts
@@ -102,13 +76,9 @@ export async function cleanupPathlessPublicationFixtures(
      WHERE page_id=ANY($1::uuid[])
      UNION SELECT candidate_artifact_id FROM pathless_publication_intents
      WHERE id=ANY($3::uuid[]) AND candidate_artifact_id IS NOT NULL
-     UNION SELECT candidate_artifact_id FROM pathless_publication_adoptions
-     WHERE id=ANY($4::uuid[])
      UNION SELECT artifact_id FROM pathless_publication_artifact_staging
-     WHERE intent_id=ANY($3::uuid[])
-     UNION SELECT artifact_id FROM pathless_publication_adoption_staging
-     WHERE adoption_id=ANY($4::uuid[])`,
-    [documentIds, publicIds, intentIds, adoptionIds],
+     WHERE intent_id=ANY($3::uuid[])`,
+    [documentIds, publicIds, intentIds],
   ));
   const conflictIds = unique([
     ...documentIds,
@@ -138,17 +108,12 @@ export async function cleanupPathlessPublicationFixtures(
     );
     await client.query(
       `DELETE FROM pathless_publication_object_claims
-       WHERE (allocation_kind='pathless_intent' AND allocation_id=ANY($1::uuid[]))
-          OR (allocation_kind='pathless_adoption' AND allocation_id=ANY($2::uuid[]))`,
-      [intentIds, adoptionIds],
+       WHERE allocation_id=ANY($1::uuid[])`,
+      [intentIds],
     );
     await client.query(
       "DELETE FROM pathless_publication_artifact_staging WHERE intent_id=ANY($1::uuid[])",
       [intentIds],
-    );
-    await client.query(
-      "DELETE FROM pathless_publication_adoption_staging WHERE adoption_id=ANY($1::uuid[])",
-      [adoptionIds],
     );
     await client.query("DELETE FROM page_publications WHERE public_id=ANY($1::uuid[])", [publicIds]);
     await client.query("DELETE FROM asset_publications WHERE public_id=ANY($1::uuid[])", [publicIds]);
@@ -167,13 +132,11 @@ export async function cleanupPathlessPublicationFixtures(
       "DELETE FROM publication_intent_id_reservations WHERE intent_id=ANY($1::uuid[])",
       [intentIds],
     );
-    await client.query("DELETE FROM pathless_publication_adoptions WHERE id=ANY($1::uuid[])", [adoptionIds]);
     await client.query(
       `DELETE FROM public_artifact_id_reservations
        WHERE artifact_id=ANY($1::uuid[])
-          OR allocation_id=ANY($2::uuid[])
-          OR allocation_id=ANY($3::uuid[])`,
-      [artifactIds, intentIds, adoptionIds],
+          OR allocation_id=ANY($2::uuid[])`,
+      [artifactIds, intentIds],
     );
     await client.query("DELETE FROM public_route_aliases WHERE public_id=ANY($1::uuid[])", [publicIds]);
     await client.query(
@@ -190,27 +153,6 @@ export async function cleanupPathlessPublicationFixtures(
           OR state_document_id=ANY($1::uuid[])`,
       [documentIds],
     );
-    await client.query(
-      `DELETE FROM operational_document_replacements
-       WHERE source_document_id=ANY($1::uuid[])
-          OR agents_occupant_document_id=ANY($1::uuid[])
-          OR replacement_document_id=ANY($1::uuid[])
-          OR state_source_document_id=ANY($1::uuid[])
-          OR state_replacement_document_id=ANY($1::uuid[])`,
-      [documentIds],
-    );
-    await client.query(
-      `DELETE FROM directory_hub_migrations
-       WHERE document_id=ANY($1::uuid[]) OR migration_run_id=ANY($2::uuid[])`,
-      [documentIds, runIds],
-    );
-    await client.query("DELETE FROM corpus_migration_completions WHERE run_id=ANY($1::uuid[])", [runIds]);
-    await client.query("DELETE FROM corpus_migration_automation_plans WHERE run_id=ANY($1::uuid[])", [runIds]);
-    await client.query("DELETE FROM corpus_page_migration_plans WHERE run_id=ANY($1::uuid[])", [runIds]);
-    await client.query("DELETE FROM corpus_directory_migration_plans WHERE run_id=ANY($1::uuid[])", [runIds]);
-    await client.query("DELETE FROM corpus_migration_inventory WHERE run_id=ANY($1::uuid[])", [runIds]);
-    await client.query("DELETE FROM corpus_migration_runs WHERE id=ANY($1::uuid[])", [runIds]);
-
     await client.query(
       `DELETE FROM document_links
        WHERE source_revision_id=ANY($1::uuid[])

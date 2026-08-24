@@ -67,22 +67,6 @@ describe("republication review", () => {
     expect(republicationChanged(unchanged)).toBe(false);
   });
 
-  test("does not surface retained filesystem-path changes", () => {
-    const html = renderToStaticMarkup(<RepublicationReview
-      review={{
-        ...review,
-        markdown_changes: [],
-        metadata_changes: [{ field: "path", before: "about/intro", after: "about/profile" }],
-      }}
-      candidateVersionNumber={5}
-    />);
-
-    expect(html).toContain("identical to the one already public");
-    expect(html).not.toContain("Path");
-    expect(html).not.toContain("about/intro");
-    expect(html).not.toContain("about/profile");
-  });
-
   test("counts any change as a change for the confirmation wording", () => {
     expect(republicationChanged(review)).toBe(true);
     expect(republicationChanged({

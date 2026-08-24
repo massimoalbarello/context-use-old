@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Client, Pool } from "pg";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { PageRepository } from "../src/index.ts";
+import { KnowledgeDocumentRepository } from "../src/index.ts";
 import { disposableDatabaseUrl } from "../src/disposable-database.ts";
 import { MemoryMarkdownStore } from "./memory-markdown-store.ts";
 
@@ -117,32 +117,29 @@ describeDatabase("PostgreSQL security roles", () => {
     const mcpPool = new Pool({ connectionString: adminUrl, max: 1 });
     try {
       await mcpPool.query("SET ROLE context_use_mcp");
-      const pages = new PageRepository(mcpPool, new MemoryMarkdownStore());
-      const path = `tests/mcp-operational-lock-${randomUUID()}`;
+      const documents = new KnowledgeDocumentRepository(mcpPool, new MemoryMarkdownStore());
       const actor = { kind: "mcp" as const, subject: "role-test" };
-      const created = await pages.create({
-        path,
+      const created = await documents.create({
         title: "MCP checked writer",
         summary: "Exercises the operational-document lock as the real MCP role.",
         body_markdown: "Initial body.",
         commit_message: "Create MCP role fixture",
       }, actor);
 
-      const updated = await pages.update(created.id, {
-        path,
+      const updated = await documents.update(created.document_id, {
         title: "MCP checked writer",
         summary: "Exercises the operational-document lock as the real MCP role.",
         body_markdown: "Updated body.",
         commit_message: "Update through MCP role",
-        expected_version_number: 1,
+        expected_revision_number: 1,
       }, actor);
-      expect(updated?.version_number).toBe(2);
+      expect(updated?.revision_number).toBe(2);
 
-      const archived = await pages.archive(created.id, {
+      const archived = await documents.archive(created.document_id, {
         commit_message: "Archive through MCP role",
-        expected_version_number: 2,
+        expected_revision_number: 2,
       }, actor);
-      expect(archived?.version_number).toBe(3);
+      expect(archived?.revision_number).toBe(3);
       expect(archived?.archived_at).not.toBeNull();
     } finally {
       await mcpPool.end();
@@ -192,36 +189,64 @@ describeDatabase("PostgreSQL security roles", () => {
     }
   });
 
-  test("only corpus can enumerate resumable retained-publication adoption work", async () => {
-    const signature = "list_pathless_publication_adoption_candidates()";
-    for (const role of [
-      "context_use_auth",
-      "context_use_dashboard",
-      "context_use_mcp",
-      "context_use_public",
-      "context_use_confirmation",
-      "context_use_storage",
-      "context_use_backup",
+  test("retired corpus migration and publication adoption boundaries are absent", async () => {
+    const objects = await admin.query<{ relation: string | null; routine: string | null }>(
+      `SELECT to_regclass('public.pathless_publication_adoptions')::text AS relation,
+         to_regprocedure('public.list_pathless_publication_adoption_candidates()')::text
+           AS routine`,
+    );
+    expect(objects.rows[0]).toEqual({ relation: null, routine: null });
+  });
+
+  test("fresh hypermedia bootstrap allocations remain corpus-only and immutable", async () => {
+    for (const signature of [
+      "begin_hypermedia_bootstrap()",
+      "complete_hypermedia_bootstrap()",
     ]) {
       expect((await admin.query<{ allowed: boolean }>(
-        "SELECT has_function_privilege($1,$2,'EXECUTE') AS allowed",
-        [role, signature],
+        "SELECT has_function_privilege('context_use_corpus',$1,'EXECUTE') AS allowed",
+        [signature],
+      )).rows[0]?.allowed).toBe(true);
+      const routine = (await admin.query<{ owner: string; security_definer: boolean }>(
+        `SELECT pg_get_userbyid(proowner) AS owner,prosecdef AS security_definer
+         FROM pg_proc WHERE oid=$1::regprocedure`,
+        [signature],
+      )).rows[0];
+      expect(routine).toEqual({
+        owner: "context_use_boundary_owner",
+        security_definer: true,
+      });
+      for (const role of [
+        "context_use_auth", "context_use_dashboard", "context_use_mcp",
+        "context_use_public", "context_use_confirmation", "context_use_storage",
+      ]) {
+        expect((await admin.query<{ allowed: boolean }>(
+          "SELECT has_function_privilege($1,$2,'EXECUTE') AS allowed",
+          [role, signature],
+        )).rows[0]?.allowed).toBe(false);
+      }
+    }
+    for (const column of ["document_kind", "document_id", "revision_id"]) {
+      expect((await admin.query<{ allowed: boolean }>(
+        `SELECT has_column_privilege(
+           'context_use_corpus','hypermedia_bootstrap_allocations',$1,'SELECT'
+         ) AS allowed`,
+        [column],
+      )).rows[0]?.allowed).toBe(true);
+    }
+    for (const privilege of ["INSERT", "UPDATE", "DELETE"]) {
+      expect((await admin.query<{ allowed: boolean }>(
+        `SELECT has_table_privilege(
+           'context_use_corpus','hypermedia_bootstrap_allocations',$1
+         ) AS allowed`,
+        [privilege],
       )).rows[0]?.allowed).toBe(false);
     }
     expect((await admin.query<{ allowed: boolean }>(
-      "SELECT has_function_privilege('context_use_corpus',$1,'EXECUTE') AS allowed",
-      [signature],
+      `SELECT has_table_privilege(
+         'context_use_backup','hypermedia_bootstrap_allocations','SELECT'
+       ) AS allowed`,
     )).rows[0]?.allowed).toBe(true);
-
-    await admin.query("SET ROLE context_use_corpus");
-    try {
-      const result = await admin.query(
-        "SELECT adoption_kind,source_document_id,adoption_id FROM list_pathless_publication_adoption_candidates()",
-      );
-      expect(Array.isArray(result.rows)).toBe(true);
-    } finally {
-      await admin.query("RESET ROLE");
-    }
   });
 
   test("page writers retain history without receiving deletion or pruning access", async () => {
@@ -474,7 +499,7 @@ describeDatabase("PostgreSQL security roles", () => {
     ]);
   });
 
-  test("corpus preparation is isolated from the long-lived dashboard credential", async () => {
+  test("hypermedia bootstrap is isolated from the long-lived dashboard credential", async () => {
     const corpusRole = await admin.query<{
       rolcanlogin: boolean;
       rolsuper: boolean;
@@ -503,34 +528,7 @@ describeDatabase("PostgreSQL security roles", () => {
       "SELECT pg_has_role('context_use_dashboard','context_use_corpus','MEMBER') AS allowed",
     )).rows[0]?.allowed).toBe(false);
 
-    const ledgers = [
-      "corpus_migration_runs",
-      "corpus_migration_inventory",
-      "corpus_directory_migration_plans",
-      "corpus_page_migration_plans",
-      "corpus_migration_automation_plans",
-      "corpus_migration_completions",
-      "operational_document_replacements",
-    ];
-    for (const relation of ledgers) {
-      for (const privilege of ["SELECT", "INSERT", "UPDATE", "DELETE"]) {
-        expect((await admin.query<{ allowed: boolean }>(
-          "SELECT has_table_privilege('context_use_dashboard',$1,$2) AS allowed",
-          [relation, privilege],
-        )).rows[0]?.allowed).toBe(false);
-      }
-      expect((await admin.query<{ allowed: boolean }>(
-        "SELECT has_table_privilege('context_use_corpus',$1,'SELECT') AS allowed",
-        [relation],
-      )).rows[0]?.allowed).toBe(true);
-    }
-
-    for (const fn of [
-      "register_directory_hub_migration(uuid,uuid)",
-      "render_corpus_public_directory_hub(uuid,uuid)",
-      "replace_knowledge_revision_projections(uuid,uuid[])",
-      "retarget_managed_operational_document(uuid,text,uuid[])",
-    ]) {
+    for (const fn of ["replace_knowledge_revision_projections(uuid,uuid[])"]) {
       expect((await admin.query<{ allowed: boolean }>(
         "SELECT has_function_privilege('context_use_dashboard',$1,'EXECUTE') AS allowed",
         [fn],
@@ -697,7 +695,7 @@ describeDatabase("PostgreSQL security roles", () => {
     }
   });
 
-  test("dashboard can register a private automation without reading corpus plans", async () => {
+  test("dashboard can register a private automation without migration state", async () => {
     const pageId = randomUUID();
     const versionId = randomUUID();
     const registrationId = randomUUID();
@@ -741,7 +739,6 @@ describeDatabase("PostgreSQL security roles", () => {
         "SELECT 1 FROM automation_registry WHERE id=$1 AND instructions_document_id=$2",
         [registrationId, pageId],
       )).rowCount).toBe(1);
-      await expectDenied("SELECT * FROM corpus_migration_automation_plans");
       await admin.query("RESET ROLE");
     } finally {
       await admin.query("ROLLBACK");
@@ -783,8 +780,6 @@ describeDatabase("PostgreSQL security roles", () => {
            'claim_knowledge_export_download',
            'delete_empty_knowledge_directory',
            'lock_automation_registry_for_operational_retarget',
-           'lock_corpus_migration_hub_apply_tables',
-           'lock_corpus_migration_runs_for_operational_change',
            'prevent_automation_document_role_reuse',
            'prune_page_versions',
            'remove_owner_passkey',
@@ -801,8 +796,6 @@ describeDatabase("PostgreSQL security roles", () => {
       { proname: "delete_empty_knowledge_directory", owner: "context_use_boundary_owner", security_definer: true },
       { proname: "issue_confirmation_challenge", owner: "context_use_boundary_owner", security_definer: true },
       { proname: "lock_automation_registry_for_operational_retarget", owner: "context_use_boundary_owner", security_definer: true },
-      { proname: "lock_corpus_migration_hub_apply_tables", owner: "context_use_boundary_owner", security_definer: true },
-      { proname: "lock_corpus_migration_runs_for_operational_change", owner: "context_use_boundary_owner", security_definer: true },
       { proname: "prevent_automation_document_role_reuse", owner: "context_use_boundary_owner", security_definer: true },
       { proname: "project_public_markdown", owner: "context_use_projection_owner", security_definer: true },
       { proname: "prune_page_versions", owner: "context_use_boundary_owner", security_definer: true },
@@ -908,12 +901,10 @@ describeDatabase("PostgreSQL security roles", () => {
       "assert_private_uuid_available",
       "assert_public_uuid_available",
       "guard_artifact_reservation_namespace",
-      "guard_corpus_directory_plan_namespace",
       "guard_legacy_alias_namespace",
       "guard_private_uuid_columns",
       "guard_public_resource_identity",
       "invalidate_pathless_asset_publication_on_legacy_drift",
-      "invalidate_pathless_hub_publication_on_mapping_drift",
       "invalidate_pathless_page_publication_on_legacy_drift",
       "lock_public_uuid_namespace",
       "protect_active_pathless_asset_publication",
@@ -922,10 +913,6 @@ describeDatabase("PostgreSQL security roles", () => {
       "public_uuid_has_legacy_alias_token",
       "public_uuid_has_private_identity",
       "public_uuid_has_reserved_public_identity",
-      "reconcile_deleted_public_namespace_conflicts",
-      "reconcile_finished_operational_public_namespace_conflicts",
-      "reconcile_planned_public_namespace_conflicts",
-      "reconcile_superseded_public_namespace_conflicts",
       "reject_pending_pathless_publication_claim_challenge",
       "require_finalized_pathless_publication_object_claim",
       "reserve_legacy_page_artifact_identity",
@@ -978,23 +965,6 @@ describeDatabase("PostgreSQL security roles", () => {
         [role, dashboardStatus],
       )).rows[0]?.allowed).toBe(false);
     }
-    for (const role of [
-      "context_use_auth",
-      "context_use_backup",
-      "context_use_confirmation",
-      "context_use_corpus",
-      "context_use_dashboard",
-      "context_use_mcp",
-      "context_use_public",
-      "context_use_storage",
-    ]) {
-      expect((await admin.query<{ allowed: boolean }>(
-        `SELECT has_function_privilege(
-           $1,'reconcile_deleted_public_namespace_conflicts()','EXECUTE'
-         ) AS allowed`,
-        [role],
-      )).rows[0]?.allowed).toBe(false);
-    }
     const canonicalHelpers = await admin.query<{ proname: string; owner: string }>(
       `SELECT proname,pg_get_userbyid(proowner) AS owner
        FROM pg_proc
@@ -1032,7 +1002,6 @@ describeDatabase("PostgreSQL security roles", () => {
       "blocking_public_namespace_conflicts",
       "live_public_namespace_conflicts",
       "page_publications",
-      "pathless_publication_adoptions",
       "pathless_publication_artifact_staging",
       "pathless_publication_intents",
       "pathless_publication_object_claims",
@@ -1051,9 +1020,7 @@ describeDatabase("PostgreSQL security roles", () => {
 
     const storageClaimFunctions = [
       "claim_pathless_publication_artifact(uuid,uuid)",
-      "claim_pathless_publication_adoption_artifact(uuid,uuid)",
       "finalize_pathless_publication_artifact_claim(uuid,uuid,publication_target,bigint,text,text,text,timestamp with time zone,text,text,integer,integer,text,uuid[],uuid[],text)",
-      "finalize_pathless_publication_adoption_claim(uuid,uuid,pathless_publication_adoption_kind,bigint,text,text,text,timestamp with time zone,text,text,integer,integer,text,uuid[],uuid[],text)",
     ];
     for (const fn of storageClaimFunctions) {
       expect((await admin.query<{ owner: string; security_definer: boolean }>(
@@ -1525,7 +1492,7 @@ describeDatabase("PostgreSQL security roles", () => {
     }
   });
 
-  test("scheduler state is absent and automation instructions use ordinary private pages", async () => {
+  test("scheduler and legacy publication entrypoints are absent", async () => {
     const removed = await admin.query<{
       schedules: string | null;
       versions: string | null;
@@ -1550,45 +1517,6 @@ describeDatabase("PostgreSQL security roles", () => {
       runs: null,
       provenance_columns: "0",
     });
-
-    await admin.query("BEGIN");
-    try {
-      const pageId = randomUUID();
-      const versionId = randomUUID();
-      await admin.query("SET LOCAL ROLE context_use_mcp");
-      await admin.query(
-        `INSERT INTO knowledge_pages(id,current_path,current_version_id,search_vector)
-         VALUES ($1,'automations/external-instructions',$2,page_search_vector(
-           'automations/external-instructions','External automation instructions',
-           'Instructions followed by an external automation harness.','Run externally.'
-         ))`,
-        [pageId, versionId],
-      );
-      await admin.query(
-        `INSERT INTO hypermedia_document_revisions(
-           id,document_id,revision_number,body_object_key,body_size_bytes,body_content_hash
-         ) VALUES (
-           $1::uuid,$2::uuid,1,'documents/private/'||$1::text||'.md',
-           octet_length($3),encode(digest(convert_to($3,'UTF8'),'sha256'),'hex')
-         )`,
-        [versionId, pageId, "Run externally."],
-      );
-      await admin.query(
-        `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,path,title,summary,
-           commit_message,actor_kind,actor_subject
-         ) VALUES (
-           $1,$2,1,'automations/external-instructions','External automation instructions',
-           'Instructions followed by an external automation harness.',
-           'Create external automation instructions','mcp','role-test'
-         )`,
-        [versionId, pageId],
-      );
-      await admin.query("SET CONSTRAINTS ALL IMMEDIATE");
-      await admin.query("RESET ROLE");
-    } finally {
-      await admin.query("ROLLBACK");
-    }
 
     expect((await admin.query<{ allowed: boolean }>(
       "SELECT has_any_column_privilege('context_use_mcp','publication_intents','INSERT') AS allowed",

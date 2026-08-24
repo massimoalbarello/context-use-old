@@ -260,28 +260,17 @@ export async function createMcpServer(
       inputSchema: updateKnowledgeDocumentSchema.extend({
         document_id: z.string().uuid(),
         ...mutationReceiptSchemas,
-        acknowledge_published_document: z.literal(true).optional().describe(
-          "Required only when the owner asked to edit a document with a legacy publication pin.",
-        ),
       }).strict(),
       annotations: { destructiveHint: false },
     }, async ({
       document_id,
       knowledge_session_receipt,
-      acknowledge_published_document,
       ...input
     }) => {
       const existing = await documents.knowledgeDocuments.get(document_id);
       if (!existing || existing.archived_at) return unknownDocument(document_id, "update_document");
       if (!await hasCurrentGuidance(knowledge_session_receipt)) {
         return documentGuidanceRequired("update_document");
-      }
-      if (existing.legacy_published && !acknowledge_published_document) {
-        return textContent([
-          "PUBLISHED_DOCUMENT",
-          "The owner has a legacy public version pinned. This edit would remain private until a later publication change.",
-          "Retry update_document with acknowledge_published_document: true only when the owner asked for this published document itself to change.",
-        ].join("\n\n"), true);
       }
       const updated = await documents.knowledgeDocuments.update(document_id, input, actor);
       if (!updated) return unknownDocument(document_id, "update_document");

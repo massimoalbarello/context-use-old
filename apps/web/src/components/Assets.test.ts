@@ -26,7 +26,7 @@ describe("asset references", () => {
       asset: {
         id,
         public_id: null,
-        pathless_published: false,
+        published: false,
         filename: "portrait.jpg",
         content_type: "image/jpeg",
         size_bytes: 1024,

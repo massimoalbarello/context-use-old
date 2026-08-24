@@ -3,11 +3,9 @@ import { randomUUID } from "node:crypto";
 import { Client, Pool } from "pg";
 import {
   AssetArchiveConflictError,
-  DirectoryRepository,
   DocumentAssetRepository,
   InvalidPrivateDocumentCursorError,
   KnowledgeDocumentRepository,
-  PageRepository,
   PrivateDocumentCatalogRepository,
   SourceRecordRepository,
   VersionConflictError,
@@ -26,7 +24,6 @@ describeDatabase("pathless private documents", () => {
   const catalog = new PrivateDocumentCatalogRepository(pool);
   const records = new SourceRecordRepository(pool, bodies);
   const createdDocumentIds = new Set<string>();
-  const createdDirectoryIds = new Set<string>();
   const actor = { kind: "dashboard" as const, subject: "pathless-integration" };
 
   afterAll(async () => {
@@ -61,9 +58,6 @@ describeDatabase("pathless private documents", () => {
         await client.query("DELETE FROM hypermedia_document_revisions WHERE document_id=ANY($1::uuid[])", [ids]);
         await client.query("DELETE FROM hypermedia_documents WHERE id=ANY($1::uuid[])", [ids]);
       }
-      for (const id of [...createdDirectoryIds].reverse()) {
-        await client.query("DELETE FROM knowledge_directories WHERE id=$1", [id]);
-      }
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK");
@@ -88,18 +82,15 @@ describeDatabase("pathless private documents", () => {
     createdDocumentIds.add(asset.document.document_id);
     expect(Object.keys(asset.document).sort()).toEqual([
       "content_hash", "content_type", "created_at", "deleted_at", "document_id",
-      "duration_seconds", "filename", "height", "legacy_published", "public_id",
+      "duration_seconds", "filename", "height", "public_id",
       "size_bytes", "width",
     ]);
     expect(asset.document).toMatchObject({
       size_bytes: "1234",
       duration_seconds: "1.25",
       public_id: null,
-      legacy_published: false,
     });
-    // The storage locator is an explicit internal handoff. Only the legacy
-    // compatibility path (verified below for pages) must be unlinkable from
-    // private document identity.
+    // The storage locator is an explicit internal handoff.
     expect(asset.storage.object_key).toBe(`objects/${asset.document.document_id}`);
     expect(await assets.getForStorage(asset.document.document_id)).toEqual({
       ...asset.document,
@@ -127,12 +118,19 @@ describeDatabase("pathless private documents", () => {
       pathless_search_ready: true,
     });
 
-    const legacy = await pool.query<{ current_path: string }>(
+    const compatibility = await pool.query<{ current_path: string | null }>(
       "SELECT current_path FROM knowledge_pages WHERE id=$1",
       [created.document_id],
     );
-    expect(legacy.rows[0]!.current_path).toStartWith("pathless-page-");
-    expect(legacy.rows[0]!.current_path).not.toContain(created.document_id);
+    expect(compatibility.rows[0]!.current_path).toBeNull();
+    expect((await pool.query<{ path: string | null }>(
+      "SELECT path FROM knowledge_page_versions WHERE id=$1",
+      [created.current_revision_id],
+    )).rows[0]!.path).toBeNull();
+    expect((await pool.query<{ current_path: string | null }>(
+      "SELECT current_path FROM assets WHERE id=$1",
+      [asset.document.document_id],
+    )).rows[0]!.current_path).toBeNull();
     const receipt = await pool.query<{ target_document_ids: string[] }>(
       "SELECT target_document_ids FROM knowledge_revision_contracts WHERE revision_id=$1",
       [created.current_revision_id],
@@ -346,11 +344,11 @@ describeDatabase("pathless private documents", () => {
     expect((await catalog.search("catalog-search-needle", {
       representation: "asset",
     })).documents.map(({ document_id }) => document_id)).toContain(asset.document.document_id);
-    const hiddenPath = (await pool.query<{ current_path: string }>(
+    const hiddenPath = (await pool.query<{ current_path: string | null }>(
       "SELECT current_path FROM knowledge_pages WHERE id=$1",
       [source.document_id],
     )).rows[0]!.current_path;
-    expect((await catalog.search(hiddenPath)).documents).toEqual([]);
+    expect(hiddenPath).toBeNull();
     expect((await catalog.list({
       authority: "source",
       integration: "pathless-test",
@@ -453,109 +451,16 @@ describeDatabase("pathless private documents", () => {
       completeness_checked: false,
       complete: null,
     });
-    // The legacy reset fixture has not hydrated its replacement bootstrap
-    // guide into a generic receipt yet, so the global proof stays conservative
-    // until that compatibility boundary is retired later in the cutover.
-    expect((await catalog.neighborhood(target.document_id, {
+    const auditedNeighborhood = await catalog.neighborhood(target.document_id, {
       audit_global_completeness: true,
-    }))?.backlinks).toMatchObject({
-      completeness_checked: true,
-      complete: false,
     });
+    expect(auditedNeighborhood?.backlinks).toMatchObject({
+      completeness_checked: true,
+    });
+    expect(typeof auditedNeighborhood?.backlinks.complete).toBe("boolean");
   });
 
-  test("adopts archived legacy bodies and chunks near-limit pathless search safely", async () => {
-    const legacyPages = new PageRepository(pool, bodies);
-    const suffix = randomUUID().slice(0, 8);
-    const legacyBody = "archived legacy body archivedbodyneedle";
-    const legacy = await legacyPages.create({
-      path: `archived-pathless-${suffix}`,
-      title: "Archived adoption title needle",
-      summary: "An archived pre-contract page.",
-      body_markdown: legacyBody,
-      commit_message: "Create legacy archived fixture",
-    }, actor);
-    createdDocumentIds.add(legacy.id);
-    const archived = await legacyPages.archive(legacy.id, {
-      commit_message: "Archive legacy fixture",
-      expected_version_number: 1,
-    }, actor);
-    expect(archived?.archived_at).not.toBeNull();
-    expect((await catalog.search("Archived adoption title needle", {
-      document_kind: "knowledge",
-      include_retired: true,
-    })).documents.map(({ document_id }) => document_id)).toContain(legacy.id);
-    expect((await catalog.search("archivedbodyneedle", {
-      document_kind: "knowledge",
-      include_retired: true,
-    })).documents.map(({ document_id }) => document_id)).not.toContain(legacy.id);
-    await expect(pool.query(
-      "SELECT register_generic_knowledge_revision($1,$2,'{}'::uuid[])",
-      [archived!.current_version_id, legacyBody],
-    )).rejects.toThrow();
-    await expect(knowledge.adoptCurrent({
-      document_id: randomUUID(),
-      revision_id: archived!.current_version_id,
-      body_markdown: archived!.body_markdown,
-    })).rejects.toThrow();
-    expect((await pool.query(
-      "SELECT 1 FROM knowledge_revision_contracts WHERE revision_id=$1",
-      [archived!.current_version_id],
-    )).rowCount).toBe(0);
-    const adopted = await knowledge.adoptCurrent({
-      document_id: legacy.id,
-      revision_id: archived!.current_version_id,
-      body_markdown: archived!.body_markdown,
-    });
-    expect(adopted.pathless_search_ready).toBe(true);
-    expect((await catalog.search("archivedbodyneedle", {
-      document_kind: "knowledge",
-      include_retired: true,
-    })).documents.map(({ document_id }) => document_id)).toContain(legacy.id);
-
-    const stale = await legacyPages.create({
-      path: `stale-pathless-${suffix}`,
-      title: "Current-only chunk fixture",
-      summary: "Search chunks must follow the current immutable revision.",
-      body_markdown: "stalev1needle",
-      commit_message: "Create stale-search fixture",
-    }, actor);
-    createdDocumentIds.add(stale.id);
-    await knowledge.adoptCurrent({
-      document_id: stale.id,
-      revision_id: stale.current_version_id,
-      body_markdown: stale.body_markdown,
-    });
-    expect((await catalog.search("stalev1needle", {
-      document_kind: "knowledge",
-    })).documents.map(({ document_id }) => document_id)).toContain(stale.id);
-    const advanced = await legacyPages.update(stale.id, {
-      path: stale.current_path,
-      title: "Current-only chunk fixture",
-      summary: "Search chunks must follow the current immutable revision.",
-      body_markdown: "freshv2needle",
-      commit_message: "Advance outside the pathless writer",
-      expected_version_number: 1,
-    }, actor);
-    expect((await catalog.get(stale.id))?.pathless_search_ready).toBe(false);
-    expect((await catalog.search("stalev1needle", {
-      document_kind: "knowledge",
-    })).documents.map(({ document_id }) => document_id)).not.toContain(stale.id);
-    expect((await catalog.search("freshv2needle", {
-      document_kind: "knowledge",
-    })).documents.map(({ document_id }) => document_id)).not.toContain(stale.id);
-    await knowledge.adoptCurrent({
-      document_id: stale.id,
-      revision_id: advanced!.current_version_id,
-      body_markdown: advanced!.body_markdown,
-    });
-    expect((await catalog.search("stalev1needle", {
-      document_kind: "knowledge",
-    })).documents.map(({ document_id }) => document_id)).not.toContain(stale.id);
-    expect((await catalog.search("freshv2needle", {
-      document_kind: "knowledge",
-    })).documents.map(({ document_id }) => document_id)).toContain(stale.id);
-
+  test("chunks near-limit hypermedia search safely", async () => {
     const token = (index: number): string => `t${index.toString(36).padStart(7, "0")}`;
     const tokenCount = 400_000;
     const largeBody = Array.from({ length: tokenCount }, (_, index) => token(index)).join(" ");
@@ -588,22 +493,20 @@ describeDatabase("pathless private documents", () => {
     });
     createdDocumentIds.add(asset.document.document_id);
     const body = `[Race asset](context-use://document/${asset.document.document_id})`;
-    const legacyPages = new PageRepository(pool, bodies);
-    const page = await legacyPages.create({
-      path: `registration-race-${randomUUID().slice(0, 8)}`,
+    const page = await knowledge.create({
       title: "Registration race",
       summary: "Pins the active-asset lifecycle lock order.",
       body_markdown: body,
       commit_message: "Create registration race fixture",
     }, actor);
-    createdDocumentIds.add(page.id);
+    createdDocumentIds.add(page.document_id);
     await pool.query(
       "DELETE FROM document_links WHERE source_revision_id=$1",
-      [page.current_version_id],
+      [page.current_revision_id],
     );
     await pool.query(
       "DELETE FROM knowledge_asset_links WHERE source_version_id=$1",
-      [page.current_version_id],
+      [page.current_revision_id],
     );
 
     const registering = new Client({ connectionString: databaseUrl });
@@ -612,7 +515,7 @@ describeDatabase("pathless private documents", () => {
       await registering.query("BEGIN");
       await registering.query(
         "SELECT register_generic_knowledge_revision($1,$2,$3::uuid[])",
-        [page.current_version_id, body, [asset.document.document_id]],
+        [page.current_revision_id, body, [asset.document.document_id]],
       );
       let archiveSettled = false;
       const archive = assets.archive({ asset_id: asset.document.document_id })
@@ -624,7 +527,7 @@ describeDatabase("pathless private documents", () => {
       expect((await pool.query(
         `SELECT 1 FROM knowledge_asset_links
          WHERE source_version_id=$1 AND target_asset_id=$2`,
-        [page.current_version_id, asset.document.document_id],
+        [page.current_revision_id, asset.document.document_id],
       )).rowCount).toBe(1);
     } finally {
       await registering.query("ROLLBACK").catch(() => undefined);
@@ -670,49 +573,4 @@ describeDatabase("pathless private documents", () => {
       .toContain(second.documents[0]!.document_id);
   });
 
-  test("legacy filesystem writers wait behind the corpus transition barrier", async () => {
-    const admin = new Client({ connectionString: databaseUrl });
-    await admin.connect();
-    const directories = new DirectoryRepository(pool);
-    const legacyPages = new PageRepository(pool, bodies);
-    const suffix = randomUUID().slice(0, 8);
-    try {
-      await admin.query("BEGIN");
-      await admin.query(
-        "SELECT pg_advisory_xact_lock(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
-      );
-      let directorySettled = false;
-      const directoryPromise = directories.create({
-        path: `barrier-${suffix}`,
-        title: "Barrier directory",
-        summary: "A directory created after the transition barrier is released.",
-      }).finally(() => { directorySettled = true; });
-      await Bun.sleep(75);
-      expect(directorySettled).toBe(false);
-      await admin.query("COMMIT");
-      const directory = await directoryPromise;
-      createdDirectoryIds.add(directory.id);
-
-      await admin.query("BEGIN");
-      await admin.query(
-        "SELECT pg_advisory_xact_lock(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
-      );
-      let pageSettled = false;
-      const pagePromise = legacyPages.create({
-        path: `barrier-${suffix}/page`,
-        title: "Barrier page",
-        summary: "A page created after the transition barrier is released.",
-        body_markdown: "barrier body",
-        commit_message: "Create barrier page",
-      }, actor).finally(() => { pageSettled = true; });
-      await Bun.sleep(75);
-      expect(pageSettled).toBe(false);
-      await admin.query("COMMIT");
-      const page = await pagePromise;
-      createdDocumentIds.add(page.id);
-    } finally {
-      await admin.query("ROLLBACK").catch(() => undefined);
-      await admin.end();
-    }
-  });
 });

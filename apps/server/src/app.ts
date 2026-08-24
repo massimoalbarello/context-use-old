@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import {
+  AutomationRegistryRepository,
   DocumentAssetRepository,
   KnowledgeDocumentRepository,
   KnowledgeExportRepository,
@@ -72,6 +73,7 @@ const pathlessPublications = new PathlessPublicationRepository(dashboardPool);
 const pathlessPublicEntrypoint = new PathlessPublicEntrypointRepository(dashboardPool);
 const knowledgeExports = new KnowledgeExportRepository(dashboardPool, markdownObjects);
 const dashboardDocumentCatalog = new PrivateDocumentCatalogRepository(dashboardPool);
+const dashboardAutomations = new AutomationRegistryRepository(dashboardPool);
 
 async function dashboardAssetPublication(asset: {
   document_id: string;
@@ -90,7 +92,7 @@ async function dashboardAssetPublication(asset: {
     content_hash: asset.content_hash,
     created_at: asset.created_at,
     public_id: status.public_id,
-    pathless_published: status.active,
+    published: status.active,
   };
 }
 
@@ -169,10 +171,10 @@ async function dashboardKnowledgeDocumentResponse(documentId: string) {
     privateDocumentResolvers(),
   );
   return dashboardKnowledgeDocument(document, renderedHtml, {
-    pathless_published_revision_id: pathlessStatus.active
+    published_revision_id: pathlessStatus.active
       ? pathlessStatus.published_revision_id
       : null,
-    pathless_published_revision_number: pathlessStatus.active
+    published_revision_number: pathlessStatus.active
       ? pathlessStatus.published_revision_number
       : null,
     public_url: pathlessStatus.active && pathlessStatus.public_id
@@ -601,6 +603,20 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
       : await dashboardDocumentCatalog.list(parsed.options);
     return json(dashboardDocumentCatalogPage(page));
   })
+  .get("/api/dashboard/automations", async ({ request }) => {
+    await ownerRequest(request);
+    const registrations = await dashboardAutomations.listActive();
+    return json({
+      automations: await Promise.all(registrations.map(async (registration) => {
+        const instructions = await dashboardDocumentCatalog.get(registration.instructions_document_id);
+        return {
+          id: registration.id,
+          name: registration.name,
+          instructions: instructions ? dashboardDocumentSummary(instructions) : null,
+        };
+      })),
+    });
+  })
   .post("/api/dashboard/documents", async ({ request }) => {
     const principal = await ownerRequest(request, true);
     const input = createKnowledgeDocumentSchema.parse(await bodyJson(request));
@@ -844,7 +860,7 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
       public_url: pathlessStatus.active && pathlessStatus.public_id
         ? `${config.ASSET_ORIGIN}/a/${pathlessStatus.public_id}`
         : null,
-      pathless_published: pathlessStatus.active,
+      published: pathlessStatus.active,
     });
   })
   .get("/api/dashboard/assets/:id/content", async ({ request, params }) => {
@@ -873,7 +889,7 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
       sessionId: principal.sessionId,
     }, intentId);
     if (intent.action === "publish") {
-      await storage.materializePublicationArtifact("pathless_intent", intent.id);
+      await storage.materializePublicationArtifact(intent.id);
     }
     const authenticationOptions = await issueConfirmationOptions("publication", intent.id);
     return json({ intent, authentication_options: authenticationOptions }, 201);

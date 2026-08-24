@@ -1,10 +1,6 @@
 import { createHash } from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
-import { link, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { basename, resolve } from "node:path";
-import { Readable, Transform } from "node:stream";
-import { pipeline } from "node:stream/promises";
-import type { ReadableStream as NodeReadableStream } from "node:stream/web";
+import { readFile } from "node:fs/promises";
+import { basename } from "node:path";
 import { isFinalizedZipFooter, zipFooterRange } from "./zip-footer.ts";
 import {
   AbortMultipartUploadCommand,
@@ -52,7 +48,7 @@ export interface ObjectStorageBackend extends ObjectStorage {
 export type S3StorageConfig = {
   region: string;
   bucket: string;
-  kmsKeyId: string;
+  kmsKeyId: string | null;
 };
 
 type ProcessCredentials = {
@@ -105,12 +101,6 @@ export class ObjectAlreadyExistsError extends Error {
     super(message);
     this.name = "ObjectAlreadyExistsError";
   }
-}
-
-function nodeStream(body: ReadableStream<Uint8Array> | null): Readable {
-  return body
-    ? Readable.fromWeb(body as unknown as NodeReadableStream<Uint8Array>)
-    : Readable.from([]);
 }
 
 const S3_MULTIPART_PART_SIZE = 8 * 1024 * 1024;
@@ -213,6 +203,8 @@ export class S3Storage implements ObjectStorageBackend {
   constructor(
     private readonly client = new S3Client({
       region: process.env.AWS_REGION ?? "eu-west-2",
+      ...(process.env.S3_ENDPOINT ? { endpoint: process.env.S3_ENDPOINT } : {}),
+      forcePathStyle: process.env.S3_FORCE_PATH_STYLE === "true",
       ...(process.env.AWS_CREDENTIALS_FILE
         ? { credentials: credentialsFromFile(process.env.AWS_CREDENTIALS_FILE) }
         : {}),
@@ -220,9 +212,18 @@ export class S3Storage implements ObjectStorageBackend {
     private readonly options: S3StorageConfig = {
       region: process.env.AWS_REGION ?? "eu-west-2",
       bucket: process.env.ASSET_BUCKET ?? "",
-      kmsKeyId: process.env.KMS_KEY_ID ?? "",
+      kmsKeyId: process.env.KMS_KEY_ID || null,
     },
   ) {}
+
+  private encryption(): {
+    ServerSideEncryption: "aws:kms";
+    SSEKMSKeyId: string;
+  } | Record<string, never> {
+    return this.options.kmsKeyId
+      ? { ServerSideEncryption: "aws:kms", SSEKMSKeyId: this.options.kmsKeyId }
+      : {};
+  }
 
   async write(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void> {
     return this.writeVerified(asset, body, false);
@@ -251,8 +252,7 @@ export class S3Storage implements ObjectStorageBackend {
           ChecksumSHA256: checksum,
           ...(createOnly ? { IfNoneMatch: "*" } : {}),
           Metadata: { sha256: asset.contentHash },
-          ServerSideEncryption: "aws:kms",
-          SSEKMSKeyId: this.options.kmsKeyId,
+          ...this.encryption(),
         }));
         return;
       }
@@ -263,8 +263,7 @@ export class S3Storage implements ObjectStorageBackend {
         ContentType: asset.contentType,
         ChecksumAlgorithm: "SHA256",
         Metadata: { sha256: asset.contentHash },
-        ServerSideEncryption: "aws:kms",
-        SSEKMSKeyId: this.options.kmsKeyId,
+        ...this.encryption(),
       }));
       if (!created.UploadId) throw new Error("S3 did not create an asset multipart upload");
       const uploadId = created.UploadId;
@@ -337,8 +336,7 @@ export class S3Storage implements ObjectStorageBackend {
       ContentType: "application/zip",
       ChecksumAlgorithm: "SHA256",
       Metadata: { generated: "knowledge-export" },
-      ServerSideEncryption: "aws:kms",
-      SSEKMSKeyId: this.options.kmsKeyId,
+      ...this.encryption(),
     }));
     if (!created.UploadId) throw new Error("S3 did not create an export multipart upload");
     const uploadId = created.UploadId;
@@ -424,8 +422,7 @@ export class S3Storage implements ObjectStorageBackend {
       ContentType: "application/json",
       ContentLength: Buffer.byteLength(manifest),
       ChecksumSHA256: manifestHash,
-      ServerSideEncryption: "aws:kms",
-      SSEKMSKeyId: this.options.kmsKeyId,
+      ...this.encryption(),
     }));
     return metadata;
   }
@@ -499,153 +496,5 @@ export class S3Storage implements ObjectStorageBackend {
     } catch {
       return false;
     }
-  }
-}
-
-export class FilesystemStorage implements ObjectStorageBackend {
-  private readonly root: string;
-
-  constructor(root = process.env.STORAGE_PATH ?? "./data/assets") {
-    this.root = resolve(root);
-  }
-
-  private path(objectKey: string): string {
-    const path = resolve(this.root, objectKey);
-    if (!path.startsWith(`${this.root}/`)) throw new Error("Invalid object key");
-    return path;
-  }
-
-  async write(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void> {
-    return this.writeVerified(asset, body, false);
-  }
-
-  async writeOnce(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void> {
-    return this.writeVerified(asset, body, true);
-  }
-
-  private async writeVerified(
-    asset: StoredAsset,
-    body: ReadableStream<Uint8Array> | null,
-    createOnly: boolean,
-  ): Promise<void> {
-    const path = this.path(asset.objectKey);
-    const temporaryPath = `${path}.upload-${crypto.randomUUID()}`;
-    await mkdir(resolve(path, ".."), { recursive: true });
-    try {
-      const hash = createHash("sha256");
-      let size = 0;
-      const verifier = new Transform({
-        transform(chunk: Buffer, _encoding, callback) {
-          size += chunk.byteLength;
-          hash.update(chunk);
-          callback(null, chunk);
-        },
-      });
-      await pipeline(nodeStream(body), verifier, createWriteStream(temporaryPath, { flags: "wx", mode: 0o600 }));
-      if (size !== asset.sizeBytes || hash.digest("hex") !== asset.contentHash) {
-        throw new AssetIntegrityError();
-      }
-      if (createOnly) {
-        try {
-          await link(temporaryPath, path);
-        } catch (error) {
-          if (error instanceof Error && "code" in error && error.code === "EEXIST") {
-            throw new ObjectAlreadyExistsError();
-          }
-          throw error;
-        }
-        await unlink(temporaryPath);
-      } else {
-        await rename(temporaryPath, path);
-      }
-    } catch (error) {
-      await unlink(temporaryPath).catch(() => undefined);
-      throw error;
-    }
-  }
-
-  async writeGenerated(
-    objectKey: string,
-    body: ReadableStream<Uint8Array> | null,
-  ): Promise<GeneratedObjectMetadata> {
-    if (!body) throw new Error("Generated object body is missing");
-    const path = this.path(objectKey);
-    const manifestPath = this.path(generatedManifestKey(objectKey));
-    const temporaryPath = `${path}.upload-${crypto.randomUUID()}`;
-    const temporaryManifestPath = `${manifestPath}.upload-${crypto.randomUUID()}`;
-    await mkdir(resolve(path, ".."), { recursive: true });
-    let sizeBytes = 0;
-    const hash = createHash("sha256");
-    try {
-      const verifier = new Transform({
-        transform(chunk: Buffer, _encoding, callback) {
-          sizeBytes += chunk.byteLength;
-          if (sizeBytes > MAX_GENERATED_OBJECT_BYTES) {
-            callback(new Error("Generated object is too large"));
-            return;
-          }
-          hash.update(chunk);
-          callback(null, chunk);
-        },
-      });
-      await pipeline(nodeStream(body), verifier, createWriteStream(temporaryPath, { flags: "wx" }));
-      if (!sizeBytes) throw new Error("Generated object is empty");
-      const metadata = { sizeBytes, contentHash: hash.digest("hex") };
-      const footerRange = zipFooterRange(sizeBytes);
-      const footer = footerRange
-        ? await Bun.file(temporaryPath).slice(footerRange.start, footerRange.end + 1).bytes()
-        : new Uint8Array();
-      if (!isFinalizedZipFooter(footer)) {
-        throw new Error("Generated ZIP central directory was not finalized");
-      }
-      await writeFile(temporaryManifestPath, generatedManifest(metadata), { flag: "wx", mode: 0o600 });
-      await rename(temporaryPath, path);
-      await rename(temporaryManifestPath, manifestPath);
-      return metadata;
-    } catch (error) {
-      await Promise.all([
-        unlink(temporaryPath).catch(() => undefined),
-        unlink(temporaryManifestPath).catch(() => undefined),
-      ]);
-      throw error;
-    }
-  }
-
-  async inspectGenerated(objectKey: string): Promise<GeneratedObjectMetadata | null> {
-    const file = Bun.file(this.path(objectKey));
-    const manifest = Bun.file(this.path(generatedManifestKey(objectKey)));
-    if (!await file.exists() || !await manifest.exists()) return null;
-    const metadata = parseGeneratedManifest(await manifest.text());
-    return metadata && file.size === metadata.sizeBytes ? metadata : null;
-  }
-
-  async deleteGenerated(objectKey: string): Promise<void> {
-    await Promise.all([
-      this.delete(objectKey),
-      this.delete(generatedManifestKey(objectKey)),
-    ]);
-  }
-
-  async delete(objectKey: string): Promise<void> {
-    const file = Bun.file(this.path(objectKey));
-    if (await file.exists()) await file.delete();
-  }
-
-  async exists(objectKey: string): Promise<boolean> {
-    return Bun.file(this.path(objectKey)).exists();
-  }
-
-  async read(objectKey: string, range?: ByteRange): Promise<BodyInit> {
-    const file = Bun.file(this.path(objectKey));
-    if (!(await file.exists())) throw new AssetNotFoundError();
-    return range ? file.slice(range.start, range.end + 1) : file;
-  }
-
-  async verify(objectKey: string, sizeBytes: number, contentHash: string): Promise<boolean> {
-    const file = Bun.file(this.path(objectKey));
-    if (!(await file.exists()) || file.size !== sizeBytes) return false;
-    const hash = createHash("sha256");
-    for await (const chunk of createReadStream(file.name!)) hash.update(chunk);
-    return hash.digest("hex") === contentHash;
   }
 }

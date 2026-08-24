@@ -74,6 +74,10 @@ real ingestion path rather than an eval-only prompt.
 Each run resets local knowledge and assets before it starts, so do not keep development data in
 this disposable instance. The owner, passkeys, sessions, and MCP OAuth grants are preserved.
 
+The local stack stores document and asset objects in its MinIO service through the same S3 client
+used in production. `bun run local reset` removes that object-store volume together with the
+database knowledge state; there is no filesystem storage backend or asset directory fallback.
+
 Add `--provider claude` after `claude auth login` to use Claude Code instead. Reports, complete
 agent logs, and per-run snapshots are written beneath the gitignored `eval/results/` directory.
 `bun run eval corpus:verify` confirms a vendored corpus is unchanged; LongMemEval downloads its

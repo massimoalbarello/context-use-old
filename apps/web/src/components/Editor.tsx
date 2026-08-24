@@ -20,16 +20,13 @@ const diffFieldLabels = {
 } as const;
 
 export function VersionDiffContents({ diff }: { diff: PageVersionDiff }) {
-  const metadataChanges = diff.metadata_changes.filter(
-    (change): change is typeof change & { field: "title" | "summary" } => change.field !== "path",
-  );
-  const hasChanges = metadataChanges.length > 0 || diff.markdown_changes.length > 0;
+  const hasChanges = diff.metadata_changes.length > 0 || diff.markdown_changes.length > 0;
   if (!hasChanges) return <p className="version-diff-empty">No page-content changes in this version.</p>;
 
   return <div className="version-diff-contents">
-    {metadataChanges.length > 0 && <section className="version-diff-section">
+    {diff.metadata_changes.length > 0 && <section className="version-diff-section">
       <h4>Page details</h4>
-      {metadataChanges.map((change) => <div className="version-diff-field" key={change.field}>
+      {diff.metadata_changes.map((change) => <div className="version-diff-field" key={change.field}>
         <strong>{diffFieldLabels[change.field]}</strong>
         {change.before !== null && <pre className="diff-value removed"><span aria-hidden="true">−</span>{change.before}</pre>}
         <pre className="diff-value added"><span aria-hidden="true">+</span>{change.after}</pre>
@@ -109,7 +106,7 @@ export function Editor({
   const [historyHasMore, setHistoryHasMore] = useState(false);
   const [draft, setDraft] = useState({ title: "", summary: "", body_markdown: "" });
   const [commit, setCommit] = useState("");
-  const [tab, setTab] = useState<"preview" | "history">("preview");
+  const [tab, setTab] = useState<"preview" | "links" | "history">("preview");
   const [isEditing, setIsEditing] = useState(false);
   const [publishingVersion, setPublishingVersion] = useState<number | null>(null);
   const [message, setMessage] = useState("");
@@ -270,10 +267,10 @@ export function Editor({
         {page.archived_at && <button className="danger" onClick={() => { setDeletionError(""); setDeletionOpen(true); }}>Delete permanently</button>}
         {!page.archived_at && !page.published_version_id && <button className="primary" onClick={() => setPublishingVersion(page.version_number)}>Publish</button>}
         {!page.archived_at && page.published_version_id && <button className="danger" disabled={unpublishWorking} onClick={() => void unpublish()}>{unpublishWorking ? "Waiting for passkey…" : "Unpublish"}</button>}
-        {!page.archived_at && page.published_version_id && (!page.pathless_published || hasUnpublishedChanges) && <button className="primary" onClick={() => setPublishingVersion(page.version_number)}>{page.pathless_published ? "Publish latest" : "Publish at permanent URL"}</button>}
+        {!page.archived_at && page.published_version_id && hasUnpublishedChanges && <button className="primary" onClick={() => setPublishingVersion(page.version_number)}>Publish latest</button>}
       </div>
     </header>
-    {page.public_url && <div className="publication-notice" role="status"><div><strong>{page.pathless_published ? "Permanent public URL" : "Current public URL"}</strong><a href={page.public_url} target="_blank" rel="noreferrer">{page.public_url}</a></div></div>}
+    {page.public_url && <div className="publication-notice" role="status"><div><strong>Permanent public URL</strong><a href={page.public_url} target="_blank" rel="noreferrer">{page.public_url}</a></div></div>}
     {hasUnpublishedChanges && <div className="publication-notice pending publication-alert" role="status">
       <div>
         <strong>Published page is not up to date</strong>
@@ -281,7 +278,7 @@ export function Editor({
       </div>
     </div>}
     {!isEditing && <nav className="tabs">
-      <div>{(["preview", "history"] as const).map((item) => <button className={tab === item ? "active" : ""} key={item} onClick={() => setTab(item)}>{item}</button>)}</div>
+      <div>{(["preview", "links", "history"] as const).map((item) => <button className={tab === item ? "active" : ""} key={item} onClick={() => setTab(item)}>{item}</button>)}</div>
       {tab === "preview" && <button className="edit-page-button" onClick={edit} aria-label="Edit page">
         <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M11.7 2.3a1 1 0 0 1 1.4 0l.6.6a1 1 0 0 1 0 1.4l-8 8-3.2.7.7-3.2 8-8Z" /><path d="m9.8 4.2 2 2" /></svg>
         Edit
@@ -302,8 +299,8 @@ export function Editor({
     </section>}
     {!isEditing && tab === "preview" && <>
       <article className="rendered" dangerouslySetInnerHTML={{ __html: page.rendered_html ?? "" }} />
-      <DocumentNeighborhood documentId={page.id} onOpen={onOpenDocument} />
     </>}
+    {!isEditing && tab === "links" && <DocumentNeighborhood documentId={page.id} onOpen={onOpenDocument} />}
     {!isEditing && tab === "history" && <section className="history-list">
       <header><h2>Version history</h2><p>The latest editable version and the published version are independent. Publishing points the public URL at one exact snapshot.</p></header>
       {historyHasMore && <p className="version-diff-status">Showing the latest 100 retained versions.</p>}

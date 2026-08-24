@@ -14,7 +14,20 @@ import {
   type MarkdownObjectStore,
 } from "./documents.ts";
 import { genericDocumentTargets } from "./document-link-contract.ts";
-import { PublicationStateError, VersionConflictError } from "./pages.ts";
+
+export class VersionConflictError extends Error {
+  constructor(readonly currentVersion: number) {
+    super(`Document changed; current revision is ${currentVersion}`);
+    this.name = "VersionConflictError";
+  }
+}
+
+export class PublicationStateError extends Error {
+  constructor() {
+    super("Published documents must be explicitly unpublished before they can be archived");
+    this.name = "PublicationStateError";
+  }
+}
 
 export type KnowledgeRevisionContractProvenance =
   | "authored"
@@ -23,13 +36,11 @@ export type KnowledgeRevisionContractProvenance =
 export type KnowledgeDocumentMetadata = {
   document_id: string;
   current_revision_id: string;
-  published_revision_id: string | null;
   public_id: string | null;
   revision_number: number;
   title: string;
   summary: string;
   archived_at: Date | string | null;
-  legacy_published: boolean;
   current_link_contract: "generic_document_v1" | null;
   pathless_search_ready: boolean;
   created_at: Date | string;
@@ -164,13 +175,18 @@ function boundedLimit(value: number | undefined, fallback: number, maximum: numb
   return Math.min(Math.max(Math.floor(value ?? fallback), 1), maximum);
 }
 
+function activePublicationBlocked(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { code?: unknown; message?: unknown };
+  return candidate.code === "23514"
+    && candidate.message === "an actively published v2 page cannot be archived or deleted";
+}
+
 const CURRENT_DOCUMENT_SELECT = `
   SELECT page.id AS document_id,page.current_version_id AS current_revision_id,
-    page.published_version_id AS published_revision_id,resource.public_id,
+    resource.public_id,
     version.version_number AS revision_number,version.title,version.summary,
     page.archived_at,
-    (page.published_version_id IS NOT NULL AND page.public_path IS NOT NULL)
-      AS legacy_published,
     contract.link_contract::text AS current_link_contract,
     coalesce(search.revision_id=page.current_version_id,false) AS pathless_search_ready,
     page.created_at,page.updated_at,
@@ -204,12 +220,6 @@ async function transaction<T>(pool: Pool, work: (client: PoolClient) => Promise<
   } finally {
     client.release();
   }
-}
-
-// Compatibility labels are stable but deliberately unrelated to the private
-// document UUID. They are never returned or ranked by the pathless API.
-function compatibilityPath(): string {
-  return `pathless-page-${randomUUID()}`;
 }
 
 export class KnowledgeDocumentRepository {
@@ -265,7 +275,6 @@ export class KnowledgeDocumentRepository {
   async create(input: CreateKnowledgeDocumentInput, actor: Actor): Promise<KnowledgeDocument> {
     const documentId = randomUUID();
     const revisionId = randomUUID();
-    const path = compatibilityPath();
     const targets = genericDocumentTargets(input.body_markdown);
     const stored = await this.storedBody(revisionId, input.body_markdown);
     return transaction(this.pool, async (client) => {
@@ -285,15 +294,15 @@ export class KnowledgeDocumentRepository {
           stored.body_size_bytes, stored.body_content_hash],
       );
       await client.query(
-        `INSERT INTO knowledge_pages(id,current_path,current_version_id,search_vector)
-         VALUES ($1,$2,$3,''::tsvector)`,
-        [documentId, path, revisionId],
+        `INSERT INTO knowledge_pages(id,current_version_id,search_vector)
+         VALUES ($1,$2,''::tsvector)`,
+        [documentId, revisionId],
       );
       await client.query(
         `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,path,title,summary,commit_message,actor_kind,actor_subject
-         ) VALUES ($1,$2,1,$3,$4,$5,$6,$7,$8)`,
-        [revisionId, documentId, path, input.title, input.summary,
+           id,page_id,version_number,title,summary,commit_message,actor_kind,actor_subject
+         ) VALUES ($1,$2,1,$3,$4,$5,$6,$7)`,
+        [revisionId, documentId, input.title, input.summary,
           input.commit_message, actor.kind, actor.subject],
       );
       await client.query(
@@ -323,10 +332,9 @@ export class KnowledgeDocumentRepository {
       );
       await client.query("SELECT lock_operational_document($1)", [documentId]);
       const current = await client.query<{
-        current_path: string;
         version_number: number;
       }>(
-        `SELECT page.current_path,version.version_number
+        `SELECT version.version_number
          FROM knowledge_pages page
          JOIN knowledge_page_versions version
            ON version.id=page.current_version_id AND version.page_id=page.id
@@ -349,10 +357,10 @@ export class KnowledgeDocumentRepository {
       );
       await client.query(
         `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,path,title,summary,commit_message,actor_kind,actor_subject
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-        [revisionId, documentId, revisionNumber, row.current_path,
-          input.title, input.summary, input.commit_message, actor.kind, actor.subject],
+           id,page_id,version_number,title,summary,commit_message,actor_kind,actor_subject
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [revisionId, documentId, revisionNumber, input.title, input.summary,
+          input.commit_message, actor.kind, actor.subject],
       );
       await client.query(
         `UPDATE knowledge_pages
@@ -394,14 +402,11 @@ export class KnowledgeDocumentRepository {
       );
       await client.query("SELECT lock_operational_document($1)", [documentId]);
       const current = await client.query<{
-        current_path: string;
         version_number: number;
         title: string;
         summary: string;
-        published_version_id: string | null;
       }>(
-        `SELECT page.current_path,version.version_number,version.title,version.summary,
-           page.published_version_id
+        `SELECT version.version_number,version.title,version.summary
          FROM knowledge_pages page
          JOIN knowledge_page_versions version
            ON version.id=page.current_version_id AND version.page_id=page.id
@@ -414,7 +419,6 @@ export class KnowledgeDocumentRepository {
       if (row.version_number !== input.expected_revision_number) {
         throw new VersionConflictError(row.version_number);
       }
-      if (row.published_version_id) throw new PublicationStateError();
       const revisionNumber = row.version_number + 1;
       await client.query(
         `INSERT INTO hypermedia_document_revisions(
@@ -425,10 +429,10 @@ export class KnowledgeDocumentRepository {
       );
       await client.query(
         `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,path,title,summary,commit_message,actor_kind,actor_subject
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-        [revisionId, documentId, revisionNumber, row.current_path,
-          row.title, row.summary, input.commit_message, actor.kind, actor.subject],
+           id,page_id,version_number,title,summary,commit_message,actor_kind,actor_subject
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [revisionId, documentId, revisionNumber, row.title, row.summary,
+          input.commit_message, actor.kind, actor.subject],
       );
       await client.query(
         `UPDATE knowledge_pages
@@ -441,10 +445,15 @@ export class KnowledgeDocumentRepository {
         "SELECT register_generic_knowledge_revision($1,$2,$3::uuid[])",
         [revisionId, source.body_markdown, targets],
       );
-      await client.query(
-        "UPDATE knowledge_pages SET archived_at=now(),updated_at=now() WHERE id=$1",
-        [documentId],
-      );
+      try {
+        await client.query(
+          "UPDATE knowledge_pages SET archived_at=now(),updated_at=now() WHERE id=$1",
+          [documentId],
+        );
+      } catch (error) {
+        if (activePublicationBlocked(error)) throw new PublicationStateError();
+        throw error;
+      }
       await client.query(
         "UPDATE hypermedia_documents SET updated_at=now() WHERE id=$1",
         [documentId],

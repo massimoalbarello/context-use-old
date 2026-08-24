@@ -14,7 +14,8 @@ import {
   UploadPartCommand,
 } from "@aws-sdk/client-s3";
 import { afterEach, describe, expect, test } from "bun:test";
-import { AssetIntegrityError, credentialsFromFile, FilesystemStorage, mayRenderInline, ObjectAlreadyExistsError, S3Storage, type StoredAsset } from "./storage.ts";
+import { AssetIntegrityError, credentialsFromFile, mayRenderInline, ObjectAlreadyExistsError, S3Storage, type StoredAsset } from "./storage.ts";
+import { MemoryObjectStorage } from "./test-object-storage.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -23,8 +24,6 @@ afterEach(async () => {
 });
 
 async function fixture(bytes: Uint8Array) {
-  const root = await mkdtemp(join(tmpdir(), "context-use-assets-"));
-  temporaryDirectories.push(root);
   const asset: StoredAsset = {
     id: "11111111-1111-4111-8111-111111111111",
     objectKey: "objects/11111111-1111-4111-8111-111111111111",
@@ -33,7 +32,11 @@ async function fixture(bytes: Uint8Array) {
     sizeBytes: bytes.byteLength,
     contentHash: createHash("sha256").update(bytes).digest("hex"),
   };
-  return { root, asset, storage: new FilesystemStorage(root) };
+  return { asset, storage: new MemoryObjectStorage() };
+}
+
+async function storedBytes(storage: MemoryObjectStorage, objectKey: string): Promise<Uint8Array> {
+  return new Uint8Array(await new Response(await storage.read(objectKey)).arrayBuffer());
 }
 
 function generatedZipBytes(sizeBytes: number): Buffer<ArrayBuffer> {
@@ -54,6 +57,7 @@ class FakeS3Client {
   aborted = false;
   conditionalPut = false;
   conditionalComplete = false;
+  encryption: { algorithm?: string; keyId?: string } | null = null;
 
   async send(command: unknown): Promise<Record<string, unknown>> {
     if (command instanceof PutObjectCommand) {
@@ -65,6 +69,12 @@ class FakeS3Client {
         return {};
       }
       this.conditionalPut = command.input.IfNoneMatch === "*";
+      this.encryption = {
+        ...(command.input.ServerSideEncryption
+          ? { algorithm: command.input.ServerSideEncryption }
+          : {}),
+        ...(command.input.SSEKMSKeyId ? { keyId: command.input.SSEKMSKeyId } : {}),
+      };
       if (this.conditionalPut && this.object) {
         throw Object.assign(new Error("already exists"), { name: "PreconditionFailed" });
       }
@@ -74,6 +84,12 @@ class FakeS3Client {
     }
     if (command instanceof CreateMultipartUploadCommand) {
       this.metadata = command.input.Metadata;
+      this.encryption = {
+        ...(command.input.ServerSideEncryption
+          ? { algorithm: command.input.ServerSideEncryption }
+          : {}),
+        ...(command.input.SSEKMSKeyId ? { keyId: command.input.SSEKMSKeyId } : {}),
+      };
       return { UploadId: "test-upload" };
     }
     if (command instanceof UploadPartCommand) {
@@ -161,36 +177,36 @@ describe("application-routed asset storage", () => {
 
   test("writes verified bytes without buffering them in the route", async () => {
     const bytes = new TextEncoder().encode("a private PDF");
-    const { root, asset, storage } = await fixture(bytes);
+    const { asset, storage } = await fixture(bytes);
 
     await storage.write(asset, new Blob([bytes]).stream());
 
-    expect(await Bun.file(join(root, asset.objectKey)).bytes()).toEqual(bytes);
+    expect(await storedBytes(storage, asset.objectKey)).toEqual(bytes);
     expect(await storage.verify(asset.objectKey, asset.sizeBytes, asset.contentHash)).toBe(true);
   });
 
-  test("rejects checksum mismatches and never promotes the temporary file", async () => {
+  test("rejects checksum mismatches without storing an object", async () => {
     const expected = new TextEncoder().encode("expected bytes");
     const supplied = new TextEncoder().encode("tampered bytes");
-    const { root, asset, storage } = await fixture(expected);
+    const { asset, storage } = await fixture(expected);
 
     await expect(storage.write(asset, new Blob([supplied]).stream())).rejects.toBeInstanceOf(AssetIntegrityError);
-    expect(await Bun.file(join(root, asset.objectKey)).exists()).toBe(false);
+    expect(await storage.exists(asset.objectKey)).toBe(false);
   });
 
   test("rejects truncated uploads", async () => {
     const expected = new TextEncoder().encode("complete bytes");
     const supplied = expected.slice(0, 4);
-    const { root, asset, storage } = await fixture(expected);
+    const { asset, storage } = await fixture(expected);
 
     await expect(storage.write(asset, new Blob([supplied]).stream())).rejects.toBeInstanceOf(AssetIntegrityError);
-    expect(await Bun.file(join(root, asset.objectKey)).exists()).toBe(false);
+    expect(await storage.exists(asset.objectKey)).toBe(false);
   });
 
-  test("conditionally creates a filesystem object without replacing existing bytes", async () => {
+  test("conditionally creates an object without replacing existing bytes", async () => {
     const first = new TextEncoder().encode("first immutable value");
     const second = new TextEncoder().encode("second immutable value");
-    const { root, asset, storage } = await fixture(first);
+    const { asset, storage } = await fixture(first);
 
     await storage.writeOnce(asset, new Blob([first]).stream());
     await expect(storage.writeOnce({
@@ -199,7 +215,7 @@ describe("application-routed asset storage", () => {
       contentHash: createHash("sha256").update(second).digest("hex"),
     }, new Blob([second]).stream())).rejects.toBeInstanceOf(ObjectAlreadyExistsError);
 
-    expect(await Bun.file(join(root, asset.objectKey)).bytes()).toEqual(first);
+    expect(await storedBytes(storage, asset.objectKey)).toEqual(first);
   });
 
   test("uses an S3 conditional request for single-part immutable objects", async () => {
@@ -215,9 +231,34 @@ describe("application-routed asset storage", () => {
     expect(client.object).toEqual(bytes);
   });
 
-  test("commits generated filesystem objects only with a matching manifest", async () => {
+  test("keeps AWS KMS encryption in production while allowing local MinIO", async () => {
+    const bytes = new TextEncoder().encode("encryption boundary");
+    const { asset } = await fixture(bytes);
+    const awsClient = new FakeS3Client();
+    const awsStorage = new S3Storage(awsClient as unknown as S3Client, {
+      region: "eu-west-2",
+      bucket: "assets",
+      kmsKeyId: "arn:aws:kms:eu-west-2:123456789012:key/test",
+    });
+    await awsStorage.write(asset, new Blob([bytes]).stream());
+    expect(awsClient.encryption).toEqual({
+      algorithm: "aws:kms",
+      keyId: "arn:aws:kms:eu-west-2:123456789012:key/test",
+    });
+
+    const minioClient = new FakeS3Client();
+    const minioStorage = new S3Storage(minioClient as unknown as S3Client, {
+      region: "us-east-1",
+      bucket: "assets",
+      kmsKeyId: null,
+    });
+    await minioStorage.write(asset, new Blob([bytes]).stream());
+    expect(minioClient.encryption).toEqual({});
+  });
+
+  test("commits generated objects only with matching metadata", async () => {
     const bytes = generatedZipBytes(128);
-    const { root, storage } = await fixture(bytes);
+    const { storage } = await fixture(bytes);
     const key = "exports/11111111-1111-4111-8111-111111111111.zip";
 
     const written = await storage.writeGenerated(key, new Blob([bytes]).stream());
@@ -227,20 +268,20 @@ describe("application-routed asset storage", () => {
       contentHash: createHash("sha256").update(bytes).digest("hex"),
     });
     expect(await storage.inspectGenerated(key)).toEqual(written);
-    expect(await Bun.file(join(root, key)).bytes()).toEqual(bytes);
+    expect(await storedBytes(storage, key)).toEqual(bytes);
     await storage.deleteGenerated(key);
     expect(await storage.inspectGenerated(key)).toBeNull();
   });
 
   test("does not commit a generated object without a finalized ZIP directory", async () => {
     const bytes = Buffer.alloc(128, 17);
-    const { root, storage } = await fixture(bytes);
+    const { storage } = await fixture(bytes);
     const key = "exports/11111111-1111-4111-8111-111111111111.zip";
 
     await expect(storage.writeGenerated(key, new Blob([bytes]).stream())).rejects.toThrow("not finalized");
 
     expect(await storage.inspectGenerated(key)).toBeNull();
-    expect(await Bun.file(join(root, key)).exists()).toBe(false);
+    expect(await storage.exists(key)).toBe(false);
   });
 
   test("uploads large web request streams as bounded S3 multipart bytes", async () => {
