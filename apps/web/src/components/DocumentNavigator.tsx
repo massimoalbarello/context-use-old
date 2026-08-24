@@ -3,7 +3,7 @@ import type {
   DashboardDocumentKind,
   DashboardDocumentSummary,
 } from "@context-use/shared";
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { api } from "../api.ts";
 
 type DocumentFilter = "all" | DashboardDocumentKind | "archived";
@@ -85,15 +85,17 @@ export function DocumentNavigator({
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const listRef = useRef<HTMLDivElement>(null);
+  const infiniteLoaderRef = useRef<HTMLDivElement>(null);
   const queryKey = `${query.trim()}\u0000${filter}`;
   const queryKeyRef = useRef(queryKey);
   queryKeyRef.current = queryKey;
 
   useEffect(() => {
     const controller = new AbortController();
+    setLoading(true);
+    setError("");
     const timer = window.setTimeout(() => {
-      setLoading(true);
-      setError("");
       api<DashboardDocumentCatalogPage>(documentCatalogUrl(query, filter), {
         signal: controller.signal,
       }).then(setPage).catch((caught: unknown) => {
@@ -109,7 +111,7 @@ export function DocumentNavigator({
     };
   }, [filter, query, refreshToken]);
 
-  const loadMore = async () => {
+  const loadMore = useCallback(async () => {
     if (!page.next_cursor || loadingMore) return;
     const requestedQueryKey = queryKey;
     setLoadingMore(true);
@@ -131,7 +133,18 @@ export function DocumentNavigator({
     } finally {
       setLoadingMore(false);
     }
-  };
+  }, [filter, loadingMore, page, query, queryKey]);
+
+  useEffect(() => {
+    const root = listRef.current;
+    const target = infiniteLoaderRef.current;
+    if (!root || !target || !page.has_more || loading || loadingMore || error) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) void loadMore();
+    }, { root, rootMargin: "120px 0px" });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [error, loadMore, loading, loadingMore, page.has_more]);
 
   const moveFocus = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     let next: number | null = null;
@@ -159,7 +172,7 @@ export function DocumentNavigator({
       <strong>{query.trim() ? "Search results" : "Recently updated"}</strong>
       {!loading && <span>{page.documents.length}{page.has_more ? "+" : ""}</span>}
     </div>
-    <div className="document-list" aria-live="polite">
+    <div ref={listRef} className="document-list" aria-live="polite">
       {loading && <div className="document-list-state">Searching your knowledge…</div>}
       {!loading && error && !page.documents.length && <div className="document-list-state error">{error}</div>}
       {!loading && !error && !page.documents.length && <div className="document-list-state">
@@ -188,13 +201,12 @@ export function DocumentNavigator({
           </span>
         </span>
       </button>)}
+      {page.has_more && <div
+        ref={infiniteLoaderRef}
+        className="document-infinite-loader"
+        role="status"
+      >{loadingMore ? "Loading more…" : null}</div>}
     </div>
-    {page.has_more && <button
-      type="button"
-      className="document-load-more"
-      disabled={loadingMore}
-      onClick={() => void loadMore()}
-    >{loadingMore ? "Loading…" : "Load more"}</button>}
     {error && page.documents.length > 0 && <p className="document-inline-error error">{error}</p>}
   </section>;
 }

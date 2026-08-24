@@ -59,6 +59,17 @@ describe("knowledge export settings", () => {
     expect(html).not.toContain("Clear knowledge base");
   });
 
+  test("includes MCP clients without redundant knowledge badges", () => {
+    const html = renderToStaticMarkup(createElement(Settings, {
+      passkeys: [],
+      onPasskeysChanged: async () => undefined,
+    }));
+    expect(html).toContain("MCP clients");
+    expect(html).toContain("Private server URL");
+    expect(html).toContain("Connected clients");
+    expect(html).not.toContain("mcp-access-badge");
+  });
+
   test("shows explicit processing feedback without exposing a premature download", () => {
     const html = renderToStaticMarkup(KnowledgeExportPreparationStatus({
       job: processing,
