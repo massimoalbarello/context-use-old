@@ -1475,6 +1475,88 @@ button:disabled {
 
 .knowledge-history-page { padding-bottom: 48px; }
 
+.automations-page { padding-bottom: 48px; }
+
+.automation-list,
+.automations-empty {
+  width: min(920px, 100%);
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.automation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.automation-list > article {
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface-strong);
+  box-shadow: 0 5px 18px rgba(47, 41, 31, .035);
+}
+
+.automation-list h2 {
+  margin: 0 0 12px;
+  color: #302d29;
+  font-size: 19px;
+  letter-spacing: -.02em;
+}
+
+.automation-list article > button {
+  width: 100%;
+  min-width: 0;
+  padding: 13px 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  border: 0;
+  border-radius: 10px;
+  background: #f3f0e9;
+  color: var(--ink);
+  text-align: left;
+}
+
+.automation-list article > button:hover strong { color: var(--accent-hover); }
+
+.automation-list article > button span {
+  color: #8b867e;
+  font-size: 8px;
+  font-weight: 720;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+.automation-list article > button strong,
+.automation-list article > button small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.automation-list article > button strong { font-size: 12px; }
+
+.automation-list article > button small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.automation-list article > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.automations-empty {
+  padding: 24px 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .knowledge-history-page > header { padding-bottom: 20px; }
 
 .knowledge-history-intro,
