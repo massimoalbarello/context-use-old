@@ -160,6 +160,17 @@ describe("corpus source records", () => {
     expect(second.has_more).toBe(false);
   });
 
+  test("defaults fresh-session working sets to one record", async () => {
+    const reader = new CorpusRecordReader({ directory: buildCorpus() });
+    const first = await reader.read({});
+    expect(first.records).toHaveLength(1);
+    expect(first.has_more).toBe(true);
+
+    const second = await reader.read({ checkpoint: first.next_checkpoint });
+    expect(second.records).toHaveLength(1);
+    expect(second.has_more).toBe(true);
+  });
+
   test("restricts the dense window to the busy days", async () => {
     const reader = new CorpusRecordReader({ directory: buildCorpus(), window: "dense" });
     // The miniature corpus predates the real dense boundary, so every day survives.
@@ -168,7 +179,7 @@ describe("corpus source records", () => {
 
   test("serves authored Markdown verbatim and renders structured sources", async () => {
     const reader = new CorpusRecordReader({ directory: buildCorpus() });
-    const { records } = await reader.read({});
+    const { records } = await reader.read({ limit: 10 });
     const noteRecord = records.find((record) => record.markdown?.includes("First day note."))!;
     expect(noteRecord.action).toBe("added");
     expect(noteRecord.markdown).toContain("date: 2026-04-13");

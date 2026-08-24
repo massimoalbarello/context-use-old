@@ -10,6 +10,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createKnowledgeGuideReceipt } from "./mcp-guidance-receipt.ts";
 import { createMcpServer, type McpDocumentRepositories } from "./mcp-server.ts";
 import { createStatelessMcpTransport } from "./mcp-transport.ts";
+import type { SourceRecordReader } from "./nango-records.ts";
 
 async function mcpRequest(serverOrPromise: McpServer | Promise<McpServer>, body: Record<string, unknown>) {
   const server = await serverOrPromise;
@@ -31,7 +32,7 @@ async function mcpRequest(serverOrPromise: McpServer | Promise<McpServer>, body:
           name: string;
           description?: string;
           annotations?: { readOnlyHint?: boolean };
-          inputSchema?: { properties?: Record<string, { description?: string }> };
+          inputSchema?: { properties?: Record<string, { default?: unknown; description?: string }> };
           outputSchema?: { properties?: Record<string, { description?: string }> };
         }>;
         content?: Array<{ type: string; text: string }>;
@@ -55,6 +56,7 @@ function serverWith(
     knowledgeSettings?: KnowledgeSettingsRepository;
     documentLinks?: DocumentLinkRepository;
     documents?: McpDocumentRepositories;
+    sourceRecords?: SourceRecordReader;
   } = {},
 ) {
   const knowledgeSettings = options.knowledgeSettings ?? {
@@ -80,7 +82,7 @@ function serverWith(
   } as unknown as DocumentLinkRepository;
   return createMcpServer(
     options.context ?? DEFAULT_MCP_CONTEXT,
-    undefined,
+    options.sourceRecords,
     undefined,
     knowledgeSettings,
     documentLinks,
@@ -121,6 +123,42 @@ const rootGuidanceReceipt = createKnowledgeGuideReceipt({
 
 
 describe("MCP knowledge tools", () => {
+  test("defaults source reads to one harness-safe record", async () => {
+    const calls: unknown[] = [];
+    const sourceRecords: SourceRecordReader = {
+      async read(input) {
+        calls.push(input);
+        return {
+          records: [],
+          next_checkpoint: "cu-nango-v1.next",
+          has_more: false,
+        };
+      },
+    };
+    const listed = await mcpRequest(serverWith(undefined, { sourceRecords }), {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+      params: {},
+    });
+    const tool = listed.result?.tools?.find(({ name }) => name === "read_source_records");
+    expect(tool?.description).toContain("at most one record");
+    expect(tool?.inputSchema?.properties?.limit?.default).toBe(1);
+
+    const read = await mcpRequest(serverWith(undefined, { sourceRecords }), {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "read_source_records", arguments: {} },
+    });
+    expect(calls).toEqual([{ checkpoint: undefined, limit: 1 }]);
+    expect(read.result?.structuredContent).toEqual({
+      records: [],
+      next_checkpoint: "cu-nango-v1.next",
+      has_more: false,
+    });
+  });
+
   test("exposes stable-ID document discovery and mutation without path inputs", async () => {
     const documentId = "77777777-7777-4777-8777-777777777777";
     const revisionId = "88888888-8888-4888-8888-888888888888";
