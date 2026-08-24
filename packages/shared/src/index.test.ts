@@ -41,7 +41,6 @@ describe("strict mutation schemas", () => {
       content_type: "image/jpeg",
       size_bytes: 123,
       sha256: "A".repeat(64),
-      public_path: "projects/acme/site-photo",
     }).success).toBe(false);
   });
 
@@ -49,7 +48,7 @@ describe("strict mutation schemas", () => {
     expect(archiveDocumentAssetSchema.safeParse({ asset_id: pageId }).success).toBe(true);
     expect(archiveDocumentAssetSchema.safeParse({
       asset_id: pageId,
-      path: "projects/acme/site-photo",
+      unexpected_field: true,
     }).success).toBe(false);
   });
 
@@ -73,16 +72,14 @@ describe("strict mutation schemas", () => {
     expect(createKnowledgeDocumentSchema.shape.summary.description).toContain("document search");
     expect(createKnowledgeDocumentSchema.shape.summary.description).not.toContain("directory");
     expect(updateKnowledgeDocumentSchema.shape.summary.description).not.toContain("directory");
-    expect(createKnowledgeDocumentSchema.safeParse({ ...create, path: "private/note" }).success)
-      .toBe(false);
-    expect(createKnowledgeDocumentSchema.safeParse({ ...create, public_path: "leak" }).success)
+    expect(createKnowledgeDocumentSchema.safeParse({ ...create, unexpected_field: true }).success)
       .toBe(false);
     expect(createKnowledgeDocumentSchema.safeParse({ ...create, summary: "first\nsecond" }).success)
       .toBe(false);
 
     const update = { ...create, commit_message: "Update private note", expected_revision_number: 2 };
     expect(updateKnowledgeDocumentSchema.parse(update)).toEqual(update);
-    expect(updateKnowledgeDocumentSchema.safeParse({ ...update, path: "private/note" }).success)
+    expect(updateKnowledgeDocumentSchema.safeParse({ ...update, unexpected_field: true }).success)
       .toBe(false);
     expect(updateKnowledgeDocumentSchema.safeParse({ ...update, expected_revision_number: 0 }).success)
       .toBe(false);
@@ -94,11 +91,11 @@ describe("strict mutation schemas", () => {
 
     const archive = { commit_message: "Archive private note", expected_revision_number: 2 };
     expect(archiveKnowledgeDocumentSchema.parse(archive)).toEqual(archive);
-    expect(archiveKnowledgeDocumentSchema.safeParse({ ...archive, path: "private/note" }).success)
+    expect(archiveKnowledgeDocumentSchema.safeParse({ ...archive, unexpected_field: true }).success)
       .toBe(false);
   });
 
-  test("canonical document asset writes reuse bounded metadata without accepting paths", () => {
+  test("document asset writes accept only bounded canonical metadata", () => {
     expect(Object.keys(createDocumentAssetSchema.shape).sort()).toEqual([
       "content_type", "duration_seconds", "filename", "height", "sha256", "size_bytes", "width",
     ]);
@@ -113,7 +110,7 @@ describe("strict mutation schemas", () => {
       duration_seconds: 0,
     };
     expect(createDocumentAssetSchema.parse(create)).toEqual(create);
-    expect(createDocumentAssetSchema.safeParse({ ...create, path: "projects/acme/site-photo" }).success)
+    expect(createDocumentAssetSchema.safeParse({ ...create, unexpected_field: true }).success)
       .toBe(false);
     expect(createDocumentAssetSchema.safeParse({ ...create, size_bytes: 5_000_000_001 }).success)
       .toBe(false);
@@ -129,7 +126,7 @@ describe("strict mutation schemas", () => {
     expect(archiveDocumentAssetSchema.safeParse({ asset_id: pageId }).success).toBe(true);
     expect(archiveDocumentAssetSchema.safeParse({
       asset_id: pageId,
-      path: "projects/acme/site-photo",
+      unexpected_field: true,
     }).success).toBe(false);
   });
 
@@ -152,7 +149,6 @@ describe("strict mutation schemas", () => {
     };
     expect(dashboardDocumentSummarySchema.parse(summary)).toEqual(summary);
     for (const forbidden of [
-      "current_path",
       "body_object_key",
       "body_content_hash",
       "source_record_id",

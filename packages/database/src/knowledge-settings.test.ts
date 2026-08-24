@@ -22,7 +22,6 @@ describe("global guide lock ordering", () => {
 
     const document = calls.findIndex((sql) => sql.includes("lock_operational_document"));
     const settings = calls.findIndex((sql) => sql.includes("UPDATE knowledge_settings"));
-    expect(calls.some((sql) => sql.includes("filesystem-hypermedia-corpus-transition"))).toBe(false);
     expect(document).toBeGreaterThan(-1);
     expect(settings).toBeGreaterThan(document);
   });

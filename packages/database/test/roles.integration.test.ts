@@ -96,19 +96,6 @@ describeDatabase("PostgreSQL security roles", () => {
     return value;
   }
 
-  test("the knowledge catalog contains only hypermedia identity fields", async () => {
-    const obsolete = await admin.query(
-      `SELECT table_name,column_name FROM information_schema.columns
-       WHERE table_schema='public' AND (
-         table_name IN ('knowledge_directories','legacy_public_directory_prefixes')
-         OR (table_name IN ('knowledge_pages','knowledge_page_versions',
-           'knowledge_page_changes','assets') AND column_name=ANY($1::text[]))
-       )`,
-      [["current_path", "parent_path", "path", "public_path", "published_version_id"]],
-    );
-    expect(obsolete.rows).toEqual([]);
-  });
-
   test("the MCP role can update and archive ordinary knowledge through the checked writer", async () => {
     const mcpPool = new Pool({ connectionString: adminUrl, max: 1 });
     try {
@@ -143,13 +130,11 @@ describeDatabase("PostgreSQL security roles", () => {
   });
 
   test("full-text search indexes only the current page projection", async () => {
-    const indexes = await admin.query<{ current_index: string | null; historical_index: string | null }>(
-      `SELECT to_regclass('knowledge_pages_search_idx')::text AS current_index,
-              to_regclass('knowledge_page_versions_search_idx')::text AS historical_index`,
+    const indexes = await admin.query<{ current_index: string | null }>(
+      `SELECT to_regclass('knowledge_pages_search_idx')::text AS current_index`,
     );
     expect(indexes.rows[0]).toEqual({
       current_index: "knowledge_pages_search_idx",
-      historical_index: null,
     });
     expect((await admin.query(
       `SELECT 1 FROM information_schema.columns
@@ -394,7 +379,7 @@ describeDatabase("PostgreSQL security roles", () => {
     }
   });
 
-  test("the retired reset owner is inert", async () => {
+  test("the reset owner is inert", async () => {
     expect((await admin.query<{ allowed: boolean }>(
       "SELECT has_schema_privilege('context_use_reset_owner','public','USAGE') AS allowed",
     )).rows[0]?.allowed).toBe(false);
@@ -882,8 +867,7 @@ describeDatabase("PostgreSQL security roles", () => {
       "SELECT has_function_privilege('context_use_dashboard',$1,'EXECUTE') AS allowed",
       [dashboardStatus],
     )).rows[0]?.allowed).toBe(true);
-    // Corpus deliberately inherits the dashboard boundary for rolling
-    // preparation compatibility, so it receives the same read-only status.
+    // Corpus deliberately inherits this read-only dashboard capability.
     expect((await admin.query<{ allowed: boolean }>(
       "SELECT has_function_privilege('context_use_corpus',$1,'EXECUTE') AS allowed",
       [dashboardStatus],

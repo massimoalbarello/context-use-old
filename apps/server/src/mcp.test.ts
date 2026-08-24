@@ -92,7 +92,6 @@ function serverWith(
 
 const rootGuide = {
   id: "11111111-1111-4111-8111-111111111111",
-  current_path: "agents",
   current_version_id: "22222222-2222-4222-8222-222222222222",
   version_number: 1,
   title: "AGENTS.md",
@@ -189,7 +188,6 @@ describe("MCP knowledge tools", () => {
       content_type: null,
       operational_roles: [],
       updated_at: document.updated_at,
-      current_path: "must-not-leak",
     };
     const knowledgeDocuments = documentsWithGuidance({
       async get(id: string) { return id === documentId ? document : null; },
@@ -299,8 +297,6 @@ describe("MCP knowledge tools", () => {
       title: "Stable document",
       summary: "An identity-based knowledge document.",
     });
-    expect(searchResult.documents[0]).not.toHaveProperty("current_path");
-
     const created = await mcpRequest(serverWith(knowledgeDocuments, { documents }), {
       jsonrpc: "2.0",
       id: 4,

@@ -39,7 +39,7 @@ const BASE_SERVER_INSTRUCTIONS = "Use Context Use proactively when the user stat
 const SERVER_INSTRUCTIONS = BASE_SERVER_INSTRUCTIONS
   + "Use the stable-ID document tools (search_documents, read_document, create_document, "
   + "update_document, archive_document, create_document_asset_upload, archive_document_asset). "
-  + "Navigate knowledge through search results and document hyperlinks, never filesystem paths.";
+  + "Navigate knowledge through search results, stable document identities and hyperlinks.";
 
 const MCP_BACKLINK_LIMIT = 100;
 
@@ -166,7 +166,7 @@ export async function createMcpServer(
   }
 
     server.registerTool("search_documents", {
-      description: "Search the unified private document catalog by title, summary, filename and indexed text. Returns stable document references and preview metadata without filesystem paths, storage locators or source-system identifiers. Use read_document to load one selected document.",
+      description: "Search the unified private document catalog by title, summary, filename and indexed text. Returns stable document references and preview metadata without storage locators or source-system identifiers. Use read_document to load one selected document.",
       inputSchema: z.object({
         query: z.string().trim().min(1).max(500),
         document_kind: z.enum(["knowledge", "record", "asset"]).optional(),
@@ -190,7 +190,7 @@ export async function createMcpServer(
     });
 
     server.registerTool("read_document", {
-      description: "Read one private document by stable UUID. Knowledge and source documents return current Markdown and hypermedia links; assets return metadata and a short-lived checksum-bound download request. No filesystem paths or storage keys are exposed.",
+      description: "Read one private document by stable UUID. Knowledge and source documents return current Markdown and hypermedia links; assets return metadata and a short-lived checksum-bound download request. Storage keys are never exposed.",
       inputSchema: z.object({ document_id: z.string().uuid() }).strict(),
       annotations: { readOnlyHint: true },
     }, async ({ document_id }) => {
@@ -256,7 +256,7 @@ export async function createMcpServer(
     });
 
     server.registerTool("update_document", {
-      description: "Create a new immutable revision of an active knowledge document by stable UUID. Read it first and pass expected_revision_number for optimistic concurrency. The document never moves because it has no semantic filesystem path.",
+      description: "Create a new immutable revision of an active knowledge document by stable UUID. Read it first and pass expected_revision_number for optimistic concurrency.",
       inputSchema: updateKnowledgeDocumentSchema.extend({
         document_id: z.string().uuid(),
         ...mutationReceiptSchemas,
@@ -309,7 +309,7 @@ export async function createMcpServer(
     });
 
     server.registerTool("create_document_asset_upload", {
-      description: "Create a checksum-bound private asset document without choosing a filesystem path. PUT the exact raw bytes to the returned URL with every returned header before expires_at.",
+      description: "Create a checksum-bound private asset document with a stable UUID. PUT the exact raw bytes to the returned URL with every returned header before expires_at.",
       inputSchema: createDocumentAssetSchema.extend(mutationReceiptSchemas).strict(),
       annotations: { destructiveHint: false },
     }, async ({ knowledge_session_receipt, ...input }) => {
@@ -469,7 +469,7 @@ export async function createMcpServer(
 
 
   server.registerTool("list_document_changes", {
-      description: "List authored knowledge-document changes after an opaque cursor. Rows identify stable documents and revisions without filesystem paths or bodies. Paginate one fixed window with next_page_token, then persist next_cursor only after the complete window succeeds.",
+      description: "List authored knowledge-document changes after an opaque cursor. Rows identify stable documents and revisions without bodies or storage locators. Paginate one fixed window with next_page_token, then persist next_cursor only after the complete window succeeds.",
       inputSchema: z.object({
         cursor: z.string().regex(/^cu-page-changes-v1\.[0-9a-z]+$/).optional(),
         page_token: z.string().regex(/^cu-page-scan-v1\.[0-9a-z]+\.[0-9a-z]+\.[0-9a-z]+$/).optional(),
@@ -490,7 +490,7 @@ export async function createMcpServer(
     });
 
     server.registerTool("compare_document_revisions", {
-      description: "Compare two immutable authored-document revisions from a list_document_changes row. Returns title/summary changes and compact Markdown fragments without compatibility-path metadata.",
+      description: "Compare two immutable authored-document revisions from a list_document_changes row. Returns title/summary changes and compact Markdown fragments without storage metadata.",
       inputSchema: z.object({
         document_id: z.string().uuid(),
         previous_revision_number: z.number().int().positive().nullable(),

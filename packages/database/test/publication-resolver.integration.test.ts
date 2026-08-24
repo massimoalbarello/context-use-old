@@ -116,7 +116,7 @@ async function seedActivePage(
   const revisionId = randomUUID();
   const publicId = randomUUID();
   const artifactId = randomUUID();
-  const adoptionId = randomUUID();
+  const retainedSourceId = randomUUID();
   const legacyArtifactId = randomUUID();
   const representationToken = hash(`page-token:${artifactId}`);
   const contentHash = hash(`page-body:${artifactId}`);
@@ -157,7 +157,7 @@ async function seedActivePage(
     `INSERT INTO public_artifact_id_reservations(
        artifact_id,body_object_key,allocation_kind,allocation_id
      ) VALUES ($1,$2,'retained_publication',$3)`,
-    [artifactId, objectKey, adoptionId],
+    [artifactId, objectKey, retainedSourceId],
   );
   await client.query(
     `INSERT INTO public_representation_token_reservations(
@@ -189,7 +189,7 @@ async function seedActivePage(
       hash(`public:${artifactId}`),
       hash(`receipt:${artifactId}`),
       origin,
-      adoptionId,
+      retainedSourceId,
       origin === "retained" ? "page" : "alias_hub",
       origin === "retained" ? legacyArtifactId : null,
       origin === "retained" ? "1" : null,
@@ -211,7 +211,7 @@ async function addAssetArtifact(
   pin: boolean,
 ): Promise<Pick<AssetFixture, "artifactId" | "representationToken">> {
   const artifactId = randomUUID();
-  const adoptionId = randomUUID();
+  const retainedSourceId = randomUUID();
   const representationToken = hash(`asset-token:${artifactId}`);
   const objectKey = `artifacts/public/${artifactId}`;
   await client.query("SET LOCAL session_replication_role=replica");
@@ -219,7 +219,7 @@ async function addAssetArtifact(
     `INSERT INTO public_artifact_id_reservations(
        artifact_id,body_object_key,allocation_kind,allocation_id
      ) VALUES ($1,$2,'retained_publication',$3)`,
-    [artifactId, objectKey, adoptionId],
+    [artifactId, objectKey, retainedSourceId],
   );
   await client.query(
     `INSERT INTO public_representation_token_reservations(
@@ -244,7 +244,7 @@ async function addAssetArtifact(
       assetId,
       objectKey,
       hash(`asset-body:${artifactId}`),
-      adoptionId,
+      retainedSourceId,
       representationToken,
     ],
   );

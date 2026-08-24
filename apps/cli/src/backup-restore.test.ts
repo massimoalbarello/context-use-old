@@ -92,10 +92,9 @@ test("Context Use restore captures and reconciles privileged object ownership ar
   const pendingCheck = "to_regnamespace('context_use_deployment_internal') IS NOT NULL";
   const safetyBackup = "run --rm backup once";
   const stop = "stop caddy dashboard-edge app auth private-mcp public-web confirmation storage";
-  const compatibility = "-e MIGRATOR_MAX_VERSION=035_hydrate_ready_corpus_knowledge.sql -e MIGRATOR_ALLOW_APPLIED_LATER=true";
-  const capture = `${compatibility} -e MIGRATOR_PREPARE_RESTORE_OWNERSHIP=true migrate`;
+  const capture = "-e MIGRATOR_PREPARE_RESTORE_OWNERSHIP=true migrate";
   const restore = "backup fetch 'postgres/2026-07-30T12-34-56Z.sql.gz'";
-  const reconcile = `${compatibility} -e MIGRATOR_RECONCILE_RESTORE_OWNERSHIP=true migrate`;
+  const reconcile = "-e MIGRATOR_RECONCILE_RESTORE_OWNERSHIP=true migrate";
 
   expect(script.indexOf(stopBackup)).toBeLessThan(script.indexOf(pendingCheck));
   expect(script.indexOf(pendingCheck)).toBeLessThan(script.indexOf(safetyBackup));
@@ -113,23 +112,14 @@ test("Context Use restore captures and reconciles privileged object ownership ar
   expect(script).toContain("--single-transaction");
   expect(script).toContain("-f -");
   expect(script).toContain(reconcile);
-  expect(script).toContain("CREATE ROLE context_use_public_mcp NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS");
-  expect(script).toContain("Existing context_use_public_mcp role is not an isolated NOLOGIN compatibility role");
-  expect(script).toContain("dependency.dbid=(SELECT database.oid");
-  // The same two-clause validator runs both before restore and immediately
-  // before successful cleanup.
-  expect(script.match(/dependency\.dbid=\(SELECT database\.oid/g)).toHaveLength(4);
-  expect(script).toContain("DROP OWNED BY context_use_public_mcp; DROP ROLE IF EXISTS context_use_public_mcp");
-  expect(script).not.toContain("DROP ROLE IF EXISTS context_use_public_mcp; CREATE ROLE");
   const failureHandler = script.slice(script.indexOf("restore_failed()"), script.indexOf("trap restore_failed EXIT"));
   expect(failureHandler).toContain("up -d postgres aws-credential-broker");
   expect(failureHandler).not.toContain("aws-credential-broker backup");
 });
 
-test("Context Use restore does not restart the completed hypermedia bootstrap", () => {
+test("Context Use restore runs bootstrap exactly once before consumers", () => {
   const script = restoreCommands("backups", "postgres/2026-07-30T12-34-56Z.sql.gz").join("\n");
   const prepare = "--exit-code-from hypermedia-bootstrap hypermedia-bootstrap";
-  const contract = "--profile migration run --rm migrate";
   const publicWeb = "up -d --wait --no-deps public-web";
   const authAndConfirmation = "up -d --wait --no-deps auth confirmation";
   const appAndMcp = "up -d --wait --no-deps app private-mcp";
@@ -140,8 +130,7 @@ test("Context Use restore does not restart the completed hypermedia bootstrap", 
   for (const start of [publicWeb, authAndConfirmation, appAndMcp, dashboardEdge, caddyAndBackup]) {
     expect(script).toContain(start);
   }
-  expect(script.indexOf(prepare)).toBeLessThan(script.indexOf(contract, script.indexOf(prepare)));
-  expect(script.indexOf(contract, script.indexOf(prepare))).toBeLessThan(script.indexOf(publicWeb));
+  expect(script.indexOf(prepare)).toBeLessThan(script.indexOf(publicWeb));
   expect(script.indexOf(publicWeb)).toBeLessThan(script.indexOf(authAndConfirmation));
   expect(script.indexOf(authAndConfirmation)).toBeLessThan(script.indexOf(appAndMcp));
   expect(script.indexOf(appAndMcp)).toBeLessThan(script.indexOf(dashboardEdge));

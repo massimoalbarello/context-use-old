@@ -2,10 +2,34 @@ import { describe, expect, test } from "bun:test";
 import {
   assertMigrationState,
   configuredExistingRolePasswords,
-  migrationsThroughVersion,
+  matchesCompletedLedger,
+  migrationLedgerDigest,
 } from "../src/migration-state.ts";
 
 const files = [{ version: "001_baseline.sql", checksum: "current-checksum" }];
+
+describe("completed ledger handoff", () => {
+  const completed = [
+    { version: "001", checksum: "a" },
+    { version: "002", checksum: "b" },
+  ];
+  const digest = "b51efc7b2797fc57025dc13d80ac5390cea1936cb5ae15d46707560ce3a8efca";
+
+  test("hashes the ordered version and checksum pairs deterministically", () => {
+    expect(migrationLedgerDigest(completed)).toBe(digest);
+    expect(migrationLedgerDigest([...completed].reverse())).toBe(digest);
+    expect(migrationLedgerDigest([{ version: "001", checksum: null }])).toBeNull();
+  });
+
+  test("requires the exact completed count and digest", () => {
+    expect(matchesCompletedLedger(completed, { count: 2, digest })).toBe(true);
+    expect(matchesCompletedLedger(completed.slice(0, 1), { count: 2, digest })).toBe(false);
+    expect(matchesCompletedLedger([
+      completed[0]!,
+      { version: "002", checksum: "modified" },
+    ], { count: 2, digest })).toBe(false);
+  });
+});
 
 describe("flattened migration state", () => {
   test("accepts a fresh database and an exactly matching baseline", () => {
@@ -15,10 +39,10 @@ describe("flattened migration state", () => {
     ], ["knowledge_pages"])).not.toThrow();
   });
 
-  test("fails closed for removed legacy migrations", () => {
+  test("fails closed for an unrecognized ledger", () => {
     expect(() => assertMigrationState(files, [
       { version: "001_baseline.sql", checksum: null },
-      { version: "006_legacy.sql", checksum: null },
+      { version: "002_unknown.sql", checksum: null },
     ], ["knowledge_pages"])).toThrow("fresh database");
   });
 
@@ -37,73 +61,7 @@ describe("flattened migration state", () => {
   });
 });
 
-describe("staged migration ceiling", () => {
-  const stagedFiles = [
-    { version: "001_baseline.sql", checksum: "checksum-001", sql: "one" },
-    { version: "026_audited_corpus.sql", checksum: "checksum-026", sql: "twenty-six" },
-    { version: "027_canonical_contract.sql", checksum: "checksum-027", sql: "twenty-seven" },
-    { version: "028_canonical_publication.sql", checksum: "checksum-028", sql: "twenty-eight" },
-  ];
-
-  test("defaults to every on-disk migration", () => {
-    expect(migrationsThroughVersion(stagedFiles, [], undefined)).toEqual(stagedFiles);
-  });
-
-  test("accepts only an exact filename and includes that migration", () => {
-    expect(migrationsThroughVersion(
-      stagedFiles,
-      [{ version: "026_audited_corpus.sql", checksum: "checksum-026" }],
-      "027_canonical_contract.sql",
-    ).map(({ version }) => version)).toEqual([
-      "001_baseline.sql",
-      "026_audited_corpus.sql",
-      "027_canonical_contract.sql",
-    ]);
-    expect(() => migrationsThroughVersion(stagedFiles, [], "027_canonical_contract"))
-      .toThrow("exactly match an on-disk migration filename");
-    expect(() => migrationsThroughVersion(stagedFiles, [], ""))
-      .toThrow("exactly match an on-disk migration filename");
-  });
-
-  test("rejects a target older than any applied migration", () => {
-    expect(() => migrationsThroughVersion(
-      stagedFiles,
-      [
-        { version: "001_baseline.sql", checksum: "checksum-001" },
-        { version: "027_canonical_contract.sql", checksum: "checksum-027" },
-      ],
-      "026_audited_corpus.sql",
-    )).toThrow("older than already-applied migration(s): 027_canonical_contract.sql");
-  });
-
-  test("allows a bounded compatibility pass after later contraction migrations", () => {
-    expect(migrationsThroughVersion(
-      stagedFiles,
-      [
-        { version: "001_baseline.sql", checksum: "checksum-001" },
-        { version: "027_canonical_contract.sql", checksum: "checksum-027" },
-      ],
-      "026_audited_corpus.sql",
-      true,
-    ).map(({ version }) => version)).toEqual([
-      "001_baseline.sql",
-      "026_audited_corpus.sql",
-    ]);
-  });
-
-  test("validates every applied checksum before limiting new migrations", () => {
-    const applied = [
-      { version: "001_baseline.sql", checksum: "checksum-001" },
-      { version: "027_canonical_contract.sql", checksum: "modified-checksum" },
-    ];
-    expect(() => {
-      assertMigrationState(stagedFiles, applied, ["knowledge_pages"]);
-      migrationsThroughVersion(stagedFiles, applied, "027_canonical_contract.sql");
-    }).toThrow("027_canonical_contract.sql does not match this release");
-  });
-});
-
-describe("staged role password configuration", () => {
+describe("role password configuration", () => {
   test("skips a configured role below its introducing migration", () => {
     expect(configuredExistingRolePasswords({
       DB_DASHBOARD_PASSWORD: "dashboard-secret",

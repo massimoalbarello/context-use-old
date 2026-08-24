@@ -7,7 +7,7 @@ import {
   MIGRATION_ROLE_PASSWORD_ENV,
   assertMigrationState,
   configuredExistingRolePasswords,
-  migrationsThroughVersion,
+  matchesCompletedLedger,
 } from "./migration-state.ts";
 import {
   PREPARE_RESTORE_OWNERSHIP_ENV,
@@ -41,8 +41,7 @@ const migrations = await Promise.all(files.map(async (version) => {
     checksum: createHash("sha256").update(sql).digest("hex"),
   };
 }));
-const allowAppliedLater = process.env.MIGRATOR_ALLOW_APPLIED_LATER === "true";
-const targetMigrations = migrationsThroughVersion(migrations, [], process.env.MIGRATOR_MAX_VERSION);
+const targetMigrations = migrations;
 
 const client = new Client({ connectionString: migrationUrl });
 await client.connect();
@@ -79,10 +78,42 @@ try {
     `);
     await client.query("ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS checksum text");
 
-    const applied = await client.query<{ version: string; checksum: string | null }>(
+    let applied = await client.query<{ version: string; checksum: string | null }>(
       "SELECT version,checksum FROM schema_migrations ORDER BY version",
     );
     const baseline = "001_baseline.sql";
+    const baselineMigration = migrations.find(({ version }) => version === baseline);
+    if (!baselineMigration) throw new Error(`${baseline} is missing from this release`);
+
+    if (matchesCompletedLedger(applied.rows)) {
+      await client.query("BEGIN");
+      try {
+        await client.query("LOCK TABLE schema_migrations IN ACCESS EXCLUSIVE MODE");
+        const lockedLedger = await client.query<{ version: string; checksum: string | null }>(
+          "SELECT version,checksum FROM schema_migrations ORDER BY version",
+        );
+        if (!matchesCompletedLedger(lockedLedger.rows)) {
+          throw new Error("Migration ledger changed while preparing the compact baseline handoff");
+        }
+        const appliedAt = await client.query<{ applied_at: Date }>(
+          "SELECT max(applied_at) AS applied_at FROM schema_migrations",
+        );
+        await client.query("DELETE FROM schema_migrations");
+        await client.query(
+          "INSERT INTO schema_migrations(version,checksum,applied_at) VALUES ($1,$2,$3)",
+          [baseline, baselineMigration.checksum, appliedAt.rows[0]?.applied_at ?? new Date()],
+        );
+        await client.query("COMMIT");
+        console.info(`Compacted completed migration ledger to ${baseline}`);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      }
+      applied = await client.query<{ version: string; checksum: string | null }>(
+        "SELECT version,checksum FROM schema_migrations ORDER BY version",
+      );
+    }
+
     const existingRelations = await client.query<{ relation: string }>(
       `SELECT relname AS relation
        FROM pg_class
@@ -97,14 +128,8 @@ try {
       existingRelations.rows.map(({ relation }) => relation),
       baseline,
     );
-    const migrationsToApply = migrationsThroughVersion(
-      migrations,
-      applied.rows,
-      process.env.MIGRATOR_MAX_VERSION,
-      allowAppliedLater,
-    );
     await client.query("ALTER TABLE schema_migrations ALTER COLUMN checksum SET NOT NULL");
-    for (const migration of migrationsToApply) {
+    for (const migration of migrations) {
       const existing = await client.query("SELECT 1 FROM schema_migrations WHERE version = $1", [migration.version]);
       if (existing.rowCount) continue;
       await client.query("BEGIN");

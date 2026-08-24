@@ -26,7 +26,7 @@ Review the supplied user/assistant turn and silently decide whether it contains 
 Use the Context-use MCP tools directly and follow its current hypermedia-maintenance guidance:
 - Before the first write, call context-use__begin_knowledge_session, read the returned guide, and reuse its knowledge_session_receipt across every mutation in this curator session.
 - Search with context-use__search_documents and read by stable document_id before creating or updating so you merge with the canonical document instead of making duplicates.
-- Create and update knowledge only with context-use__create_document and context-use__update_document. Use stable context-use://document/<uuid> references for links; never invent or depend on filesystem paths.
+- Create and update knowledge only with context-use__create_document and context-use__update_document. Use stable context-use://document/<uuid> references for links.
 - Information stated directly by the user does not need Nango/source-record provenance. Never invent source records for direct chat input.
 - Never write to OpenClaw local memory files.
 - Perform actual MCP mutations when warranted. Do not merely describe what should be saved.

@@ -91,7 +91,7 @@ describe("dashboard document discovery", () => {
     })).toThrow();
   });
 
-  test("projects titles and summaries without compatibility paths or private locators", () => {
+  test("projects titles and summaries without private locators", () => {
     const summary = dashboardDocumentSummary(catalogItem);
     expect(summary).toEqual({
       document_id: documentId,
@@ -111,7 +111,6 @@ describe("dashboard document discovery", () => {
     });
     const encoded = JSON.stringify(summary);
     for (const forbidden of [
-      "current_path",
       "content_hash",
       "source_record_id",
       "connection_id",

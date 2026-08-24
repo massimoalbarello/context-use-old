@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export type MigrationDescriptor = {
   version: string;
   checksum: string;
@@ -7,6 +9,38 @@ export type AppliedMigration = {
   version: string;
   checksum: string | null;
 };
+
+type CompletedLedgerContract = {
+  count: number;
+  digest: string;
+};
+
+const COMPLETED_LEDGER_CONTRACT: CompletedLedgerContract = {
+  count: 45,
+  digest: "922e1b1c877eb368f6b5c6f1e7441383578d893f593c2fabc498d7967b7f4312",
+};
+
+export function migrationLedgerDigest(applied: readonly AppliedMigration[]): string | null {
+  if (applied.some(({ checksum }) => checksum === null)) return null;
+  const ledger = [...applied]
+    .sort(({ version: left }, { version: right }) => left.localeCompare(right))
+    .map(({ version, checksum }) => `${version}:${checksum}`)
+    .join("\n");
+  return createHash("sha256").update(ledger).digest("hex");
+}
+
+/**
+ * Recognize only the fully completed predecessor ledger. This is deliberately
+ * stricter than checking the final version: partial, modified, and future
+ * ledgers must fail closed instead of being relabeled as the current schema.
+ */
+export function matchesCompletedLedger(
+  applied: readonly AppliedMigration[],
+  contract: CompletedLedgerContract = COMPLETED_LEDGER_CONTRACT,
+): boolean {
+  return applied.length === contract.count
+    && migrationLedgerDigest(applied) === contract.digest;
+}
 
 export const MIGRATION_ROLE_PASSWORD_ENV = {
   context_use_auth: "DB_AUTH_PASSWORD",
@@ -34,40 +68,6 @@ export function configuredExistingRolePasswords(
   });
 }
 
-/**
- * Select the inclusive migration window for an explicitly staged deployment.
- * Call this only after assertMigrationState has validated the complete on-disk
- * and applied schema; the target limits new work, never checksum validation.
- */
-export function migrationsThroughVersion<T extends MigrationDescriptor>(
-  files: readonly T[],
-  applied: readonly AppliedMigration[],
-  maximumVersion: string | undefined,
-  allowAppliedLater = false,
-): T[] {
-  if (maximumVersion === undefined) return [...files];
-
-  const targetIndex = files.findIndex(({ version }) => version === maximumVersion);
-  if (targetIndex < 0) {
-    throw new Error(
-      `MIGRATOR_MAX_VERSION must exactly match an on-disk migration filename; received ${JSON.stringify(maximumVersion)}`,
-    );
-  }
-
-  const indexes = new Map(files.map(({ version }, index) => [version, index]));
-  const laterApplied = applied.flatMap(({ version }) => {
-    const index = indexes.get(version);
-    return index !== undefined && index > targetIndex ? [version] : [];
-  });
-  if (laterApplied.length && !allowAppliedLater) {
-    throw new Error(
-      `MIGRATOR_MAX_VERSION ${maximumVersion} is older than already-applied migration(s): ${laterApplied.join(", ")}`,
-    );
-  }
-
-  return files.slice(0, targetIndex + 1);
-}
-
 export function assertMigrationState(
   files: MigrationDescriptor[],
   applied: AppliedMigration[],
@@ -86,7 +86,7 @@ export function assertMigrationState(
   const baselineApplied = applied.some(({ version }) => version === baseline);
   if (current.has(baseline) && !baselineApplied && (applied.length || existingRelations.length)) {
     const reason = applied.length
-      ? `legacy migrations: ${applied.map(({ version }) => version).join(", ")}`
+      ? `unrecognized migrations: ${applied.map(({ version }) => version).join(", ")}`
       : `existing relations: ${existingRelations.join(", ")}`;
     throw new Error(`${baseline} can only be applied to a fresh database; found ${reason}`);
   }

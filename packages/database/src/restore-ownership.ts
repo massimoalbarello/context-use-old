@@ -8,7 +8,6 @@ export const RECONCILE_RESTORE_OWNERSHIP_ENV = "MIGRATOR_RECONCILE_RESTORE_OWNER
 const CONTRACT_VERSION = 2;
 const OWNER_ROLE_PATTERN = /^context_use_[a-z0-9_]+_owner$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
-const RESTORE_COMPATIBILITY_ROLE = "context_use_public_mcp";
 
 type RoutineKind = "function" | "procedure" | "aggregate" | "window_function";
 type RelationKind = "view" | "materialized_view";
@@ -1364,66 +1363,6 @@ async function validateCurrentSchemaAndDefaultAcls(
   }
 }
 
-async function scrubRestoreCompatibilityRole(client: Client): Promise<void> {
-  const result = await client.query<{
-    rolsuper: boolean;
-    rolinherit: boolean;
-    rolcreaterole: boolean;
-    rolcreatedb: boolean;
-    rolcanlogin: boolean;
-    rolreplication: boolean;
-    rolbypassrls: boolean;
-    rolconfig: string[] | null;
-    has_membership: boolean;
-    has_unexpected_dependency: boolean;
-  }>(`
-    SELECT role.rolsuper,role.rolinherit,role.rolcreaterole,role.rolcreatedb,
-      role.rolcanlogin,role.rolreplication,role.rolbypassrls,role.rolconfig,
-      EXISTS (
-        SELECT 1 FROM pg_catalog.pg_auth_members AS membership
-        WHERE membership.roleid=role.oid OR membership.member=role.oid
-      ) AS has_membership,
-      EXISTS (
-        SELECT 1 FROM pg_catalog.pg_shdepend AS dependency
-        WHERE dependency.refclassid='pg_catalog.pg_authid'::pg_catalog.regclass
-          AND dependency.refobjid=role.oid
-          AND NOT (
-            dependency.deptype='o'
-            AND dependency.classid='pg_catalog.pg_default_acl'::pg_catalog.regclass
-            AND dependency.dbid=(
-              SELECT database.oid FROM pg_catalog.pg_database AS database
-              WHERE database.datname=pg_catalog.current_database()
-            )
-          )
-          AND NOT (
-            dependency.deptype='a'
-            AND dependency.dbid=(
-              SELECT database.oid FROM pg_catalog.pg_database AS database
-              WHERE database.datname=pg_catalog.current_database()
-            )
-          )
-      ) AS has_unexpected_dependency
-    FROM pg_catalog.pg_roles AS role
-    WHERE role.rolname=$1
-  `, [RESTORE_COMPATIBILITY_ROLE]);
-  if (result.rowCount === 0) return;
-  const role = result.rows[0];
-  if (result.rowCount !== 1 || !role
-      || role.rolsuper || role.rolinherit || role.rolcreaterole || role.rolcreatedb
-      || role.rolcanlogin || role.rolreplication || role.rolbypassrls
-      || role.rolconfig !== null || role.has_membership || role.has_unexpected_dependency) {
-    throw new Error(
-      `Existing ${RESTORE_COMPATIBILITY_ROLE} role is not an isolated NOLOGIN compatibility role`,
-    );
-  }
-  // Historical dumps may preserve grants to this retired principal. The
-  // dependency preflight proves it owns no concrete object and has no state in
-  // another database, so DROP OWNED can only remove current-database ACL and
-  // default-ACL dependencies. The surrounding reconciliation transaction
-  // rolls this cleanup back if any subsequent exact contract check fails.
-  await client.query(`DROP OWNED BY ${RESTORE_COMPATIBILITY_ROLE}`);
-}
-
 export async function validatePendingRestoreOwnershipForRelease(
   client: Client,
   migrations: readonly RestoreOwnershipMigration[],
@@ -1528,7 +1467,6 @@ export async function reconcilePendingRestoreOwnership(
     const admin = await administrator(client);
     const contract = await readAndValidateContract(client, admin, migrations);
     const { manifest, objects } = contract;
-    await scrubRestoreCompatibilityRole(client);
     await validateCurrentSchemaAndDefaultAcls(client, contract);
 
     const current = await allPublicRoutinesAndViews(client);

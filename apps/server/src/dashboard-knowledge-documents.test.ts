@@ -24,7 +24,7 @@ const revision: KnowledgeDocumentRevision = {
 };
 
 describe("canonical dashboard knowledge responses", () => {
-  test("projects document content without compatibility paths or object locators", () => {
+  test("projects document content without private object locators", () => {
     const document: KnowledgeDocument = {
       document_id: revision.document_id,
       current_revision_id: revision.revision_id,
@@ -52,8 +52,6 @@ describe("canonical dashboard knowledge responses", () => {
       published_version_number: 2,
       public_url: `https://example.test/p/${revision.document_id}`,
     });
-    expect(projected).not.toHaveProperty("path");
-    expect(projected).not.toHaveProperty("current_path");
     expect(projected).not.toHaveProperty("body_object_key");
     expect(projected).not.toHaveProperty("canonical_published");
   });
@@ -75,8 +73,8 @@ describe("canonical dashboard knowledge responses", () => {
       ...revision,
       revision_number: 1,
       revision_id: "44444444-4444-4444-8444-444444444444",
-      title: "Filesystem navigation",
-      summary: "Navigation follows folders.",
+      title: "Previous navigation",
+      summary: "Navigation used an older structure.",
       body_markdown: "Old body",
     }, revision);
     expect(delta.metadata_changes.map(({ field }) => field)).toEqual(["title", "summary"]);
@@ -88,8 +86,8 @@ describe("canonical dashboard knowledge responses", () => {
       ...revision,
       revision_id: "44444444-4444-4444-8444-444444444444",
       revision_number: 1,
-      title: "Filesystem navigation",
-      summary: "Navigation follows folders.",
+      title: "Previous navigation",
+      summary: "Navigation used an older structure.",
       body_markdown: "Old body",
     };
     const review = await dashboardRepublicationReview(
