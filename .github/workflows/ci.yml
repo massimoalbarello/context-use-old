@@ -104,11 +104,16 @@ jobs:
           MCP_DATABASE_URL: postgres://context_use_mcp:test-mcp@localhost:5432/context_use
           PUBLIC_DATABASE_URL: postgres://context_use_public:test-public@localhost:5432/context_use
           CONFIRMATION_DATABASE_URL: postgres://context_use_confirmation:test-confirmation@localhost:5432/context_use
+          STORAGE_DATABASE_URL: postgres://context_use_storage:test-storage@localhost:5432/context_use
           OWNER_EMAIL: owner@example.com
           OWNER_SETUP_TOKEN_HASH: 0c3f0f8b90068b05d8039bf05db2da4742c31a23e51cfa864a96a0efe17b1694
         run: |
           bun run db:initialize
           bun run db:test mark
+          TEST_AUTH_BOUNDARY_ISOLATED=1 \
+            bun test apps/server/src/auth-boundary.integration.test.ts
+          TEST_CORPUS_MIGRATION_ISOLATED=1 \
+            bun test packages/database/test/corpus-migration.integration.test.ts
           bun test apps packages
           history_container=context-use-restore-history
           trap 'docker rm -f "${history_container}" >/dev/null 2>&1 || true' EXIT
