@@ -10,12 +10,6 @@ import {
   type MarkdownObjectStore,
   type TemplateResult,
 } from "@context-use/database";
-import {
-  KNOWLEDGE_PREPARATION_ACTION,
-  KNOWLEDGE_PREPARATION_SCOPE,
-  type KnowledgePreparationResponse,
-  type TemplateResult as SharedTemplateResult,
-} from "@context-use/shared";
 import type { Pool } from "pg";
 import {
   migrateCorpusToHypermedia,
@@ -32,28 +26,6 @@ export type KnowledgePreparationResult = {
   template: TemplateResult;
   corpus: CorpusMigrationReport;
 };
-
-export function knowledgePreparationPlanResponse(
-  template: SharedTemplateResult,
-): KnowledgePreparationResponse {
-  return {
-    ...template,
-    preparation_scope: KNOWLEDGE_PREPARATION_SCOPE,
-    preparation_required: true,
-    preparation_action: KNOWLEDGE_PREPARATION_ACTION,
-  };
-}
-
-export function knowledgePreparationApplyResponse(
-  template: SharedTemplateResult,
-): KnowledgePreparationResponse {
-  return {
-    ...template,
-    preparation_scope: KNOWLEDGE_PREPARATION_SCOPE,
-    preparation_required: true,
-    preparation_action: KNOWLEDGE_PREPARATION_ACTION,
-  };
-}
 
 export function protectedOperationalTemplatePaths(
   contract: Awaited<ReturnType<typeof knowledgeTemplateMigrationContract>>,
