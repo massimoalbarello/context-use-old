@@ -1,8 +1,15 @@
 {
   "id": "context-use-memory",
   "activation": {
-    "onStartup": true
+    "onStartup": true,
+    "onCommands": ["context-use"]
   },
+  "commandAliases": [
+    {
+      "name": "context-use",
+      "cliCommand": "context-use"
+    }
+  ],
   "name": "Context-use Memory",
   "description": "Uses Context-use as OpenClaw's durable memory and curates relevant chat facts and assets through a same-model subagent.",
   "kind": "memory",

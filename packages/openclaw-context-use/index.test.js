@@ -39,6 +39,7 @@ function apiFixture(overrides = {}) {
       },
     },
     logger: { info() {}, warn() {}, error() {} },
+    registerCli() {},
     runtime: {
       config: {
         current: () => ({
@@ -82,7 +83,12 @@ test("extracts only the latest user/assistant turn", () => {
 });
 
 test("plugin claims the memory slot and registers the lifecycle hooks", () => {
-  const registrations = { hooks: [], tools: [], memory: undefined };
+  const registrations = {
+    cli: undefined,
+    hooks: [],
+    tools: [],
+    memory: undefined,
+  };
   const api = apiFixture({
     registerMemoryCapability(capability) {
       registrations.memory = capability;
@@ -92,6 +98,9 @@ test("plugin claims the memory slot and registers the lifecycle hooks", () => {
     },
     on(name, handler) {
       registrations.hooks.push({ name, handler });
+    },
+    registerCli(registrar, options) {
+      registrations.cli = { registrar, options };
     },
   });
   plugin.register(api);
@@ -107,6 +116,13 @@ test("plugin claims the memory slot and registers the lifecycle hooks", () => {
     "message_received",
     "before_message_write",
     "agent_end",
+  ]);
+  expect(registrations.cli.options.descriptors).toEqual([
+    {
+      name: "context-use",
+      description: "Install, configure, and remove Context-use memory",
+      hasSubcommands: true,
+    },
   ]);
 });
 
@@ -343,6 +359,7 @@ test("capture launches the curator with the parent provider and model", async ()
   expect(runParams.extraSystemPrompt).toContain("context-use__create_document_asset_upload");
   expect(runParams.extraSystemPrompt).not.toContain("context-use__prepare_change");
   expect(runParams.extraSystemPrompt).not.toContain("context-use__create_asset_upload");
+  expect(runParams.lightContext).toBe(false);
   expect(runParams.deliver).toBe(false);
 });
 

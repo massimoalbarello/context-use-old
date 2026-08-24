@@ -72,6 +72,18 @@ Point any MCP-capable agent at:
 https://YOUR_HOST/mcp
 ```
 
+### OpenClaw active memory
+
+From this checkout, mount or remount automatic recall and capture with one command:
+
+```sh
+bun run openclaw:mount
+```
+
+Use `bun run openclaw:off` to unmount it without uninstalling, the mount command to remount it,
+and `bun run openclaw:remove` to restore the previous memory setup and uninstall the plugin.
+See the [OpenClaw plugin guide](packages/openclaw-context-use/README.md).
+
 ## Ingest your data
 
 AWS installations run Nango to sync data from providers such as GitHub and Granola into your
