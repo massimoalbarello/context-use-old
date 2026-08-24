@@ -346,7 +346,6 @@ describeDatabase("PostgreSQL security roles", () => {
     const functions = [
       "confirm_knowledge_export_intent(uuid,text,text,text,integer,integer)",
       "claim_knowledge_export_download(uuid,text,text)",
-      "complete_knowledge_export_download(uuid,text,text)",
     ];
     for (const fn of functions) {
       for (const role of ["context_use_auth", "context_use_dashboard", "context_use_mcp", "context_use_public", "context_use_backup"]) {
@@ -360,7 +359,7 @@ describeDatabase("PostgreSQL security roles", () => {
         [fn],
       )).rows[0]?.allowed).toBe(true);
     }
-    for (const column of ["confirmed_at", "download_started_at", "download_completed_at", "reset_completed_at"]) {
+    for (const column of ["confirmed_at", "download_started_at"]) {
       expect((await admin.query<{ allowed: boolean }>(
         "SELECT has_column_privilege('context_use_dashboard','knowledge_export_intents',$1,'INSERT') AS allowed",
         [column],
@@ -387,21 +386,15 @@ describeDatabase("PostgreSQL security roles", () => {
     )).rows[0]?.allowed).toBe(false);
   });
 
-  test("clearing knowledge is a dashboard-only capability", async () => {
-    const clear = "clear_knowledge(uuid,text,text,uuid,text,integer,text,text,text,text,text,tsvector,text,text)";
-    for (const role of ["context_use_auth", "context_use_confirmation", "context_use_mcp", "context_use_public", "context_use_backup"]) {
-      expect((await admin.query<{ allowed: boolean }>(
-        "SELECT has_function_privilege($1,$2,'EXECUTE') AS allowed", [role, clear],
-      )).rows[0]?.allowed).toBe(false);
-    }
+  test("the retired reset owner is inert", async () => {
     expect((await admin.query<{ allowed: boolean }>(
-      "SELECT has_function_privilege('context_use_dashboard',$1,'EXECUTE') AS allowed", [clear],
-    )).rows[0]?.allowed).toBe(true);
-    for (const role of ["context_use_dashboard", "context_use_mcp"]) {
-      expect((await admin.query<{ allowed: boolean }>(
-        "SELECT has_table_privilege($1,'knowledge_page_versions','DELETE') AS allowed", [role],
-      )).rows[0]?.allowed).toBe(false);
-    }
+      "SELECT has_schema_privilege('context_use_reset_owner','public','USAGE') AS allowed",
+    )).rows[0]?.allowed).toBe(false);
+    expect((await admin.query<{ count: string }>(
+      `SELECT count(*)::text AS count
+       FROM information_schema.role_table_grants
+       WHERE grantee='context_use_reset_owner' AND table_schema='public'`,
+    )).rows[0]?.count).toBe("0");
   });
 
   test("service roles cannot create database objects or assume internal owner roles", async () => {
@@ -795,8 +788,6 @@ describeDatabase("PostgreSQL security roles", () => {
            'confirm_knowledge_export_intent',
            'confirm_page_deletion_intent',
            'claim_knowledge_export_download',
-           'complete_knowledge_export_download',
-           'clear_knowledge',
            'delete_empty_knowledge_directory',
            'lock_automation_registry_for_operational_retarget',
            'lock_corpus_migration_hub_apply_tables',
@@ -810,8 +801,6 @@ describeDatabase("PostgreSQL security roles", () => {
     );
     expect(procedures.rows).toEqual([
       { proname: "claim_knowledge_export_download", owner: "context_use_boundary_owner", security_definer: true },
-      { proname: "clear_knowledge", owner: "context_use_reset_owner", security_definer: true },
-      { proname: "complete_knowledge_export_download", owner: "context_use_boundary_owner", security_definer: true },
       { proname: "confirm_knowledge_export_intent", owner: "context_use_boundary_owner", security_definer: true },
       { proname: "confirm_page_deletion_intent", owner: "context_use_boundary_owner", security_definer: true },
       { proname: "confirm_publication_intent", owner: "context_use_boundary_owner", security_definer: true },
@@ -1115,18 +1104,6 @@ describeDatabase("PostgreSQL security roles", () => {
       )).rows[0]?.allowed).toBe(false);
     }
 
-    const resetSignature = "clear_knowledge(uuid,text,text,uuid,text,integer,text,text,text,text,text,tsvector,text,text)";
-    const legacyResetSignature = "clear_knowledge_legacy_implementation(uuid,text,text,uuid,text,integer,text,text,text,text,text,tsvector,text,text)";
-    expect((await admin.query<{ allowed: boolean }>(
-      "SELECT has_function_privilege('context_use_dashboard',$1,'EXECUTE') AS allowed",
-      [resetSignature],
-    )).rows[0]?.allowed).toBe(true);
-    for (const role of ["context_use_dashboard", "context_use_mcp", "context_use_confirmation", "context_use_backup"]) {
-      expect((await admin.query<{ allowed: boolean }>(
-        "SELECT has_function_privilege($1,$2,'EXECUTE') AS allowed",
-        [role, legacyResetSignature],
-      )).rows[0]?.allowed).toBe(false);
-    }
   });
 
   test("dashboard and MCP can invoke only the guarded directory deletion capability", async () => {

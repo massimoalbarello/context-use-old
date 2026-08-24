@@ -1380,7 +1380,7 @@ describeDatabase("audited filesystem to hypermedia corpus migration", () => {
     )).rows[0]?.body_content_hash).toBe(ownerObject.body_content_hash);
   }, 60_000);
 
-  test("operational documents stay private across disablement and reset clears migration FKs", async () => {
+  test("operational documents stay private across disablement", async () => {
     const guide = await ensureRootGuide();
     await admin.query("BEGIN");
     try {
@@ -1500,50 +1500,10 @@ describeDatabase("audited filesystem to hypermedia corpus migration", () => {
       )).rejects.toThrow("cannot be reused");
       await admin.query("ROLLBACK TO SAVEPOINT expected_cross_role");
 
-      const resetIntentId = randomUUID();
-      await admin.query(
-        `INSERT INTO knowledge_export_intents(
-           id,owner_user_id,session_id,created_at,expires_at,confirmed_at,
-           download_started_at,reset_requested,download_completed_at
-         ) VALUES ($1,'context-use-owner','corpus-reset-test',now()-interval '1 minute',
-           now()+interval '1 hour',now(),now(),true,now())`,
-        [resetIntentId],
-      );
-      const resetRevisionId = randomUUID();
-      const resetBody = "# Reset guide\n";
-      const resetObject = bodyMetadata(resetRevisionId, resetBody);
-      await admin.query(
-        `SELECT clear_knowledge(
-           $1,'context-use-owner','corpus-reset-test',$2,$3,$4,$5,
-           'Knowledge','Reset root.','AGENTS.md','Reset guide.',
-           page_search_vector('agents','AGENTS.md','Reset guide.',$6),
-           'Reset global guide','context-use-template/default'
-         )`,
-        [resetIntentId, resetRevisionId, resetObject.body_object_key,
-          resetObject.body_size_bytes, resetObject.body_content_hash, resetBody],
-      );
-      expect((await admin.query("SELECT 1 FROM automation_registry")).rowCount).toBe(0);
-      expect((await admin.query("SELECT 1 FROM directory_hub_migrations")).rowCount).toBe(0);
-      expect((await admin.query(
-        "SELECT 1 FROM corpus_migration_runs WHERE phase IN ('applying','ready')",
-      )).rowCount).toBe(0);
-      expect((await admin.query(
-        "SELECT 1 FROM corpus_migration_automation_plans WHERE run_id=$1",
-        [applyingRunId],
-      )).rowCount).toBe(0);
       await admin.query("ROLLBACK");
     } catch (error) {
       await admin.query("ROLLBACK");
       throw error;
     }
-    // PostgreSQL sequence advances/setval calls are not rolled back with the reset transaction.
-    // Restore the next history key so this rollback regression remains repeatable on one database.
-    await admin.query(
-      `SELECT setval(
-         pg_get_serial_sequence('knowledge_page_changes','change_sequence'),
-         coalesce((SELECT max(change_sequence) FROM knowledge_page_changes),0)+1,
-         false
-       )`,
-    );
   }, 30_000);
 });

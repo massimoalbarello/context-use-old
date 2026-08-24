@@ -760,8 +760,8 @@ describeDatabase("path-independent document substrate", () => {
     )).rows[0]?.allowed).toBe(true);
     expect((await admin.query<{ allowed: boolean }>(
       `SELECT has_column_privilege(
-         'context_use_reset_owner','knowledge_settings','global_guide_document_id','SELECT'
+       'context_use_reset_owner','knowledge_settings','global_guide_document_id','SELECT'
        ) AS allowed`,
-    )).rows[0]?.allowed).toBe(true);
+    )).rows[0]?.allowed).toBe(false);
   });
 });

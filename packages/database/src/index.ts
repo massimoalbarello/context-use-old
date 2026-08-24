@@ -127,12 +127,6 @@ export {
   type TemplateResult,
 } from "./knowledge-templates.ts";
 export {
-  KnowledgeResetRepository,
-  type ClearableKnowledgeSummary,
-  type ClearedKnowledgeCounts,
-  type KnowledgeResetPrincipal,
-} from "./knowledge-reset.ts";
-export {
   DirectoryNotEmptyError,
   DirectoryRepository,
   DirectoryVersionConflictError,

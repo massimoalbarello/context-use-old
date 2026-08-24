@@ -72,13 +72,8 @@ export class KnowledgeExportRepository {
     });
   }
 
-  async createIntent(
-    principal: KnowledgeExportPrincipal,
-    resetRequested = false,
-  ) {
+  async createIntent(principal: KnowledgeExportPrincipal) {
     return transaction(this.dashboardPool, async (client) => {
-      // An intent whose reset already ran stays readable so its archive remains
-      // downloadable, but it must never be reused to clear knowledge again.
       const discarded = await client.query<{ id: string }>(
         `DELETE FROM knowledge_export_intents
          WHERE expires_at <= now()
@@ -89,10 +84,10 @@ export class KnowledgeExportRepository {
       const id = randomUUID();
       const inserted = await client.query<{ id: string; expires_at: Date }>(
         `INSERT INTO knowledge_export_intents(
-           id,owner_user_id,session_id,reset_requested,expires_at
-         ) VALUES ($1,$2,$3,$4,now()+interval '5 minutes')
+           id,owner_user_id,session_id,expires_at
+         ) VALUES ($1,$2,$3,now()+interval '5 minutes')
          RETURNING id,expires_at`,
-        [id, principal.ownerUserId, principal.sessionId, resetRequested],
+        [id, principal.ownerUserId, principal.sessionId],
       );
       const summary = await client.query<{
         page_count: string;
@@ -128,7 +123,6 @@ export class KnowledgeExportRepository {
         page_count: Number(summary.rows[0]!.page_count),
         asset_count: Number(summary.rows[0]!.asset_count),
         total_bytes: Number(summary.rows[0]!.total_bytes),
-        reset_requested: resetRequested,
         discarded_export_ids: discarded.rows.map(({ id: discardedId }) => discardedId),
       };
     });
@@ -142,12 +136,8 @@ export class KnowledgeExportRepository {
       expires_at: Date;
       confirmed_at: Date | null;
       download_started_at: Date | null;
-      download_completed_at: Date | null;
-      reset_requested: boolean;
-      reset_completed_at: Date | null;
     }>(
-      `SELECT id,owner_user_id,session_id,expires_at,confirmed_at,download_started_at,
-         download_completed_at,reset_requested,reset_completed_at
+      `SELECT id,owner_user_id,session_id,expires_at,confirmed_at,download_started_at
        FROM knowledge_export_intents
        WHERE id=$1`,
       [id],
