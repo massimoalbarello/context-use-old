@@ -105,6 +105,22 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       body: "{}",
     }));
     expect(confirm.status).toBe(401);
+    for (const [path, method] of [
+      ["/api/dashboard/knowledge-bundle-export-intents", "POST"],
+      ["/api/dashboard/knowledge-bundles/11111111-1111-4111-8111-111111111111/status", "GET"],
+      ["/api/dashboard/knowledge-bundles/11111111-1111-4111-8111-111111111111/download", "GET"],
+      ["/api/dashboard/knowledge-imports", "POST"],
+      ["/api/dashboard/knowledge-imports/11111111-1111-4111-8111-111111111111/status", "GET"],
+      ["/api/dashboard/knowledge-imports/confirm", "POST"],
+    ] as const) {
+      const response = await application!.handle(new Request(`http://localhost:3000${path}`, {
+        method,
+        headers: { authorization: "Bearer forged", "content-type": "application/json",
+          ...(path.endsWith("/download") ? { "sec-fetch-site": "same-origin" } : {}) },
+        ...(method === "POST" ? { body: "{}" } : {}),
+      }));
+      expect(response.status).toBe(401);
+    }
   });
 
   test("bearer credentials cannot create or confirm permanent page deletions", async () => {

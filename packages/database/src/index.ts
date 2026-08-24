@@ -93,11 +93,26 @@ export {
 export {
   KnowledgeExportRepository,
   type KnowledgeExportAsset,
+  type KnowledgeExportKind,
   type KnowledgeExportLink,
   type KnowledgeExportPage,
   type KnowledgeExportPrincipal,
   type KnowledgeExportSnapshot,
 } from "./exports.ts";
+export {
+  KNOWLEDGE_BUNDLE_FORMAT,
+  KNOWLEDGE_BUNDLE_DATASETS,
+  KNOWLEDGE_BUNDLE_PART_SIZE,
+  KNOWLEDGE_BUNDLE_VERSION,
+  KnowledgeBundleRepository,
+  type KnowledgeBundleExportRecord,
+  type KnowledgeBundleExportStatus,
+  type KnowledgeBundleImportPart,
+  type KnowledgeBundleImportObjectAuthorization,
+  type KnowledgeBundleImportStatus,
+  type KnowledgeBundleObject,
+  type KnowledgeBundlePrincipal,
+} from "./knowledge-bundles.ts";
 export {
   PublicEntrypointRepository,
   PublicRepository,

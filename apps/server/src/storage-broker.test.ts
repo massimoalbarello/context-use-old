@@ -17,6 +17,7 @@ const publishedKey = "objects/11111111-1111-4111-8111-111111111111";
 const privateKey = "objects/22222222-2222-4222-8222-222222222222";
 const newKey = "objects/33333333-3333-4333-8333-333333333333";
 const exportKey = "exports/44444444-4444-4444-8444-444444444444.zip";
+const bundleKey = "bundles/44444444-4444-4444-8444-444444444444.cuse";
 const publicDocumentKey = "documents/public/55555555-5555-4555-8555-555555555555.md";
 const publicArtifactKey = "artifacts/public/88888888-8888-4888-8888-888888888888";
 
@@ -99,6 +100,34 @@ class MemoryStorage implements ObjectStorageBackend {
   async deleteGenerated(objectKey: string): Promise<void> {
     this.objects.delete(objectKey);
     this.generated.delete(objectKey);
+  }
+
+  async writeBundle(objectKey: string, body: ReadableStream<Uint8Array> | null): Promise<GeneratedObjectMetadata> {
+    return this.writeGenerated(objectKey, body);
+  }
+
+  async inspectBundle(objectKey: string): Promise<GeneratedObjectMetadata | null> {
+    return this.inspectGenerated(objectKey);
+  }
+
+  async deleteBundle(objectKey: string): Promise<void> {
+    return this.deleteGenerated(objectKey);
+  }
+
+  async writeImportPart(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void> {
+    return this.writeOnce(asset, body);
+  }
+
+  async inspectImportPart(objectKey: string): Promise<GeneratedObjectMetadata | null> {
+    const bytes = this.objects.get(objectKey);
+    return bytes ? {
+      sizeBytes: bytes.byteLength,
+      contentHash: createHash("sha256").update(bytes).digest("hex"),
+    } : null;
+  }
+
+  async deleteImportPart(objectKey: string): Promise<void> {
+    return this.delete(objectKey);
   }
 
   async exists(objectKey: string): Promise<boolean> {
@@ -651,6 +680,88 @@ describe("storage broker capabilities", () => {
       method: "DELETE",
     }))).status).toBe(204);
     expect(await storage.inspectGenerated(exportKey)).toBeNull();
+  });
+
+  test("stages full bundles and resumable import parts behind the dashboard capability", async () => {
+    const storage = new MemoryStorage();
+    storage.objects.set(publicDocumentKey, Buffer.from("retained public projection"));
+    const app = createStorageBrokerApp({ storage, privateAssets: privateAssets({}), tokens });
+    const bundle = Buffer.from("CONTEXT-USE-KNOWLEDGE-BUNDLE-V1\ncomplete");
+    const staged = await app.handle(authorized(tokens.dashboard, `/private/bundle?key=${encodeURIComponent(bundleKey)}`, {
+      method: "PUT",
+      body: bundle,
+    }));
+    expect(staged.status).toBe(201);
+    expect(await (await app.handle(authorized(tokens.dashboard, `/private/bundle?key=${encodeURIComponent(bundleKey)}`))).text())
+      .toBe(bundle.toString());
+    expect(await (await app.handle(authorized(
+      tokens.dashboard,
+      `/private/bundle-source?key=${encodeURIComponent(publicDocumentKey)}`,
+    ))).text()).toBe("retained public projection");
+    expect((await app.handle(authorized(
+      tokens.mcp,
+      `/private/bundle-source?key=${encodeURIComponent(publicDocumentKey)}`,
+    ))).status).toBe(404);
+
+    const importId = "77777777-7777-4777-8777-777777777777";
+    const part = Buffer.from("one resumable bundle part");
+    const partHash = createHash("sha256").update(part).digest("hex");
+    const requestPart = (token: string, hash = partHash) => authorized(token, "/private/import-part", {
+      method: "PUT",
+      headers: {
+        "content-length": String(part.byteLength),
+        "x-import-id": importId,
+        "x-part-number": "0",
+        "x-object-key": `imports/${importId}/parts/0`,
+        "x-content-sha256": hash,
+      },
+      body: part,
+    });
+    expect((await app.handle(requestPart(tokens.mcp))).status).toBe(404);
+    expect((await app.handle(requestPart(tokens.dashboard))).status).toBe(204);
+    expect((await app.handle(requestPart(tokens.dashboard))).status).toBe(204);
+    expect((await app.handle(requestPart(tokens.dashboard, "a".repeat(64)))).status).toBe(404);
+  });
+
+  test("writes imported objects only when confirmed staging metadata authorizes exact bytes", async () => {
+    const storage = new MemoryStorage();
+    const importId = "77777777-7777-4777-8777-777777777777";
+    const objectId = "99999999-9999-4999-8999-999999999999";
+    const objectKey = `objects/${objectId}`;
+    const body = Buffer.from("restored immutable bytes");
+    const hash = createHash("sha256").update(body).digest("hex");
+    const app = createStorageBrokerApp({
+      storage,
+      privateAssets: privateAssets({}),
+      tokens,
+      knowledgeBundles: {
+        importObjectAuthorization: async (id, key) => id === importId && key === objectKey ? {
+          import_id: importId,
+          ordinal: 1,
+          object_kind: "asset",
+          object_key: objectKey,
+          size_bytes: body.byteLength,
+          content_hash: hash,
+          content_type: "application/octet-stream",
+          confirmed_at: new Date(),
+          expires_at: new Date(Date.now() + 60_000),
+          status: "restoring",
+        } : null,
+      },
+    });
+    const imported = await app.handle(authorized(tokens.dashboard, "/private/import-object", {
+      method: "PUT",
+      headers: {
+        "content-length": String(body.byteLength),
+        "x-import-id": importId,
+        "x-object-key": objectKey,
+        "x-content-type": "application/octet-stream",
+        "x-content-sha256": hash,
+      },
+      body,
+    }));
+    expect(imported.status).toBe(204);
+    expect(Buffer.from(storage.objects.get(objectKey)!)).toEqual(body);
   });
 
   test("dashboard storage client round-trips generated metadata and resumable bytes", async () => {

@@ -7,6 +7,7 @@ import {
 } from "./documents.ts";
 
 export type KnowledgeExportPrincipal = { ownerUserId: string; sessionId: string };
+export type KnowledgeExportKind = "portable" | "full";
 
 export type KnowledgeExportPage = {
   document_id: string;
@@ -72,7 +73,7 @@ export class KnowledgeExportRepository {
     });
   }
 
-  async createIntent(principal: KnowledgeExportPrincipal) {
+  async createIntent(principal: KnowledgeExportPrincipal, exportKind: KnowledgeExportKind = "portable") {
     return transaction(this.dashboardPool, async (client) => {
       const discarded = await client.query<{ id: string }>(
         `DELETE FROM knowledge_export_intents
@@ -84,10 +85,10 @@ export class KnowledgeExportRepository {
       const id = randomUUID();
       const inserted = await client.query<{ id: string; expires_at: Date }>(
         `INSERT INTO knowledge_export_intents(
-           id,owner_user_id,session_id,expires_at
-         ) VALUES ($1,$2,$3,now()+interval '5 minutes')
+           id,owner_user_id,session_id,expires_at,export_kind
+         ) VALUES ($1,$2,$3,now()+interval '5 minutes',$4)
          RETURNING id,expires_at`,
-        [id, principal.ownerUserId, principal.sessionId],
+        [id, principal.ownerUserId, principal.sessionId, exportKind],
       );
       const summary = await client.query<{
         page_count: string;
@@ -119,6 +120,7 @@ export class KnowledgeExportRepository {
       );
       return {
         id,
+        export_kind: exportKind,
         expires_at: inserted.rows[0]!.expires_at,
         page_count: Number(summary.rows[0]!.page_count),
         asset_count: Number(summary.rows[0]!.asset_count),
@@ -136,8 +138,9 @@ export class KnowledgeExportRepository {
       expires_at: Date;
       confirmed_at: Date | null;
       download_started_at: Date | null;
+      export_kind: KnowledgeExportKind;
     }>(
-      `SELECT id,owner_user_id,session_id,expires_at,confirmed_at,download_started_at
+      `SELECT id,owner_user_id,session_id,expires_at,confirmed_at,download_started_at,export_kind
        FROM knowledge_export_intents
        WHERE id=$1`,
       [id],

@@ -1,6 +1,13 @@
 import { Client } from "pg";
 
 export const DEVELOPMENT_RESET_TABLES = [
+  "knowledge_bundle_import_objects",
+  "knowledge_bundle_import_records",
+  "knowledge_bundle_import_parts",
+  "knowledge_bundle_imports",
+  "knowledge_bundle_export_objects",
+  "knowledge_bundle_export_records",
+  "knowledge_bundle_exports",
   "page_publications",
   "asset_publications",
   "public_page_artifacts",

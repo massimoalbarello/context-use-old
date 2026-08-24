@@ -60,3 +60,33 @@ export async function uploadAssetContent(assetId: string, file: File, contentTyp
     throw new ApiError(response.status, error.error ?? "upload_failed", error.message ?? response.statusText);
   }
 }
+
+export async function uploadKnowledgeBundlePart(
+  importId: string,
+  partNumber: number,
+  part: Blob,
+  contentHash: string,
+): Promise<void> {
+  if (!csrfToken) await refreshCsrf();
+  const response = await fetch(
+    `/api/dashboard/knowledge-imports/${encodeURIComponent(importId)}/parts/${partNumber}`,
+    {
+      method: "PUT",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-content-sha256": contentHash,
+        "x-csrf-token": csrfToken,
+      },
+      body: part,
+      credentials: "include",
+      cache: "no-store",
+    },
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "upload_failed", message: response.statusText })) as {
+      error?: string;
+      message?: string;
+    };
+    throw new ApiError(response.status, error.error ?? "upload_failed", error.message ?? response.statusText);
+  }
+}

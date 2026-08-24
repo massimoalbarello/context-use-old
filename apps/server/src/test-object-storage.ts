@@ -73,6 +73,45 @@ export class MemoryObjectStorage implements ObjectStorageBackend {
     this.objects.delete(objectKey);
   }
 
+  async writeBundle(
+    objectKey: string,
+    body: ReadableStream<Uint8Array> | null,
+  ): Promise<GeneratedObjectMetadata> {
+    const value = await collect(body);
+    if (!value.byteLength) throw new Error("Generated object is empty");
+    const metadata = {
+      sizeBytes: value.byteLength,
+      contentHash: createHash("sha256").update(value).digest("hex"),
+    };
+    this.objects.set(objectKey, value);
+    this.generated.set(objectKey, metadata);
+    return metadata;
+  }
+
+  async inspectBundle(objectKey: string): Promise<GeneratedObjectMetadata | null> {
+    return this.inspectGenerated(objectKey);
+  }
+
+  async deleteBundle(objectKey: string): Promise<void> {
+    return this.deleteGenerated(objectKey);
+  }
+
+  async writeImportPart(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void> {
+    return this.writeOnce(asset, body);
+  }
+
+  async inspectImportPart(objectKey: string): Promise<GeneratedObjectMetadata | null> {
+    const value = this.objects.get(objectKey);
+    return value ? {
+      sizeBytes: value.byteLength,
+      contentHash: createHash("sha256").update(value).digest("hex"),
+    } : null;
+  }
+
+  async deleteImportPart(objectKey: string): Promise<void> {
+    return this.delete(objectKey);
+  }
+
   async delete(objectKey: string): Promise<void> {
     this.objects.delete(objectKey);
   }

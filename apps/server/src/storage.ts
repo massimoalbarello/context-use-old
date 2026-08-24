@@ -43,6 +43,12 @@ export interface ObjectStorageBackend extends ObjectStorage {
   writeGenerated(objectKey: string, body: ReadableStream<Uint8Array> | null): Promise<GeneratedObjectMetadata>;
   inspectGenerated(objectKey: string): Promise<GeneratedObjectMetadata | null>;
   deleteGenerated(objectKey: string): Promise<void>;
+  writeBundle(objectKey: string, body: ReadableStream<Uint8Array> | null): Promise<GeneratedObjectMetadata>;
+  inspectBundle(objectKey: string): Promise<GeneratedObjectMetadata | null>;
+  deleteBundle(objectKey: string): Promise<void>;
+  writeImportPart(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void>;
+  inspectImportPart(objectKey: string): Promise<GeneratedObjectMetadata | null>;
+  deleteImportPart(objectKey: string): Promise<void>;
 }
 
 export type S3StorageConfig = {
@@ -104,7 +110,7 @@ export class ObjectAlreadyExistsError extends Error {
 }
 
 const S3_MULTIPART_PART_SIZE = 8 * 1024 * 1024;
-const MAX_GENERATED_OBJECT_BYTES = 5 * 1024 ** 3 + 64 * 1024 ** 2;
+const MAX_GENERATED_OBJECT_BYTES = 64 * 1024 ** 3;
 
 function generatedManifestKey(objectKey: string): string {
   return `${objectKey}.json`;
@@ -329,11 +335,32 @@ export class S3Storage implements ObjectStorageBackend {
     objectKey: string,
     body: ReadableStream<Uint8Array> | null,
   ): Promise<GeneratedObjectMetadata> {
+    return this.writeGeneratedObject(objectKey, body, "application/zip", true);
+  }
+
+  async writeBundle(
+    objectKey: string,
+    body: ReadableStream<Uint8Array> | null,
+  ): Promise<GeneratedObjectMetadata> {
+    return this.writeGeneratedObject(
+      objectKey,
+      body,
+      "application/vnd.context-use.knowledge-bundle",
+      false,
+    );
+  }
+
+  private async writeGeneratedObject(
+    objectKey: string,
+    body: ReadableStream<Uint8Array> | null,
+    contentType: string,
+    requireFinalizedZip: boolean,
+  ): Promise<GeneratedObjectMetadata> {
     if (!body) throw new Error("Generated object body is missing");
     const created = await this.client.send(new CreateMultipartUploadCommand({
       Bucket: this.options.bucket,
       Key: objectKey,
-      ContentType: "application/zip",
+      ContentType: contentType,
       ChecksumAlgorithm: "SHA256",
       Metadata: { generated: "knowledge-export" },
       ...this.encryption(),
@@ -398,20 +425,22 @@ export class S3Storage implements ObjectStorageBackend {
     }
 
     const metadata = { sizeBytes, contentHash: hash.digest("hex") };
-    const footerRange = zipFooterRange(sizeBytes);
-    if (!footerRange) {
-      await this.delete(objectKey);
-      throw new Error("Generated ZIP is too short to be finalized");
-    }
-    const footerResult = await this.client.send(new GetObjectCommand({
-      Bucket: this.options.bucket,
-      Key: objectKey,
-      Range: `bytes=${footerRange.start}-${footerRange.end}`,
-    }));
-    if (!footerResult.Body
-        || !isFinalizedZipFooter(await footerResult.Body.transformToByteArray())) {
-      await this.delete(objectKey);
-      throw new Error("Generated ZIP central directory was not finalized");
+    if (requireFinalizedZip) {
+      const footerRange = zipFooterRange(sizeBytes);
+      if (!footerRange) {
+        await this.delete(objectKey);
+        throw new Error("Generated ZIP is too short to be finalized");
+      }
+      const footerResult = await this.client.send(new GetObjectCommand({
+        Bucket: this.options.bucket,
+        Key: objectKey,
+        Range: `bytes=${footerRange.start}-${footerRange.end}`,
+      }));
+      if (!footerResult.Body
+          || !isFinalizedZipFooter(await footerResult.Body.transformToByteArray())) {
+        await this.delete(objectKey);
+        throw new Error("Generated ZIP central directory was not finalized");
+      }
     }
     const manifest = generatedManifest(metadata);
     const manifestHash = createHash("sha256").update(manifest).digest("base64");
@@ -448,11 +477,45 @@ export class S3Storage implements ObjectStorageBackend {
     }
   }
 
+  async inspectBundle(objectKey: string): Promise<GeneratedObjectMetadata | null> {
+    return this.inspectGenerated(objectKey);
+  }
+
   async deleteGenerated(objectKey: string): Promise<void> {
     await Promise.all([
       this.delete(objectKey),
       this.delete(generatedManifestKey(objectKey)),
     ]);
+  }
+
+  async deleteBundle(objectKey: string): Promise<void> {
+    return this.deleteGenerated(objectKey);
+  }
+
+  async writeImportPart(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void> {
+    return this.writeOnce(asset, body);
+  }
+
+  async inspectImportPart(objectKey: string): Promise<GeneratedObjectMetadata | null> {
+    try {
+      const result = await this.client.send(new HeadObjectCommand({
+        Bucket: this.options.bucket,
+        Key: objectKey,
+        ChecksumMode: "ENABLED",
+      }));
+      const sizeBytes = Number(result.ContentLength);
+      const contentHash = result.Metadata?.sha256 ?? "";
+      return Number.isSafeInteger(sizeBytes) && sizeBytes > 0 && /^[a-f0-9]{64}$/.test(contentHash)
+        ? { sizeBytes, contentHash }
+        : null;
+    } catch (error) {
+      if (error instanceof Error && ["NoSuchKey", "NotFound"].includes(error.name)) return null;
+      throw error;
+    }
+  }
+
+  async deleteImportPart(objectKey: string): Promise<void> {
+    await this.delete(objectKey);
   }
 
   async delete(objectKey: string): Promise<void> {
