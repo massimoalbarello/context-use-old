@@ -64,10 +64,14 @@ describeDatabase("retained bootstrap allocation normalization", () => {
   let admin: Client;
   let corpus: Pool;
   let bodies: MemoryMarkdownStore;
+  let corpusCanLogin = false;
 
   beforeAll(async () => {
     maintenance = new Client({ connectionString: maintenanceUrl });
     await maintenance.connect();
+    corpusCanLogin = (await maintenance.query<{ rolcanlogin: boolean }>(
+      "SELECT rolcanlogin FROM pg_roles WHERE rolname='context_use_corpus'",
+    )).rows[0]?.rolcanlogin ?? false;
     await maintenance.query(`CREATE DATABASE ${identifier(database)}`);
     admin = new Client({ connectionString: adminUrl });
     await admin.connect();
@@ -89,6 +93,10 @@ describeDatabase("retained bootstrap allocation normalization", () => {
     await admin?.end().catch(() => {});
     if (maintenance) {
       await maintenance.query(`DROP DATABASE IF EXISTS ${identifier(database)} WITH (FORCE)`);
+      // Roles are cluster-global: applying the baseline to the isolated fixture
+      // intentionally sets the real corpus role NOLOGIN, so preserve the
+      // provisioned state of the disposable test cluster for subsequent suites.
+      if (corpusCanLogin) await maintenance.query("ALTER ROLE context_use_corpus LOGIN");
       await maintenance.end();
     }
   });
