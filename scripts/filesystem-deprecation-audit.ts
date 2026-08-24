@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -54,7 +55,7 @@ function command(arguments_: string[]): { exitCode: number; output: string } {
 
 function liveFiles(): string[] {
   const result = command([
-    "rg", "--files", "apps", "packages", "deploy", ".github/workflows", "scripts",
+    "git", "ls-files", "--", "apps", "packages", "deploy", ".github/workflows", "scripts",
     "Dockerfile", "compose.yml", "compose.test.yml",
   ]);
   if (result.exitCode !== 0) throw new Error(`Unable to enumerate audit scope:\n${result.output}`);
@@ -71,12 +72,15 @@ export function auditFilesystemDeprecation(): string[] {
   const files = liveFiles();
   const violations: string[] = [];
   for (const rule of RULES) {
-    const result = command(["rg", "-n", "--pcre2", rule.pattern, "--", ...files]);
-    if (result.exitCode === 0) {
-      violations.push(`${rule.label}:\n${result.output.trimEnd()}`);
-    } else if (result.exitCode !== 1) {
-      throw new Error(`Audit search failed for ${rule.label}:\n${result.output}`);
+    const pattern = new RegExp(rule.pattern);
+    const matches: string[] = [];
+    for (const path of files) {
+      const lines = readFileSync(join(repositoryRoot, path), "utf8").split("\n");
+      for (const [index, line] of lines.entries()) {
+        if (pattern.test(line)) matches.push(`${path}:${index + 1}:${line}`);
+      }
     }
+    if (matches.length) violations.push(`${rule.label}:\n${matches.join("\n")}`);
   }
   return violations;
 }
