@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import type {
-  AssetRepository,
-  DirectoryRepository,
+  DocumentLinkRepository,
   KnowledgeSettingsRepository,
   PageRepository,
 } from "@context-use/database";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { config } from "./config.ts";
 import { createMcpRequestHandler } from "./mcp.ts";
+import type { McpDocumentRepositories } from "./mcp-server.ts";
 
 const originalFetch = globalThis.fetch;
 
@@ -60,16 +60,13 @@ describe("MCP audience binding", () => {
     );
     spyOn(globalThis, "fetch").mockImplementation(fetchJwks);
 
-    const repositories = [
-      {} as PageRepository,
-      {} as DirectoryRepository,
-      {} as AssetRepository,
-    ] as const;
     const knowledge = createMcpRequestHandler(
-      ...repositories,
+      {} as PageRepository,
       undefined,
       undefined,
       {} as KnowledgeSettingsRepository,
+      {} as DocumentLinkRepository,
+      {} as McpDocumentRepositories,
     );
     const knowledgeToken = await accessToken(config.MCP_RESOURCE, privateKey);
     const wrongAudienceToken = await accessToken(`${config.MCP_RESOURCE}/retired`, privateKey);
@@ -80,7 +77,7 @@ describe("MCP audience binding", () => {
     const knowledgeTools = ((await knowledgeResponse.json()) as {
       result: { tools: Array<{ name: string }> };
     }).result.tools.map(({ name }) => name);
-    expect(knowledgeTools).toContain("create_page");
+    expect(knowledgeTools).toContain("create_document");
     expect(knowledgeTools.some((name) => name.includes("automation"))).toBe(false);
 
     expect((await knowledge(toolListRequest(config.MCP_RESOURCE, wrongAudienceToken))).status).toBe(401);
@@ -103,11 +100,11 @@ describe("MCP audience binding", () => {
 
     const knowledge = createMcpRequestHandler(
       {} as PageRepository,
-      {} as DirectoryRepository,
-      {} as AssetRepository,
       undefined,
       undefined,
       {} as KnowledgeSettingsRepository,
+      {} as DocumentLinkRepository,
+      {} as McpDocumentRepositories,
     );
     const token = await accessToken(config.MCP_RESOURCE, privateKey);
     expect((await knowledge(toolListRequest(config.MCP_RESOURCE, token))).status).toBe(401);

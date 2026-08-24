@@ -1,6 +1,5 @@
 import {
   AssetRepository,
-  DirectoryRepository,
   DocumentAssetRepository,
   DocumentLinkRepository,
   KnowledgeDocumentRepository,
@@ -41,7 +40,6 @@ async function loadCorpusRecordReader(): Promise<SourceRecordReader> {
 }
 
 const pool = createPool(config.MCP_DATABASE_URL, { application_name: "context-use-private-mcp" });
-const directories = new DirectoryRepository(pool);
 const assets = new AssetRepository(pool);
 const storage = new BrokeredStorage({
   socketPath: config.STORAGE_SOCKET_PATH,
@@ -68,8 +66,6 @@ const sourceRecords = config.EVAL_CORPUS_PATH
     : undefined;
 const knowledgeMcp = createMcpRequestHandler(
   pages,
-  directories,
-  assets,
   sourceRecords,
   recordDocuments,
   knowledgeSettings,
