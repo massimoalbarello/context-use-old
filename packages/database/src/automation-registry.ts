@@ -68,6 +68,15 @@ export class AutomationRegistryRepository {
     return result.rows;
   }
 
+  async list(): Promise<AutomationRegistration[]> {
+    const result = await this.pool.query<AutomationRegistration>(
+      `SELECT ${RETURNING}
+       FROM automation_registry
+       ORDER BY disabled_at NULLS FIRST,key,id`,
+    );
+    return result.rows;
+  }
+
   /**
    * Adopt one exact operational contract without ever silently retargeting an
    * existing key. Retries preserve the registry id and all owner state,

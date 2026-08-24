@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import {
+  AutomationRegistryRepository,
   DocumentAssetRepository,
   KnowledgeDocumentRepository,
   KnowledgeExportRepository,
@@ -72,6 +73,7 @@ const pathlessPublications = new PathlessPublicationRepository(dashboardPool);
 const pathlessPublicEntrypoint = new PathlessPublicEntrypointRepository(dashboardPool);
 const knowledgeExports = new KnowledgeExportRepository(dashboardPool, markdownObjects);
 const dashboardDocumentCatalog = new PrivateDocumentCatalogRepository(dashboardPool);
+const dashboardAutomations = new AutomationRegistryRepository(dashboardPool);
 
 async function dashboardAssetPublication(asset: {
   document_id: string;
@@ -600,6 +602,32 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
       ? await dashboardDocumentCatalog.search(parsed.query, parsed.options)
       : await dashboardDocumentCatalog.list(parsed.options);
     return json(dashboardDocumentCatalogPage(page));
+  })
+  .get("/api/dashboard/automations", async ({ request }) => {
+    await ownerRequest(request);
+    const registrations = await dashboardAutomations.list();
+    return json({
+      automations: await Promise.all(registrations.map(async (registration) => {
+        const [instructions, state] = await Promise.all([
+          dashboardDocumentCatalog.get(registration.instructions_document_id),
+          registration.state_document_id
+            ? dashboardDocumentCatalog.get(registration.state_document_id)
+            : Promise.resolve(null),
+        ]);
+        return {
+          id: registration.id,
+          key: registration.key,
+          name: registration.name,
+          enabled: registration.disabled_at === null,
+          updated_at: new Date(registration.updated_at).toISOString(),
+          disabled_at: registration.disabled_at === null
+            ? null
+            : new Date(registration.disabled_at).toISOString(),
+          instructions: instructions ? dashboardDocumentSummary(instructions) : null,
+          state: state ? dashboardDocumentSummary(state) : null,
+        };
+      })),
+    });
   })
   .post("/api/dashboard/documents", async ({ request }) => {
     const principal = await ownerRequest(request, true);
