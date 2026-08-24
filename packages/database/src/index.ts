@@ -6,6 +6,11 @@ export {
   type HypermediaBootstrapDocumentKind,
 } from "./hypermedia-bootstrap.ts";
 export {
+  defaultHypermediaBootstrapTemplate,
+  type HypermediaBootstrapTemplate,
+  type HypermediaBootstrapTemplateDocument,
+} from "./default-knowledge-template.ts";
+export {
   assertMarkdownObject,
   MAX_KNOWLEDGE_PAGE_BYTES,
   MAX_MARKDOWN_DOCUMENT_BYTES,
@@ -93,33 +98,9 @@ export type {
 export { PageDeletionRepository } from "./page-deletion.ts";
 export type { PageDeletionPrincipal } from "./page-deletion.ts";
 export {
-  formatTemplateResult,
-  knowledgeTemplateBaseline,
-  knowledgeTemplateMigrationContract,
-  knowledgeTemplatePageContractMatches,
-  reconcileKnowledgeTemplate,
-  type KnowledgeTemplateBaseline,
-  type KnowledgeTemplateMigrationContract,
-  type KnowledgeTemplatePageContract,
-  type TemplateAction,
-  type TemplateRepositories,
-  type TemplateResult,
-} from "./knowledge-templates.ts";
-export {
-  DirectoryNotEmptyError,
-  DirectoryRepository,
-  DirectoryVersionConflictError,
-  RootDirectoryDeletionError,
-  type DirectoryContents,
-} from "./directories.ts";
-export {
-  PageRepository,
   PublicationStateError,
   VersionConflictError,
-  type KnowledgePageChange,
-  type KnowledgePageChangeBatch,
-  type KnowledgePageChangeKind,
-} from "./pages.ts";
+} from "./knowledge-documents.ts";
 export {
   KnowledgeExportRepository,
   type KnowledgeExportAsset,

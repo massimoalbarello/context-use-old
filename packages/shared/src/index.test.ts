@@ -3,33 +3,28 @@ import {
   archiveDocumentAssetSchema,
   archiveKnowledgeDocumentSchema,
   createDocumentAssetSchema,
-  createDirectorySchema,
   createKnowledgeDocumentSchema,
   dashboardDocumentCatalogPageSchema,
   dashboardDocumentNeighborhoodSchema,
   dashboardDocumentSummarySchema,
-  deleteDirectorySchema,
-  createPageSchema,
   PAGE_MARKDOWN_BODY_DESCRIPTION,
-  summarizeTemplateResult,
   updateKnowledgeDocumentSchema,
-  updatePageSchema,
 } from "./index.ts";
 
 const pageId = "11111111-1111-4111-8111-111111111111";
 const versionId = "22222222-2222-4222-8222-222222222222";
 
 describe("strict mutation schemas", () => {
-  test("describes the safe image and video formatting contract at the page authoring boundary", () => {
-    expect(createPageSchema.shape.body_markdown.description).toBe(PAGE_MARKDOWN_BODY_DESCRIPTION);
-    expect(updatePageSchema.shape.body_markdown.description).toContain("layout=half");
-    expect(updatePageSchema.shape.body_markdown.description).toContain("consecutive images or videos");
-    expect(createPageSchema.shape.body_markdown.description).toContain("[Label](context-use://document/<uuid>)");
-    expect(createPageSchema.shape.body_markdown.description).toContain("![Alt](context-use://document/<uuid>)");
-    expect(createPageSchema.shape.body_markdown.description).not.toContain("context-use://page/");
-    expect(createPageSchema.shape.body_markdown.description).not.toContain("context-use://asset/");
-    expect(createPageSchema.shape.body_markdown.description).toContain("shape=auto|square|portrait|landscape");
-    expect(createPageSchema.shape.body_markdown.description).toContain("Example: ![Portrait]");
+  test("describes the safe image and video formatting contract at the document boundary", () => {
+    expect(createKnowledgeDocumentSchema.shape.body_markdown.description).toBe(PAGE_MARKDOWN_BODY_DESCRIPTION);
+    expect(updateKnowledgeDocumentSchema.shape.body_markdown.description).toContain("layout=half");
+    expect(updateKnowledgeDocumentSchema.shape.body_markdown.description).toContain("consecutive images or videos");
+    expect(createKnowledgeDocumentSchema.shape.body_markdown.description).toContain("[Label](context-use://document/<uuid>)");
+    expect(createKnowledgeDocumentSchema.shape.body_markdown.description).toContain("![Alt](context-use://document/<uuid>)");
+    expect(createKnowledgeDocumentSchema.shape.body_markdown.description).not.toContain("context-use://page/");
+    expect(createKnowledgeDocumentSchema.shape.body_markdown.description).not.toContain("context-use://asset/");
+    expect(createKnowledgeDocumentSchema.shape.body_markdown.description).toContain("shape=auto|square|portrait|landscape");
+    expect(createKnowledgeDocumentSchema.shape.body_markdown.description).toContain("Example: ![Portrait]");
   });
 
   test("document asset uploads bind metadata to an exact checksum and size", () => {
@@ -58,17 +53,7 @@ describe("strict mutation schemas", () => {
     }).success).toBe(false);
   });
 
-  test("ordinary page writes reject publication fields", () => {
-    expect(createPageSchema.safeParse({
-      path: "private/page", title: "Private", summary: "A private page.", body_markdown: "Body", commit_message: "Create page", public_path: "leak",
-    }).success).toBe(false);
-    expect(updatePageSchema.safeParse({
-      path: "private/page", title: "Private", summary: "A private page.", body_markdown: "Body", commit_message: "Update page",
-      expected_version_number: 1, published_version_id: versionId,
-    }).success).toBe(false);
-  });
-
-  test("pathless knowledge document writes reuse page constraints without accepting paths", () => {
+  test("knowledge document writes are pathless and reject publication fields", () => {
     expect(Object.keys(createKnowledgeDocumentSchema.shape).sort()).toEqual([
       "body_markdown", "commit_message", "summary", "title",
     ]);
@@ -89,6 +74,8 @@ describe("strict mutation schemas", () => {
     expect(createKnowledgeDocumentSchema.shape.summary.description).not.toContain("directory");
     expect(updateKnowledgeDocumentSchema.shape.summary.description).not.toContain("directory");
     expect(createKnowledgeDocumentSchema.safeParse({ ...create, path: "private/note" }).success)
+      .toBe(false);
+    expect(createKnowledgeDocumentSchema.safeParse({ ...create, public_path: "leak" }).success)
       .toBe(false);
     expect(createKnowledgeDocumentSchema.safeParse({ ...create, summary: "first\nsecond" }).success)
       .toBe(false);
@@ -198,63 +185,4 @@ describe("strict mutation schemas", () => {
     }).outbound.neighbors[0]?.document).toEqual(summary);
   });
 
-  test("pages require summaries while directory public-listing summaries are optional", () => {
-    expect(createPageSchema.safeParse({
-      path: "notes/example", title: "Example", body_markdown: "Body", commit_message: "Create example",
-    }).success).toBe(false);
-    expect(createPageSchema.safeParse({
-      path: "notes/example", title: "Example", summary: "First line.\nSecond line.", body_markdown: "Body", commit_message: "Create example",
-    }).success).toBe(false);
-    expect(createDirectorySchema.safeParse({
-      path: "notes", title: "Notes", summary: "Focused notes and observations.",
-    }).success).toBe(true);
-    expect(createDirectorySchema.parse({
-      path: "empty-notes", title: "Empty notes",
-    }).summary).toBe("");
-    expect(createDirectorySchema.safeParse({
-      path: "notes", title: "Notes", intro_markdown: "Not directory metadata.",
-    }).success).toBe(false);
-    expect(createDirectorySchema.safeParse({
-      path: "notes", title: "Notes", summary: "First line.\nSecond line.",
-    }).success).toBe(false);
-  });
-
-  test("ordinary page writes reserve about as a folder", () => {
-    expect(createPageSchema.safeParse({
-      path: "about",
-      title: "About",
-      summary: "An invalid page at a directory path.",
-      body_markdown: "",
-      commit_message: "Create about page",
-    }).success).toBe(false);
-    expect(createPageSchema.safeParse({
-      path: "about/intro",
-      title: "Intro",
-      summary: "A concise introduction to the owner.",
-      body_markdown: "",
-      commit_message: "Create intro page",
-    }).success).toBe(true);
-  });
-
-  test("directory deletion is bound to the version the caller inspected", () => {
-    expect(deleteDirectorySchema.safeParse({ expected_version_number: 3 }).success).toBe(true);
-    expect(deleteDirectorySchema.safeParse({}).success).toBe(false);
-    expect(deleteDirectorySchema.safeParse({ expected_version_number: 3, cascade: true }).success).toBe(false);
-  });
-
-});
-
-describe("knowledge template results", () => {
-  test("summarizes shared CLI and dashboard actions from structural replacement metadata", () => {
-    expect(summarizeTemplateResult({
-      template: "default",
-      applied: false,
-      actions: [
-        { action: "create-directory", path: "topics", detail: "Create Topics" },
-        { action: "replace-guide", path: "agents", detail: "Replace the guide", replaces_local: true },
-        { action: "conflict", path: "people/agents", detail: "Preserve archived guide" },
-        { action: "unchanged", path: "about/agents", detail: "Already current" },
-      ],
-    })).toEqual({ changes: 2, conflicts: 1, unchanged: 1, replacements: 1 });
-  });
 });

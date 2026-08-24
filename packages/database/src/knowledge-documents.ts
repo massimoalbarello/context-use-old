@@ -14,7 +14,20 @@ import {
   type MarkdownObjectStore,
 } from "./documents.ts";
 import { genericDocumentTargets } from "./document-link-contract.ts";
-import { PublicationStateError, VersionConflictError } from "./pages.ts";
+
+export class VersionConflictError extends Error {
+  constructor(readonly currentVersion: number) {
+    super(`Document changed; current revision is ${currentVersion}`);
+    this.name = "VersionConflictError";
+  }
+}
+
+export class PublicationStateError extends Error {
+  constructor() {
+    super("Published documents must be explicitly unpublished before they can be archived");
+    this.name = "PublicationStateError";
+  }
+}
 
 export type KnowledgeRevisionContractProvenance =
   | "authored"

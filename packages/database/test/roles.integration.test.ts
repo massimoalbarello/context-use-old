@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Client, Pool } from "pg";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { PageRepository } from "../src/index.ts";
+import { KnowledgeDocumentRepository } from "../src/index.ts";
 import { disposableDatabaseUrl } from "../src/disposable-database.ts";
 import { MemoryMarkdownStore } from "./memory-markdown-store.ts";
 
@@ -117,32 +117,29 @@ describeDatabase("PostgreSQL security roles", () => {
     const mcpPool = new Pool({ connectionString: adminUrl, max: 1 });
     try {
       await mcpPool.query("SET ROLE context_use_mcp");
-      const pages = new PageRepository(mcpPool, new MemoryMarkdownStore());
-      const path = `tests/mcp-operational-lock-${randomUUID()}`;
+      const documents = new KnowledgeDocumentRepository(mcpPool, new MemoryMarkdownStore());
       const actor = { kind: "mcp" as const, subject: "role-test" };
-      const created = await pages.create({
-        path,
+      const created = await documents.create({
         title: "MCP checked writer",
         summary: "Exercises the operational-document lock as the real MCP role.",
         body_markdown: "Initial body.",
         commit_message: "Create MCP role fixture",
       }, actor);
 
-      const updated = await pages.update(created.id, {
-        path,
+      const updated = await documents.update(created.document_id, {
         title: "MCP checked writer",
         summary: "Exercises the operational-document lock as the real MCP role.",
         body_markdown: "Updated body.",
         commit_message: "Update through MCP role",
-        expected_version_number: 1,
+        expected_revision_number: 1,
       }, actor);
-      expect(updated?.version_number).toBe(2);
+      expect(updated?.revision_number).toBe(2);
 
-      const archived = await pages.archive(created.id, {
+      const archived = await documents.archive(created.document_id, {
         commit_message: "Archive through MCP role",
-        expected_version_number: 2,
+        expected_revision_number: 2,
       }, actor);
-      expect(archived?.version_number).toBe(3);
+      expect(archived?.revision_number).toBe(3);
       expect(archived?.archived_at).not.toBeNull();
     } finally {
       await mcpPool.end();
@@ -1576,7 +1573,7 @@ describeDatabase("PostgreSQL security roles", () => {
     }
   });
 
-  test("scheduler state is absent and automation instructions use ordinary private pages", async () => {
+  test("scheduler and legacy publication entrypoints are absent", async () => {
     const removed = await admin.query<{
       schedules: string | null;
       versions: string | null;
@@ -1601,45 +1598,6 @@ describeDatabase("PostgreSQL security roles", () => {
       runs: null,
       provenance_columns: "0",
     });
-
-    await admin.query("BEGIN");
-    try {
-      const pageId = randomUUID();
-      const versionId = randomUUID();
-      await admin.query("SET LOCAL ROLE context_use_mcp");
-      await admin.query(
-        `INSERT INTO knowledge_pages(id,current_path,current_version_id,search_vector)
-         VALUES ($1,'automations/external-instructions',$2,page_search_vector(
-           'automations/external-instructions','External automation instructions',
-           'Instructions followed by an external automation harness.','Run externally.'
-         ))`,
-        [pageId, versionId],
-      );
-      await admin.query(
-        `INSERT INTO hypermedia_document_revisions(
-           id,document_id,revision_number,body_object_key,body_size_bytes,body_content_hash
-         ) VALUES (
-           $1::uuid,$2::uuid,1,'documents/private/'||$1::text||'.md',
-           octet_length($3),encode(digest(convert_to($3,'UTF8'),'sha256'),'hex')
-         )`,
-        [versionId, pageId, "Run externally."],
-      );
-      await admin.query(
-        `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,path,title,summary,
-           commit_message,actor_kind,actor_subject
-         ) VALUES (
-           $1,$2,1,'automations/external-instructions','External automation instructions',
-           'Instructions followed by an external automation harness.',
-           'Create external automation instructions','mcp','role-test'
-         )`,
-        [versionId, pageId],
-      );
-      await admin.query("SET CONSTRAINTS ALL IMMEDIATE");
-      await admin.query("RESET ROLE");
-    } finally {
-      await admin.query("ROLLBACK");
-    }
 
     expect((await admin.query<{ allowed: boolean }>(
       "SELECT has_any_column_privilege('context_use_mcp','publication_intents','INSERT') AS allowed",
