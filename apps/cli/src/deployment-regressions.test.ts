@@ -857,34 +857,16 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   expect(deployCompose.replace(knowledgePrepareService, "")).not.toContain("CORPUS_DATABASE_URL");
   const migrateService = deployCompose.slice(
     deployCompose.indexOf("\n  migrate:\n"),
-    deployCompose.indexOf("\n  released-v084-directory-upgrade:\n"),
-  );
-  expect(migrateService).toContain("DB_CORPUS_PASSWORD: ${DB_CORPUS_PASSWORD}");
-  const releasedDirectoryUpgradeService = deployCompose.slice(
-    deployCompose.indexOf("\n  released-v084-directory-upgrade:\n"),
     deployCompose.indexOf("\n  hypermedia-bootstrap:\n"),
   );
-  expect(releasedDirectoryUpgradeService).toContain("MIGRATOR_DATABASE_URL: postgres://postgres");
-  expect(releasedDirectoryUpgradeService).toContain("STORAGE_DASHBOARD_TOKEN");
-  expect(releasedDirectoryUpgradeService).toContain("storage-socket:/run/context-use-storage:ro");
-  expect(releasedDirectoryUpgradeService).toContain("released-v084-directory-upgrade-command.ts");
-  expect(releasedDirectoryUpgradeService).not.toContain("DB_CORPUS_PASSWORD");
-  expect(releasedDirectoryUpgradeService).not.toContain("DATABASE_URL: postgres://context_use_dashboard");
+  expect(migrateService).toContain("DB_CORPUS_PASSWORD: ${DB_CORPUS_PASSWORD}");
   expect(deployCompose.replace(migrateService, "").replace(knowledgePrepareService, ""))
     .not.toContain("DB_CORPUS_PASSWORD");
-  const releasedUpgradeRun = [
-    "--profile migration run --rm --no-deps \\",
-    "released-v084-directory-upgrade",
-  ].join("\n    ");
   const stopKnowledgeServices = [
     "stop \\",
     "dashboard-edge app auth private-mcp public-web confirmation storage backup",
   ].join("\n  ");
-  expect(deployScript).toContain(releasedUpgradeRun);
-  expect(deployScript.match(/released-v084-directory-upgrade/g)).toHaveLength(1);
-  expect(deployScript.indexOf(releasedUpgradeRun)).toBeLessThan(
-    deployScript.indexOf(stopKnowledgeServices),
-  );
+  expect(deployScript).toContain(stopKnowledgeServices);
   const storageStart = 'up -d --wait storage';
   const prepareRun = [
     "up \\",

@@ -132,57 +132,20 @@ jobs:
           OWNER_EMAIL: owner@example.com
           OWNER_SETUP_TOKEN_HASH: 0c3f0f8b90068b05d8039bf05db2da4742c31a23e51cfa864a96a0efe17b1694
         run: |
-          released_database_url=postgres://postgres:postgres@localhost:5432/context_use_release_084
-          released_worktree="${RUNNER_TEMP}/context-use-v0.1.84"
-          psql postgres://postgres:postgres@localhost:5432/postgres \
-            --set ON_ERROR_STOP=1 --command 'CREATE DATABASE context_use_release_084'
-          git worktree add --detach "${released_worktree}" v0.1.84
-          ln -s "${PWD}/packages/database/node_modules" \
-            "${released_worktree}/packages/database/node_modules"
-          MIGRATOR_DATABASE_URL="${released_database_url}" \
-            bun "${released_worktree}/packages/database/src/migrate.ts"
-          TEST_RELEASED_V084_DIRECTORY_UPGRADE_DATABASE_URL="${released_database_url}" \
-            bun test packages/database/test/released-v084-directory-upgrade.integration.test.ts
-          MIGRATOR_DATABASE_URL="${released_database_url}" \
-            bun packages/database/src/migrate.ts
-          psql "${released_database_url}" --set ON_ERROR_STOP=1 <<'SQL'
-          DO $$
-          BEGIN
-            IF (SELECT count(*) FROM schema_migrations)<>1
-               OR NOT EXISTS (
-                 SELECT 1 FROM schema_migrations WHERE version='001_baseline.sql'
-               )
-               OR to_regclass('public.knowledge_directories') IS NOT NULL
-               OR to_regclass('public.publication_intents') IS NULL
-               OR to_regclass('public.knowledge_search') IS NULL
-               OR to_regclass('public.pathless_publication_intents') IS NOT NULL
-               OR NOT EXISTS (
-                 SELECT 1
-                 FROM hypermedia_documents document
-                 JOIN knowledge_pages page ON page.id=document.id
-                 JOIN knowledge_page_versions version
-                   ON version.id=page.current_version_id AND version.page_id=page.id
-                 WHERE document.id='4b815deb-8d1c-4d26-9b1b-8f9e405b12da'
-                   AND version.title='Retained directory'
-                   AND version.summary='Authored summary that must survive filesystem removal'
-               ) THEN
-              RAISE EXCEPTION 'v0.1.84 baseline handoff contract failed';
-            END IF;
-          END;
-          $$;
-          SQL
-          unlink "${released_worktree}/packages/database/node_modules"
-          git worktree remove "${released_worktree}"
           bun run db:initialize
           psql "${TEST_DATABASE_URL}" --set ON_ERROR_STOP=1 <<'SQL'
           DO $$
           BEGIN
-            IF (SELECT count(*) FROM schema_migrations)<>1
+            IF (SELECT count(*) FROM schema_migrations)<>2
                OR NOT EXISTS (
                  SELECT 1 FROM schema_migrations WHERE version='001_baseline.sql'
                )
+               OR NOT EXISTS (
+                 SELECT 1 FROM schema_migrations
+                 WHERE version='002_normalize_retained_bootstrap.sql'
+               )
                OR to_regclass('public.public_route_aliases') IS NULL THEN
-              RAISE EXCEPTION 'current schema baseline contract failed';
+              RAISE EXCEPTION 'current forward migration contract failed';
             END IF;
           END;
           $$;

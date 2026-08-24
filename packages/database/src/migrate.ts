@@ -7,8 +7,6 @@ import {
   MIGRATION_ROLE_PASSWORD_ENV,
   assertMigrationState,
   configuredExistingRolePasswords,
-  matchesCompletedLedger,
-  matchesReleasedV0_1_84Ledger,
 } from "./migration-state.ts";
 import {
   PREPARE_RESTORE_OWNERSHIP_ENV,
@@ -43,14 +41,6 @@ const migrations = await Promise.all(files.map(async (version) => {
   };
 }));
 const targetMigrations = migrations;
-const releasedUpgradeDirectory = join(dirname(fileURLToPath(import.meta.url)), "../upgrades/v0.1.84");
-const releasedUpgradeFiles = [
-  "044_remove_filesystem_schema.sql",
-  "045_hypermedia_schema_names.sql",
-] as const;
-const releasedUpgradeSql = await Promise.all(releasedUpgradeFiles.map((file) => (
-  readFile(join(releasedUpgradeDirectory, file), "utf8")
-)));
 
 const client = new Client({ connectionString: migrationUrl });
 await client.connect();
@@ -87,53 +77,10 @@ try {
     `);
     await client.query("ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS checksum text");
 
-    let applied = await client.query<{ version: string; checksum: string | null }>(
+    const applied = await client.query<{ version: string; checksum: string | null }>(
       "SELECT version,checksum FROM schema_migrations ORDER BY version",
     );
     const baseline = "001_baseline.sql";
-    const baselineMigration = migrations.find(({ version }) => version === baseline);
-    if (!baselineMigration) throw new Error(`${baseline} is missing from this release`);
-
-    const releasedV0_1_84Ledger = matchesReleasedV0_1_84Ledger(applied.rows);
-    const completedLedger = matchesCompletedLedger(applied.rows);
-    if (releasedV0_1_84Ledger || completedLedger) {
-      await client.query("BEGIN");
-      try {
-        await client.query("LOCK TABLE schema_migrations IN ACCESS EXCLUSIVE MODE");
-        const lockedLedger = await client.query<{ version: string; checksum: string | null }>(
-          "SELECT version,checksum FROM schema_migrations ORDER BY version",
-        );
-        const lockedLedgerMatches = releasedV0_1_84Ledger
-          ? matchesReleasedV0_1_84Ledger(lockedLedger.rows)
-          : matchesCompletedLedger(lockedLedger.rows);
-        if (!lockedLedgerMatches) {
-          throw new Error("Migration ledger changed while preparing the compact baseline handoff");
-        }
-        if (releasedV0_1_84Ledger) {
-          for (const sql of releasedUpgradeSql) await client.query(sql);
-        }
-        const appliedAt = await client.query<{ applied_at: Date }>(
-          "SELECT max(applied_at) AS applied_at FROM schema_migrations",
-        );
-        await client.query("DELETE FROM schema_migrations");
-        await client.query(
-          "INSERT INTO schema_migrations(version,checksum,applied_at) VALUES ($1,$2,$3)",
-          [baseline, baselineMigration.checksum, appliedAt.rows[0]?.applied_at ?? new Date()],
-        );
-        await client.query("COMMIT");
-        console.info(
-          releasedV0_1_84Ledger
-            ? `Upgraded released v0.1.84 schema and compacted its migration ledger to ${baseline}`
-            : `Compacted completed migration ledger to ${baseline}`,
-        );
-      } catch (error) {
-        await client.query("ROLLBACK");
-        throw error;
-      }
-      applied = await client.query<{ version: string; checksum: string | null }>(
-        "SELECT version,checksum FROM schema_migrations ORDER BY version",
-      );
-    }
 
     const existingRelations = await client.query<{ relation: string }>(
       `SELECT relname AS relation

@@ -2,63 +2,30 @@ import { describe, expect, test } from "bun:test";
 import {
   assertMigrationState,
   configuredExistingRolePasswords,
-  matchesCompletedLedger,
-  matchesReleasedV0_1_84Ledger,
-  migrationLedgerDigest,
 } from "../src/migration-state.ts";
-import { releasedV084DirectoryRevisionId } from "../src/released-v084-directory-upgrade.ts";
 
-const files = [{ version: "001_baseline.sql", checksum: "current-checksum" }];
+const files = [
+  { version: "001_baseline.sql", checksum: "baseline-checksum" },
+  { version: "002_normalize.sql", checksum: "forward-checksum" },
+];
 
-describe("completed ledger handoff", () => {
-  const completed = [
-    { version: "001", checksum: "a" },
-    { version: "002", checksum: "b" },
-  ];
-  const digest = "b51efc7b2797fc57025dc13d80ac5390cea1936cb5ae15d46707560ce3a8efca";
-
-  test("hashes the ordered version and checksum pairs deterministically", () => {
-    expect(migrationLedgerDigest(completed)).toBe(digest);
-    expect(migrationLedgerDigest([...completed].reverse())).toBe(digest);
-    expect(migrationLedgerDigest([{ version: "001", checksum: null }])).toBeNull();
-  });
-
-  test("requires the exact completed count and digest", () => {
-    expect(matchesCompletedLedger(completed, { count: 2, digest })).toBe(true);
-    expect(matchesCompletedLedger(completed.slice(0, 1), { count: 2, digest })).toBe(false);
-    expect(matchesCompletedLedger([
-      completed[0]!,
-      { version: "002", checksum: "modified" },
-    ], { count: 2, digest })).toBe(false);
-  });
-
-  test("recognizes the released predecessor ledger through its own exact contract", () => {
-    expect(matchesReleasedV0_1_84Ledger(completed, { count: 2, digest })).toBe(true);
-    expect(matchesReleasedV0_1_84Ledger(completed.slice(0, 1), { count: 2, digest })).toBe(false);
-  });
-});
-
-test("released v0.1.84 directory revisions are stable UUIDv8 identities", () => {
-  const directoryId = "4b815deb-8d1c-4d26-9b1b-8f9e405b12da";
-  expect(releasedV084DirectoryRevisionId(directoryId))
-    .toBe(releasedV084DirectoryRevisionId(directoryId.toUpperCase()));
-  expect(releasedV084DirectoryRevisionId(directoryId))
-    .toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-8[a-f0-9]{3}-8[a-f0-9]{3}-[a-f0-9]{12}$/);
-});
-
-describe("flattened migration state", () => {
-  test("accepts a fresh database and an exactly matching baseline", () => {
+describe("forward migration state", () => {
+  test("accepts a fresh database and an exactly matching applied prefix", () => {
     expect(() => assertMigrationState(files, [], [])).not.toThrow();
     expect(() => assertMigrationState(files, [
-      { version: "001_baseline.sql", checksum: "current-checksum" },
+      { version: "001_baseline.sql", checksum: "baseline-checksum" },
+    ], ["knowledge_pages"])).not.toThrow();
+    expect(() => assertMigrationState(files, [
+      { version: "001_baseline.sql", checksum: "baseline-checksum" },
+      { version: "002_normalize.sql", checksum: "forward-checksum" },
     ], ["knowledge_pages"])).not.toThrow();
   });
 
-  test("fails closed for an unrecognized ledger", () => {
+  test("fails closed for an unrecognized migration", () => {
     expect(() => assertMigrationState(files, [
-      { version: "001_baseline.sql", checksum: null },
-      { version: "002_unknown.sql", checksum: null },
-    ], ["knowledge_pages"])).toThrow("fresh database");
+      { version: "001_baseline.sql", checksum: "baseline-checksum" },
+      { version: "002_unknown.sql", checksum: "unknown-checksum" },
+    ], ["knowledge_pages"])).toThrow("not part of this schema");
   });
 
   test("fails closed for an old or modified baseline", () => {

@@ -1,10 +1,5 @@
 export { createPool } from "./pool.ts";
 export {
-  prepareReleasedV084DirectoryUpgrade,
-  releasedV084DirectoryRevisionId,
-  type ReleasedV084DirectoryUpgradeResult,
-} from "./released-v084-directory-upgrade.ts";
-export {
   HypermediaBootstrapRepository,
   type HypermediaBootstrapAllocation,
   type HypermediaBootstrapDocument,

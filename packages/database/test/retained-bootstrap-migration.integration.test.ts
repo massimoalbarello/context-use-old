@@ -16,7 +16,6 @@ import { MemoryMarkdownStore } from "./memory-markdown-store.ts";
 
 const serverUrl = await disposableDatabaseUrl();
 const describeDatabase = serverUrl ? describe : describe.skip;
-const baselineSql = await readFile(new URL("../migrations/001_baseline.sql", import.meta.url), "utf8");
 const migrationSql = await readFile(
   new URL("../migrations/002_normalize_retained_bootstrap.sql", import.meta.url),
   "utf8",
@@ -58,6 +57,8 @@ type RetainedSnapshot = {
 
 describeDatabase("retained bootstrap allocation normalization", () => {
   const database = `context_use_retained_${randomUUID().replaceAll("-", "")}`;
+  const sourceDatabase = new URL(serverUrl ?? "postgres://localhost/postgres")
+    .pathname.replace(/^\//, "");
   const maintenanceUrl = targetUrl(serverUrl ?? "postgres://localhost/postgres", "postgres");
   const adminUrl = targetUrl(serverUrl ?? "postgres://localhost/postgres", database);
   let maintenance: Client;
@@ -68,10 +69,11 @@ describeDatabase("retained bootstrap allocation normalization", () => {
   beforeAll(async () => {
     maintenance = new Client({ connectionString: maintenanceUrl });
     await maintenance.connect();
-    await maintenance.query(`CREATE DATABASE ${identifier(database)}`);
+    await maintenance.query(
+      `CREATE DATABASE ${identifier(database)} TEMPLATE ${identifier(sourceDatabase)}`,
+    );
     admin = new Client({ connectionString: adminUrl });
     await admin.connect();
-    await admin.query(baselineSql);
     corpus = new Pool({
       connectionString: adminUrl,
       max: 2,
