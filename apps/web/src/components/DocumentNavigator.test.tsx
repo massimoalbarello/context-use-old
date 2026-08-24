@@ -22,6 +22,8 @@ const document: DashboardDocumentSummary = {
   summary: "A concise summary of the current investment thesis.",
   filename: null,
   content_type: null,
+  integration: null,
+  source_model: null,
   operational_roles: ["automation_instructions"],
   updated_at: "2026-08-23T10:00:00.000Z",
 };
@@ -42,6 +44,22 @@ describe("search-first document navigation", () => {
       filename: "report.pdf",
       content_type: "application/pdf",
     })).toBe("Asset · application/pdf");
+    expect(documentDisplayTitle({
+      ...document,
+      document_kind: "record",
+      authority: "source",
+      title: null,
+      integration: "github",
+      source_model: "GitHubPullRequest",
+    })).toBe("Git Hub Pull Request");
+    expect(documentDisplaySummary({
+      ...document,
+      document_kind: "record",
+      authority: "source",
+      summary: null,
+      integration: "github",
+      source_model: "GitHubPullRequest",
+    })).toBe("Connected source · github");
   });
 
   test("renders a recent-document navigator before a query is entered", () => {

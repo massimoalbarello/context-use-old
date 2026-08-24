@@ -10,6 +10,7 @@ import {
   PageDeletionRepository,
   PathlessPublicationRepository,
   PathlessPublicEntrypointRepository,
+  SourceRecordRepository,
   createPool,
   extractDocumentLinks,
   mapConcurrently,
@@ -39,6 +40,7 @@ import {
   parseDashboardDocumentCatalogQuery,
   parseDashboardDocumentNeighborhoodQuery,
 } from "./dashboard-document-discovery.ts";
+import { dashboardSourceRecord } from "./dashboard-source-records.ts";
 import {
   dashboardKnowledgeDocument,
   dashboardKnowledgeRevision,
@@ -74,6 +76,7 @@ const pathlessPublicEntrypoint = new PathlessPublicEntrypointRepository(dashboar
 const knowledgeExports = new KnowledgeExportRepository(dashboardPool, markdownObjects);
 const dashboardDocumentCatalog = new PrivateDocumentCatalogRepository(dashboardPool);
 const dashboardAutomations = new AutomationRegistryRepository(dashboardPool);
+const dashboardSourceRecords = new SourceRecordRepository(dashboardPool, markdownObjects);
 
 async function dashboardAssetPublication(asset: {
   document_id: string;
@@ -615,6 +618,15 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     return document
       ? json(dashboardDocumentSummary(document))
       : problem("Document not found", 404, "not_found");
+  })
+  .get("/api/dashboard/source-records/:id", async ({ request, params }) => {
+    await ownerRequest(request);
+    const record = await dashboardSourceRecords.get(z.string().uuid().parse(params.id));
+    if (!record) return problem("Source record not found", 404, "not_found");
+    const renderedHtml = record.body_markdown === null
+      ? ""
+      : await renderMarkdown(record.body_markdown, privateDocumentResolvers());
+    return json(dashboardSourceRecord(record, renderedHtml));
   })
   .get("/api/dashboard/documents/:id/neighborhood", async ({ request, params, query }) => {
     await ownerRequest(request);

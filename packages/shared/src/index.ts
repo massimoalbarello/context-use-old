@@ -241,6 +241,8 @@ export const dashboardDocumentSummarySchema = z.object({
   summary: z.string().nullable(),
   filename: z.string().nullable(),
   content_type: z.string().nullable(),
+  integration: z.string().nullable(),
+  source_model: z.string().nullable(),
   operational_roles: z.array(dashboardDocumentOperationalRoleSchema),
   updated_at: z.string().datetime({ offset: true }),
 }).strict();

@@ -104,6 +104,8 @@ describe("dashboard document discovery", () => {
       summary: "A concise summary of the current investment thesis.",
       filename: null,
       content_type: null,
+      integration: null,
+      source_model: null,
       operational_roles: ["automation_instructions"],
       updated_at: "2026-08-23T10:00:00.000Z",
     });

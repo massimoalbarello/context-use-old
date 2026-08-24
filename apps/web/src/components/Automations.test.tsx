@@ -15,6 +15,8 @@ const document: DashboardDocumentSummary = {
   summary: "Reconcile connected activity into linked knowledge.",
   filename: null,
   content_type: null,
+  integration: null,
+  source_model: null,
   operational_roles: ["automation_instructions"],
   updated_at: "2026-08-24T10:00:00.000Z",
 };
