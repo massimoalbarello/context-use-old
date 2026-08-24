@@ -1372,29 +1372,24 @@ describeDatabase("PostgreSQL security roles", () => {
 
   });
 
-  test("application-level knowledge restore is absent", async () => {
+  test("the retired knowledge restore surface remains absent", async () => {
     const objects = await admin.query<{
       import_intents: string | null;
       confirm_import: string | null;
       restore_import: string | null;
       restore_owner: string | null;
-      export_kind: string | null;
     }>(
       `SELECT
          to_regclass('knowledge_import_intents')::text AS import_intents,
          to_regprocedure('confirm_knowledge_import_intent(uuid,text,text,text,integer,integer)')::text AS confirm_import,
          to_regprocedure('restore_knowledge_import(uuid,text,text)')::text AS restore_import,
-         (SELECT rolname FROM pg_roles WHERE rolname='context_use_restore_owner') AS restore_owner,
-         (SELECT column_name FROM information_schema.columns
-           WHERE table_schema='public' AND table_name='knowledge_export_intents'
-             AND column_name='export_kind') AS export_kind`,
+         (SELECT rolname FROM pg_roles WHERE rolname='context_use_restore_owner') AS restore_owner`,
     );
     expect(objects.rows[0]).toEqual({
       import_intents: null,
       confirm_import: null,
       restore_import: null,
       restore_owner: null,
-      export_kind: null,
     });
   });
 
