@@ -145,6 +145,8 @@ describe("strict mutation schemas", () => {
       summary: "A private knowledge document.",
       filename: null,
       content_type: null,
+      integration: null,
+      source_model: null,
       operational_roles: ["automation_instructions" as const],
       updated_at: "2026-08-23T12:34:56.789Z",
     };

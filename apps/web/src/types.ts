@@ -15,6 +15,17 @@ export type KnowledgeDocumentPage = {
   updated_at: string;
 };
 
+export type SourceRecordPage = {
+  id: string;
+  current_version_id: string | null;
+  version_number: number | null;
+  integration: string;
+  model: string;
+  source_updated_at: string;
+  deleted_at: string | null;
+  rendered_html: string;
+};
+
 export type Version = {
   id: string;
   page_id: string;

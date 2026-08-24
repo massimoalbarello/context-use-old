@@ -120,6 +120,8 @@ export function dashboardDocumentSummary(
     summary: document.summary,
     filename: document.filename,
     content_type: document.content_type,
+    integration: document.integration,
+    source_model: document.source_model,
     operational_roles: document.operational_roles,
     updated_at: document.updated_at,
   });

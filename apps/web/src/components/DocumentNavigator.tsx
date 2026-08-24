@@ -8,8 +8,18 @@ import { api } from "../api.ts";
 
 type DocumentFilter = "all" | DashboardDocumentKind | "archived";
 
+export function sourceModelDisplayName(model: string): string {
+  return model
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2");
+}
+
 export function documentDisplayTitle(document: DashboardDocumentSummary): string {
-  return document.title?.trim() || document.filename?.trim() || "Untitled document";
+  return document.title?.trim()
+    || document.filename?.trim()
+    || (document.document_kind === "record" && document.source_model
+      ? sourceModelDisplayName(document.source_model)
+      : "Untitled document");
 }
 
 export function documentDisplaySummary(document: DashboardDocumentSummary): string {
@@ -17,7 +27,11 @@ export function documentDisplaySummary(document: DashboardDocumentSummary): stri
   if (document.document_kind === "asset") {
     return document.content_type ? `Asset · ${document.content_type}` : "Document asset";
   }
-  return document.document_kind === "record" ? "Connected source record" : "No summary yet";
+  return document.document_kind === "record"
+    ? document.integration
+      ? `Connected source · ${document.integration}`
+      : "Connected source record"
+    : "No summary yet";
 }
 
 function documentKindLabel(document: DashboardDocumentSummary): string {
