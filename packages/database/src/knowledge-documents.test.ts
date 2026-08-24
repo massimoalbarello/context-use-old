@@ -86,7 +86,7 @@ describe("canonical knowledge document change cursor", () => {
     })).rejects.toThrow("Provide a cursor or page token, not both");
   });
 
-  test("returns recent changes newest-first without filesystem metadata", async () => {
+  test("returns recent changes newest-first with stable document metadata", async () => {
     const documentId = crypto.randomUUID();
     const calls: Array<{ sql: string; values: unknown[] | undefined }> = [];
     const pool = {

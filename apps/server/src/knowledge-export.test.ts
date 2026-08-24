@@ -61,7 +61,7 @@ function snapshot(): KnowledgeExportSnapshot {
 }
 
 describe("portable knowledge export", () => {
-  test("plans a deterministic UUID graph without compatibility paths", () => {
+  test("plans a deterministic UUID graph", () => {
     const planned = planKnowledgeExport(snapshot());
 
     expect(planned.pages.map(({ archivePath }) => archivePath)).toEqual([
@@ -87,14 +87,12 @@ describe("portable knowledge export", () => {
       ]),
     });
     const serialized = JSON.stringify(planned.manifest);
-    expect(serialized).not.toContain("current_path");
-    expect(serialized).not.toContain("public_path");
     expect(serialized).not.toContain("s3_object_key");
   });
 
-  test("preserves immutable stored Markdown instead of rewriting old private links", () => {
+  test("preserves immutable stored Markdown byte-for-byte", () => {
     const source = snapshot();
-    source.pages[0]!.body_markdown = `[Historical](context-use://page/${documentTwo})`;
+    source.pages[0]!.body_markdown = "[External](https://example.test/evidence)";
 
     expect(planKnowledgeExport(source).pages[0]!.body).toBe(source.pages[0]!.body_markdown);
   });

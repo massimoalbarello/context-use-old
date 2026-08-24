@@ -85,7 +85,7 @@ describe("page delta", () => {
     expect(await markdownChanges(before, after)).toEqual(expected);
   });
 
-  test("compares stable document revisions without filesystem metadata", async () => {
+  test("compares stable document revisions from canonical metadata", async () => {
     expect(await documentDelta({
       title: "Old title",
       summary: "Stable summary",

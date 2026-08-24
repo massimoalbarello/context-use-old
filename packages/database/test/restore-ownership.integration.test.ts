@@ -37,54 +37,6 @@ function objectKey(object: Ownership): string {
   ]);
 }
 
-const compatibilityRole = "context_use_public_mcp";
-const ensureCompatibilityRoleSql = `
-  DO $compatibility$
-  BEGIN
-    IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname='${compatibilityRole}') THEN
-      IF EXISTS (
-        SELECT 1 FROM pg_catalog.pg_roles AS role
-        WHERE role.rolname='${compatibilityRole}'
-          AND (
-            role.rolsuper OR role.rolinherit OR role.rolcreaterole OR role.rolcreatedb
-            OR role.rolcanlogin OR role.rolreplication OR role.rolbypassrls
-            OR role.rolconfig IS NOT NULL
-            OR EXISTS (
-              SELECT 1 FROM pg_catalog.pg_auth_members AS membership
-              WHERE membership.roleid=role.oid OR membership.member=role.oid
-            )
-            OR EXISTS (
-              SELECT 1 FROM pg_catalog.pg_shdepend AS dependency
-              WHERE dependency.refclassid='pg_catalog.pg_authid'::pg_catalog.regclass
-                AND dependency.refobjid=role.oid
-                AND NOT (
-                  dependency.deptype='o'
-                  AND dependency.classid='pg_catalog.pg_default_acl'::pg_catalog.regclass
-                  AND dependency.dbid=(
-                    SELECT database.oid FROM pg_catalog.pg_database AS database
-                    WHERE database.datname=pg_catalog.current_database()
-                  )
-                )
-                AND NOT (
-                  dependency.deptype='a'
-                  AND dependency.dbid=(
-                    SELECT database.oid FROM pg_catalog.pg_database AS database
-                    WHERE database.datname=pg_catalog.current_database()
-                  )
-                )
-            )
-          )
-      ) THEN
-        RAISE EXCEPTION 'Existing ${compatibilityRole} role is not an isolated NOLOGIN compatibility role';
-      END IF;
-    ELSE
-      CREATE ROLE ${compatibilityRole}
-        NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
-    END IF;
-  END
-  $compatibility$
-`;
-
 async function processResult(
   command: string[],
   options: { environment?: Record<string, string | undefined>; stdin?: Uint8Array } = {},
@@ -284,14 +236,12 @@ describeDatabase("pg_dump ownership reconciliation", () => {
   const source = new URL(serverUrl ?? "postgres://localhost/postgres");
   const sourceDatabaseName = decodeURIComponent(source.pathname.replace(/^\//, ""));
   const databaseName = fixtureDatabaseName("context_use_restore");
-  const placeholderDatabaseName = fixtureDatabaseName("context_use_restore_ph");
   const maintenance = new URL(source);
   maintenance.pathname = "/postgres";
   const target = new URL(source);
   target.pathname = `/${databaseName}`;
   const migrationEnvironment = {
     MIGRATOR_DATABASE_URL: target.toString(),
-    MIGRATOR_MAX_VERSION: undefined,
     MIGRATOR_PREPARE_RESTORE_OWNERSHIP: undefined,
     MIGRATOR_RECONCILE_RESTORE_OWNERSHIP: undefined,
   };
@@ -306,7 +256,6 @@ describeDatabase("pg_dump ownership reconciliation", () => {
   const migrate = [process.execPath, "packages/database/src/migrate.ts"];
   let maintenanceClient: Client;
   let targetClient: Client;
-  let compatibilityRoleFixtureCreated = false;
 
   beforeAll(async () => {
     maintenanceClient = new Client({ connectionString: maintenance.toString() });
@@ -322,56 +271,6 @@ describeDatabase("pg_dump ownership reconciliation", () => {
     await targetClient?.end().catch(() => {});
     if (maintenanceClient) {
       await maintenanceClient.query(`DROP DATABASE IF EXISTS ${identifier(databaseName)} WITH (FORCE)`);
-      await maintenanceClient.query(
-        `DROP DATABASE IF EXISTS ${identifier(placeholderDatabaseName)} WITH (FORCE)`,
-      );
-      if (compatibilityRoleFixtureCreated) {
-        const roleExists = await maintenanceClient.query<{ exists: boolean }>(
-          "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname=$1) AS exists",
-          [compatibilityRole],
-        );
-        if (roleExists.rows[0]?.exists) {
-          // The suite proved this cluster-global name absent before creating
-          // it, so normalize any partially exercised fixture state before the
-          // fail-closed isolation check. Dropping both fixture databases above
-          // has already removed every object the fixture could have owned.
-          await maintenanceClient.query(`
-            ALTER ROLE ${compatibilityRole}
-              NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
-            ALTER ROLE ${compatibilityRole} RESET ALL;
-            DO $cleanup_memberships$
-            DECLARE membership record;
-            BEGIN
-              FOR membership IN
-                SELECT granted.rolname::text AS granted_role,
-                  member.rolname::text AS member_role
-                FROM pg_catalog.pg_auth_members AS role_membership
-                JOIN pg_catalog.pg_roles AS granted ON granted.oid=role_membership.roleid
-                JOIN pg_catalog.pg_roles AS member ON member.oid=role_membership.member
-                WHERE granted.rolname='${compatibilityRole}'
-                   OR member.rolname='${compatibilityRole}'
-              LOOP
-                IF membership.member_role='${compatibilityRole}' THEN
-                  EXECUTE pg_catalog.format(
-                    'REVOKE %I FROM ${compatibilityRole}',membership.granted_role
-                  );
-                ELSE
-                  EXECUTE pg_catalog.format(
-                    'REVOKE ${compatibilityRole} FROM %I',membership.member_role
-                  );
-                END IF;
-              END LOOP;
-            END
-            $cleanup_memberships$;
-          `);
-          // Validate against the same fail-closed isolation boundary before a
-          // fixture cleanup can remove any cluster-global role state.
-          await maintenanceClient.query(ensureCompatibilityRoleSql);
-          await maintenanceClient.query(
-            `DROP OWNED BY ${compatibilityRole}; DROP ROLE ${compatibilityRole}`,
-          );
-        }
-      }
       await maintenanceClient.end();
     }
   });
@@ -563,73 +462,6 @@ describeDatabase("pg_dump ownership reconciliation", () => {
     const defaultAclRejected = await processFailure(migrate, reconcileEnvironment);
     expect(defaultAclRejected).toContain("Restored public/global default ACL state changed");
     await retryGoodRestore();
-
-    const placeholderBefore = await targetClient.query<{ exists: boolean }>(
-      "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname=$1) AS exists",
-      [compatibilityRole],
-    );
-    expect(placeholderBefore.rows[0]?.exists).toBe(false);
-    await targetClient.query(ensureCompatibilityRoleSql);
-    compatibilityRoleFixtureCreated = true;
-    await targetClient.query(ensureCompatibilityRoleSql);
-    await targetClient.query(`ALTER ROLE ${compatibilityRole} LOGIN`);
-    await expect(targetClient.query(ensureCompatibilityRoleSql)).rejects.toThrow(
-      "not an isolated NOLOGIN compatibility role",
-    );
-    await targetClient.query(`
-      ALTER ROLE ${compatibilityRole}
-        NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
-      ALTER ROLE ${compatibilityRole} RESET ALL;
-      CREATE TABLE public.restore_compatibility_owner_probe(id integer);
-      ALTER TABLE public.restore_compatibility_owner_probe OWNER TO ${compatibilityRole};
-    `);
-    await expect(targetClient.query(ensureCompatibilityRoleSql)).rejects.toThrow(
-      "not an isolated NOLOGIN compatibility role",
-    );
-    const restoreProbeOwner = await targetClient.query<{ statement: string }>(`
-      SELECT pg_catalog.format(
-        'ALTER TABLE public.restore_compatibility_owner_probe OWNER TO %I',current_user
-      ) AS statement
-    `);
-    await targetClient.query(restoreProbeOwner.rows[0]!.statement);
-    await targetClient.query("DROP TABLE public.restore_compatibility_owner_probe");
-    await targetClient.query(`GRANT USAGE ON SCHEMA public TO ${compatibilityRole}`);
-    await targetClient.query(ensureCompatibilityRoleSql);
-
-    await maintenanceClient.query(
-      `CREATE DATABASE ${identifier(placeholderDatabaseName)} TEMPLATE template0`,
-    );
-    const placeholderDatabase = new URL(source);
-    placeholderDatabase.pathname = `/${placeholderDatabaseName}`;
-    const placeholderClient = new Client({ connectionString: placeholderDatabase.toString() });
-    await placeholderClient.connect();
-    try {
-      await placeholderClient.query(`GRANT USAGE ON SCHEMA public TO ${compatibilityRole}`);
-      await expect(targetClient.query(ensureCompatibilityRoleSql)).rejects.toThrow(
-        "not an isolated NOLOGIN compatibility role",
-      );
-      await placeholderClient.query(`
-        REVOKE USAGE ON SCHEMA public FROM ${compatibilityRole};
-        ALTER DEFAULT PRIVILEGES FOR ROLE ${compatibilityRole}
-          GRANT SELECT ON TABLES TO PUBLIC;
-      `);
-      await expect(targetClient.query(ensureCompatibilityRoleSql)).rejects.toThrow(
-        "not an isolated NOLOGIN compatibility role",
-      );
-    } finally {
-      await placeholderClient.end();
-    }
-    await maintenanceClient.query(
-      `DROP DATABASE ${identifier(placeholderDatabaseName)} WITH (FORCE)`,
-    );
-    await targetClient.query(ensureCompatibilityRoleSql);
-    await targetClient.query(`DROP OWNED BY ${compatibilityRole}; DROP ROLE ${compatibilityRole}`);
-    compatibilityRoleFixtureCreated = false;
-    const placeholderAfter = await targetClient.query<{ exists: boolean }>(
-      "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname=$1) AS exists",
-      [compatibilityRole],
-    );
-    expect(placeholderAfter.rows[0]?.exists).toBe(false);
 
     await processResult(migrate, { environment: prepareEnvironment });
     await targetClient.query(`

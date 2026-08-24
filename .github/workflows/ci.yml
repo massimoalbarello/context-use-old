@@ -132,96 +132,19 @@ jobs:
           OWNER_SETUP_TOKEN_HASH: 0c3f0f8b90068b05d8039bf05db2da4742c31a23e51cfa864a96a0efe17b1694
         run: |
           bun run db:initialize
-          cutover_container=context-use-cutover-upgrade
-          cutover_database_url=postgres://postgres:postgres@localhost:55434/context_use_cutover
-          trap 'docker rm -f "${cutover_container}" >/dev/null 2>&1 || true' EXIT
-          docker run --detach --name "${cutover_container}" \
-            -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=context_use_cutover \
-            -p 127.0.0.1:55434:5432 postgres:17-alpine
-          for _ in $(seq 1 30); do
-            docker exec "${cutover_container}" pg_isready -h 127.0.0.1 -U postgres -d context_use_cutover >/dev/null 2>&1 && break
-            sleep 1
-          done
-          docker exec "${cutover_container}" pg_isready -h 127.0.0.1 -U postgres -d context_use_cutover >/dev/null
-          MIGRATOR_DATABASE_URL="${cutover_database_url}" \
-            MIGRATOR_MAX_VERSION=042_retire_hypermedia_cutover_control_plane.sql \
-            bun packages/database/src/migrate.ts
-          psql "${cutover_database_url}" \
-            --set ON_ERROR_STOP=1 <<'SQL'
-          UPDATE hypermedia_cutover_state SET finalized_at=clock_timestamp() WHERE singleton;
-          INSERT INTO hypermedia_documents(id,authority,representation)
-          VALUES ('11111111-1111-4111-8111-111111111111','source','markdown');
-          SQL
-          MIGRATOR_DATABASE_URL="${cutover_database_url}" \
-            bun packages/database/src/migrate.ts
-          psql "${cutover_database_url}" \
-            --set ON_ERROR_STOP=1 <<'SQL'
+          psql "${TEST_DATABASE_URL}" --set ON_ERROR_STOP=1 <<'SQL'
           DO $$
           BEGIN
-            IF NOT EXISTS (
-              SELECT 1 FROM hypermedia_documents
-              WHERE id='11111111-1111-4111-8111-111111111111'
-            ) OR to_regclass('public.hypermedia_cutover_state') IS NOT NULL
-              OR to_regclass('public.knowledge_directories') IS NOT NULL
-              OR to_regclass('public.publication_intents') IS NULL
-              OR to_regclass('public.knowledge_search') IS NULL
-              OR to_regclass('public.publication_settings') IS NULL
-              OR to_regclass('public.public_knowledge_settings') IS NOT NULL
-              OR to_regclass('public.pathless_publication_intents') IS NOT NULL
-              OR to_regtype('public.publication_intent_store') IS NOT NULL
-              OR to_regprocedure('public.finalize_hypermedia_cutover()') IS NOT NULL
-              OR to_regprocedure('public.list_hypermedia_cutover_blockers()') IS NOT NULL
-              OR to_regprocedure('public.get_publication_entrypoint()') IS NULL
-              OR to_regprocedure('public.get_pathless_publication_entrypoint()') IS NOT NULL
-              OR EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_schema='public'
-                  AND column_name IN (
-                    'current_path','parent_path','public_path','path',
-                    'published_version_id','intent_store'
-                  )
-              ) THEN
-              RAISE EXCEPTION 'hypermedia schema contract failed';
+            IF (SELECT count(*) FROM schema_migrations)<>1
+               OR NOT EXISTS (
+                 SELECT 1 FROM schema_migrations WHERE version='001_baseline.sql'
+               )
+               OR to_regclass('public.public_route_aliases') IS NULL THEN
+              RAISE EXCEPTION 'current schema baseline contract failed';
             END IF;
           END;
           $$;
           SQL
-          docker rm -f "${cutover_container}"
-          docker run --detach --name "${cutover_container}" \
-            -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=context_use_cutover \
-            -p 127.0.0.1:55434:5432 postgres:17-alpine
-          for _ in $(seq 1 30); do
-            docker exec "${cutover_container}" pg_isready -h 127.0.0.1 -U postgres -d context_use_cutover >/dev/null 2>&1 && break
-            sleep 1
-          done
-          docker exec "${cutover_container}" pg_isready -h 127.0.0.1 -U postgres -d context_use_cutover >/dev/null
-          MIGRATOR_DATABASE_URL="${cutover_database_url}" \
-            MIGRATOR_MAX_VERSION=042_retire_hypermedia_cutover_control_plane.sql \
-            bun packages/database/src/migrate.ts
-          psql "${cutover_database_url}" \
-            --set ON_ERROR_STOP=1 \
-            --command "INSERT INTO hypermedia_documents(id,authority,representation) VALUES ('22222222-2222-4222-8222-222222222222','source','markdown')"
-          if MIGRATOR_DATABASE_URL="${cutover_database_url}" \
-            bun packages/database/src/migrate.ts; then
-            echo "Expected migration 043 to reject retained data without finalized cutover evidence"
-            exit 1
-          fi
-          psql "${cutover_database_url}" \
-            --set ON_ERROR_STOP=1 <<'SQL'
-          DO $$
-          BEGIN
-            IF to_regclass('public.hypermedia_cutover_state') IS NULL
-              OR EXISTS (
-                SELECT 1 FROM schema_migrations
-                WHERE version='043_retire_cutover_runtime.sql'
-              ) THEN
-              RAISE EXCEPTION 'rejected cutover runtime retirement did not roll back';
-            END IF;
-          END;
-          $$;
-          SQL
-          docker rm -f "${cutover_container}"
-          trap - EXIT
           bun run db:test mark
           TEST_HYPERMEDIA_BOOTSTRAP_ISOLATED=1 \
             bun test apps/server/src/hypermedia-bootstrap.integration.test.ts

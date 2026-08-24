@@ -101,12 +101,11 @@ describe("search-first document navigation", () => {
     expect(html.toLowerCase()).not.toContain("folder");
   });
 
-  test("fallback document details expose stable references without filesystem labels", () => {
+  test("fallback document details expose stable references and titles", () => {
     const html = renderToStaticMarkup(createElement(DocumentDetails, { document }));
     expect(html).toContain("Investment notes");
     expect(html).toContain("A concise summary of the current investment thesis.");
     expect(html).toContain(`context-use://document/${document.document_id}`);
     expect(html).not.toContain("Path");
-    expect(html).not.toContain("current_path");
   });
 });

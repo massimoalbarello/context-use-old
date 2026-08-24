@@ -34,8 +34,6 @@ describe("hypermedia bootstrap command", () => {
     expect(documents[0]?.input.body_markdown).toContain("# Hypermedia maintenance guide");
     expect(documents[1]?.input.title).toBe("Activity distiller");
     expect(documents[4]?.input.title).toBe("Diary composer state");
-    expect(JSON.stringify(documents)).not.toContain("current_path");
-    expect(JSON.stringify(documents)).not.toContain("public_path");
   });
 
   test("writes documents before atomically wiring operational identities and finalizing", async () => {

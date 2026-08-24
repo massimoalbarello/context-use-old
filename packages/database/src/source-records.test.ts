@@ -42,7 +42,6 @@ describe("source record lock ordering", () => {
     const identity = calls.findIndex((sql) => sql.includes("pg_advisory_xact_lock(")
       && !sql.includes("_shared"));
     const record = calls.findIndex((sql) => sql.includes("FOR UPDATE OF source"));
-    expect(calls.some((sql) => sql.includes("filesystem-hypermedia-corpus-transition"))).toBe(false);
     expect(identity).toBeGreaterThan(-1);
     expect(record).toBeGreaterThan(identity);
   });

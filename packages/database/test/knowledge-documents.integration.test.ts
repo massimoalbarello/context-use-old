@@ -68,7 +68,7 @@ describeDatabase("canonical private documents", () => {
     }
   });
 
-  test("creates, revises and archives without exposing compatibility paths or storage keys", async () => {
+  test("creates, revises and archives without exposing storage keys", async () => {
     const changesBefore = (await knowledge.changesSince()).next_cursor;
     const asset = await assets.create({
       filename: "canonical-diagram.png",
@@ -113,8 +113,6 @@ describeDatabase("canonical private documents", () => {
       commit_message: "Create canonical lifecycle document",
     }, actor);
     createdDocumentIds.add(created.document_id);
-    expect(created).not.toHaveProperty("path");
-    expect(created).not.toHaveProperty("current_path");
     expect(created).not.toHaveProperty("body_object_key");
     expect(created).toMatchObject({
       revision_number: 1,
@@ -139,7 +137,7 @@ describeDatabase("canonical private documents", () => {
     )).rows).toEqual([{ target_asset_id: asset.document.document_id }]);
 
     // A legacy-only active retention edge must still block archival. Replaying
-    // adoption repairs the exact generic graph from the immutable receipt.
+    // Retained publication evidence repairs the exact generic graph from the immutable receipt.
     await pool.query(
       "DELETE FROM document_links WHERE source_revision_id=$1",
       [created.current_revision_id],
@@ -304,7 +302,6 @@ describeDatabase("canonical private documents", () => {
       width: 1920,
       height: 1080,
     });
-    expect(assetCatalog).not.toHaveProperty("current_path");
     expect(assetCatalog).not.toHaveProperty("object_key");
     expect(typeof assetCatalog!.created_at).toBe("string");
 

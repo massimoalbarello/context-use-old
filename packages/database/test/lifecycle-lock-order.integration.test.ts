@@ -30,47 +30,4 @@ describeDatabase("knowledge lifecycle lock ordering", () => {
     expect(assetMutation).toBeGreaterThan(pageMutation);
   });
 
-  test("legacy knowledge reset functions and export columns are retired", async () => {
-    const functions = await pool.query<{ name: string | null }>(
-      `SELECT to_regprocedure(name)::text AS name
-       FROM unnest(ARRAY[
-         'clear_knowledge(uuid,text,text,uuid,text,integer,text,text,text,text,text,tsvector,text,text)',
-         'clear_knowledge_legacy_implementation(uuid,text,text,uuid,text,integer,text,text,text,text,text,tsvector,text,text)',
-         'complete_knowledge_export_download(uuid,text,text)'
-       ]) AS name`,
-    );
-    expect(functions.rows).toEqual([{ name: null }, { name: null }, { name: null }]);
-    const columns = await pool.query<{ column_name: string }>(
-      `SELECT column_name FROM information_schema.columns
-       WHERE table_schema='public' AND table_name='knowledge_export_intents'
-         AND column_name IN ('reset_requested','download_completed_at','reset_completed_at')`,
-    );
-    expect(columns.rows).toEqual([]);
-  });
-
-  test("migration, adoption and cutover control planes are retired", async () => {
-    const retired = await pool.query<{
-      relation: string | null;
-      routine: string | null;
-      cutover_state: string | null;
-      cutover_finalizer: string | null;
-      cutover_verifier: string | null;
-    }>(
-      `SELECT to_regclass('public.corpus_migration_runs')::text AS relation,
-         to_regprocedure('public.lock_corpus_migration_audit_tables()')::text
-           AS routine,
-         to_regclass('public.hypermedia_cutover_state')::text AS cutover_state,
-         to_regprocedure('public.finalize_hypermedia_cutover()')::text
-           AS cutover_finalizer,
-         to_regprocedure('public.list_hypermedia_cutover_blockers()')::text
-           AS cutover_verifier`,
-    );
-    expect(retired.rows[0]).toEqual({
-      relation: null,
-      routine: null,
-      cutover_state: null,
-      cutover_finalizer: null,
-      cutover_verifier: null,
-    });
-  });
 });

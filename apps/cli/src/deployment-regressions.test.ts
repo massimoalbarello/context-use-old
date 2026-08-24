@@ -423,11 +423,7 @@ test("restore verifies the backup, keeps traffic down on failure, migrates, and 
   const failureHandler = script.slice(script.indexOf("restore_failed()"), script.indexOf("trap restore_failed EXIT"));
   expect(failureHandler).toContain("up -d postgres aws-credential-broker");
   expect(failureHandler).not.toContain("aws-credential-broker backup");
-  expect(script).toContain("CREATE ROLE context_use_public_mcp NOLOGIN NOSUPERUSER");
-  expect(script.match(/DROP ROLE IF EXISTS context_use_public_mcp/g)?.length).toBe(2);
   expect(script).toContain("MIGRATOR_RECONCILE_RESTORE_OWNERSHIP=true");
-  expect(script.indexOf("CREATE ROLE context_use_public_mcp NOLOGIN")).toBeLessThan(script.indexOf("backup fetch"));
-  expect(script.lastIndexOf("DROP ROLE IF EXISTS context_use_public_mcp")).toBeGreaterThan(script.indexOf("MIGRATOR_RECONCILE_RESTORE_OWNERSHIP=true"));
   const storage = "up -d --wait storage";
   const prepare = "--exit-code-from hypermedia-bootstrap hypermedia-bootstrap";
   const publicWeb = "up -d --wait --no-deps public-web";
@@ -635,13 +631,6 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   expect(deployScript).toContain("/data/context-use/.volume-id");
   expect(deployScript).not.toContain("AUTH_EDGE_TOKEN");
   expect(deployScript).not.toContain("PUBLIC_MCP");
-  expect(deployScript).toContain("CREATE ROLE context_use_public_mcp NOLOGIN NOSUPERUSER");
-  expect(deployScript).toContain("Existing context_use_public_mcp role is not an isolated NOLOGIN compatibility role");
-  expect(deployScript).toContain("dependency.dbid=(SELECT database.oid");
-  expect(deployScript.match(/dependency\.dbid=\(SELECT database\.oid/g)).toHaveLength(2);
-  expect(deployScript).toContain("DROP OWNED BY context_use_public_mcp; DROP ROLE IF EXISTS context_use_public_mcp");
-  expect(deployScript).not.toContain("DROP ROLE IF EXISTS context_use_public_mcp; CREATE ROLE");
-  expect(deployScript).toContain("DROP ROLE IF EXISTS context_use_public_mcp");
   expect(deployScript).toContain("NANGO_PIPELINE_API_KEY=$(get_secret_if_present NANGO_PIPELINE_API_KEY)");
   expect(deployScript).toContain("DB_CORPUS_PASSWORD=$(get_secret DB_CORPUS_PASSWORD)");
   const finishServices = "up -d --remove-orphans \\\n  confirmation backup nango-backup";
@@ -674,22 +663,16 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   // release's code against a migrating schema.
   expect(deployScript).not.toContain("stop caddy");
   const stopClients = "stop \\\n  dashboard-edge app auth private-mcp public-web confirmation storage backup";
+  const migration = "--profile migration run --rm migrate";
   const restoreStorage = "up -d --wait storage";
   const prepareKnowledge = "--exit-code-from hypermedia-bootstrap hypermedia-bootstrap";
-  const bootstrapMigration = "-e MIGRATOR_MAX_VERSION=040_hypermedia_bootstrap.sql";
-  const contractionMigration = "--profile migration run --rm migrate";
   const restorePublic = "up -d --wait --no-deps public-web";
   const restoreDashboard = "up -d --wait --no-deps \\\n  dashboard-edge";
-  expect(deployScript.indexOf(stopClients)).toBeLessThan(deployScript.indexOf(bootstrapMigration));
-  expect(deployScript.indexOf(bootstrapMigration)).toBeLessThan(deployScript.indexOf(restoreStorage));
+  expect(deployScript.indexOf(stopClients)).toBeLessThan(deployScript.indexOf(migration));
+  expect(deployScript.indexOf(migration)).toBeLessThan(deployScript.indexOf(restoreStorage));
   expect(deployScript.indexOf(restoreStorage)).toBeLessThan(deployScript.indexOf(prepareKnowledge));
-  const contractionIndex = deployScript.indexOf(
-    contractionMigration,
-    deployScript.indexOf(prepareKnowledge),
-  );
-  expect(deployScript.indexOf(prepareKnowledge)).toBeLessThan(contractionIndex);
-  expect(contractionIndex).toBeLessThan(deployScript.indexOf(restorePublic));
-  expect(deployScript).toContain("-e MIGRATOR_ALLOW_APPLIED_LATER=true");
+  expect(deployScript.indexOf(prepareKnowledge)).toBeLessThan(deployScript.indexOf(restorePublic));
+  expect(deployScript.match(/--profile migration run --rm migrate/g)?.length).toBe(1);
   // The public pages are the availability priority: their path comes back
   // before the dashboard, MCP, and auth services compete for the same cores,
   // and the whole primary edge finishes before Nango is touched at all.
@@ -855,7 +838,6 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   expect(lockedService).toContain("cap_drop: [ALL]");
   expect(deployCompose).not.toContain("PUBLIC_MCP");
   expect(deployCompose).not.toContain("public_mcp_data");
-  expect(deployCompose).not.toContain("context_use_public_mcp:");
   const knowledgePrepareService = deployCompose.slice(
     deployCompose.indexOf("\n  hypermedia-bootstrap:\n"),
     deployCompose.indexOf("\n  nango-db-init:\n"),

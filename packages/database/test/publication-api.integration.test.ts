@@ -146,7 +146,7 @@ async function seedActiveAssetPublication(
 ): Promise<string> {
   const publicId = randomUUID();
   const artifactId = randomUUID();
-  const adoptionId = randomUUID();
+  const retainedSourceId = randomUUID();
   const objectKey = `artifacts/public/${artifactId}`;
   const representationToken = randomUUID().replaceAll("-", "").repeat(2);
   await client.query(
@@ -158,7 +158,7 @@ async function seedActiveAssetPublication(
     `INSERT INTO public_artifact_id_reservations(
        artifact_id,body_object_key,allocation_kind,allocation_id
      ) VALUES ($1,$2,'retained_publication',$3)`,
-    [artifactId, objectKey, adoptionId],
+    [artifactId, objectKey, retainedSourceId],
   );
   await client.query(
     `INSERT INTO public_asset_artifacts(
@@ -170,7 +170,7 @@ async function seedActiveAssetPublication(
        $1,$2,$3,$4,11,$5,'fixture.png','image/png','retained',
        $6,'asset',$7,'retained_publication',$6
      )`,
-    [artifactId, publicId, assetId, objectKey, hash("b"), adoptionId, representationToken],
+    [artifactId, publicId, assetId, objectKey, hash("b"), retainedSourceId, representationToken],
   );
   await client.query(
     "INSERT INTO asset_publications(public_id,artifact_id) VALUES ($1,$2)",

@@ -306,7 +306,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
     const revisionId = crypto.randomUUID();
     const publicId = crypto.randomUUID();
     const artifactId = crypto.randomUUID();
-    const adoptionId = crypto.randomUUID();
+    const retainedSourceId = crypto.randomUUID();
     const representationToken = Buffer.from(await crypto.subtle.digest(
       "SHA-256",
       new TextEncoder().encode(`canonical-route:${artifactId}`),
@@ -352,7 +352,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
         `INSERT INTO public_artifact_id_reservations(
            artifact_id,body_object_key,allocation_kind,allocation_id
          ) VALUES ($1,$2,'retained_publication',$3)`,
-        [artifactId, objectKey, adoptionId],
+        [artifactId, objectKey, retainedSourceId],
       );
       await client.query(
         `INSERT INTO public_representation_token_reservations(
@@ -371,7 +371,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
            reservation_allocation_kind,reservation_allocation_id
          ) VALUES (
            $1,$2,$3,$4,$5,$6,$7,$5,$6,'Canonical route',
-           'A page without a filesystem path.','2026-08-23 12:34:56.123456+00',$8,
+           'A page identified only by its stable UUID.','2026-08-23 12:34:56.123456+00',$8,
            'retained',$9,'page',$10,1,$11,'retained_publication',$9
          )`,
         [
@@ -383,7 +383,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
           bodyHash,
           objectKey,
           "c".repeat(64),
-          adoptionId,
+          retainedSourceId,
           crypto.randomUUID(),
           representationToken,
         ],
@@ -420,7 +420,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       expect(htmlText).not.toContain(representationToken);
       expect(htmlText).not.toContain(objectKey);
       expect(markdown.status).toBe(200);
-      expect(await markdown.text()).toContain("A page without a filesystem path.");
+      expect(await markdown.text()).toContain("A page identified only by its stable UUID.");
       expect(markdown.headers.get("link")).toBe(
         `<${config.APP_ORIGIN}/p/${publicId}>; rel="canonical"`,
       );
@@ -435,7 +435,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       const sitemap = await application!.handle(new Request("http://localhost:3000/sitemap.xml"));
       expect(await sitemap.text()).toContain(`<loc>${config.APP_ORIGIN}/p/${publicId}</loc>`);
       const landing = await application!.handle(new Request("http://localhost:3000/"));
-      expect(await landing.text()).toContain("A page without a filesystem path.");
+      expect(await landing.text()).toContain("A page identified only by its stable UUID.");
 
       await client.query("DELETE FROM page_publications WHERE public_id=$1", [publicId]);
       expect((await application!.handle(new Request(`http://localhost:3000/p/${publicId}`))).status).toBe(404);
