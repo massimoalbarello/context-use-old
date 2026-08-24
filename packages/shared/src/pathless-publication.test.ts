@@ -4,7 +4,6 @@ import {
   pathlessPublicationEntrypointSchema,
   pathlessPublicationIntentSchema,
   pathlessPublicRouteSchema,
-  publicationIntentSchema,
 } from "./index.ts";
 
 const documentId = "00000000-0000-4000-8000-000000000010";
@@ -41,18 +40,6 @@ const assetReceipt = {
 };
 
 describe("pathless publication shared contracts", () => {
-  test("keeps the legacy publication contract unchanged", () => {
-    expect(Object.keys(publicationIntentSchema.shape)).toEqual([
-      "action", "target_kind", "target_id", "version_id",
-    ]);
-    expect(publicationIntentSchema.safeParse({
-      action: "publish",
-      target_kind: "page",
-      target_id: documentId,
-      version_id: revisionId,
-    }).success).toBe(true);
-  });
-
   test("accepts exactly four pathless intent variants", () => {
     for (const intent of [
       {

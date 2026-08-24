@@ -21,10 +21,6 @@ export const KnowledgePath = z
   .regex(/^[a-z0-9][a-z0-9/_-]*$/, "Use lowercase path segments only")
   .refine((value) => !value.includes("//") && !value.endsWith("/"), "Invalid path");
 export const PagePath = KnowledgePath;
-export const AssetPath = KnowledgePath.describe(
-  "Path of the asset itself, not of the folder holding it: the final segment names this asset"
-  + " inside its subject's folder, as in library/some-paper/paper.",
-);
 export const DirectoryPath = z.union([z.literal(""), KnowledgePath]);
 const WritablePagePath = PagePath.refine(
   (value) => value !== "about",
@@ -117,26 +113,6 @@ export const archiveKnowledgeDocumentSchema = archivePageSchema
   })
   .strict();
 
-export const publicationIntentSchema = z
-  .object({
-    action: z.enum(["publish", "unpublish"]),
-    target_kind: z.enum(["page", "asset"]),
-    target_id: UUID,
-    version_id: UUID.nullable().optional(),
-  })
-  .strict()
-  .superRefine((value, context) => {
-    if (value.target_kind === "asset" && value.version_id != null) {
-      context.addIssue({ code: "custom", message: "Asset publication cannot include a page version" });
-    }
-    if (value.action === "unpublish" && value.version_id != null) {
-      context.addIssue({ code: "custom", message: "Unpublication cannot select a version" });
-    }
-    if (value.target_kind === "page" && value.action !== "unpublish" && !value.version_id) {
-      context.addIssue({ code: "custom", message: "Page publication requires an exact version" });
-    }
-  });
-
 const pathlessPagePublishIntentSchema = z.object({
   action: z.literal("publish"),
   target_kind: z.literal("page"),
@@ -176,7 +152,7 @@ export const pathlessPublicationEntrypointSchema = z.object({
 
 function isPathlessPublicRoute(value: string): boolean {
   if (value === "/p/") return true;
-  if (value.startsWith("/a/")) return AssetPath.safeParse(value.slice(3)).success;
+  if (value.startsWith("/a/")) return KnowledgePath.safeParse(value.slice(3)).success;
   if (!value.startsWith("/p/")) return false;
 
   const suffix = value.slice(3);
@@ -270,13 +246,9 @@ export const pathlessPublicationArtifactReceiptSchema = z.discriminatedUnion("ta
   pathlessAssetPublicationArtifactReceiptSchema,
 ]);
 
-export const assetUploadSchema = z.object({
-  path: AssetPath,
-  filename: AssetFilename.describe(
-    "Name of the file being uploaded. Only its extension is kept: the stored name follows the"
-    + " path leaf, so library/some-paper/paper with paper-draft.pdf is stored as paper.pdf.",
-  ),
-  content_type: z.string().trim().min(1).max(255),
+export const createDocumentAssetSchema = z.object({
+  filename: DocumentAssetFilename.describe("Filename presented for this document asset."),
+  content_type: DocumentAssetContentType,
   size_bytes: z.number().int().min(0).max(5_000_000_000),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   width: z.number().int().positive().optional(),
@@ -284,31 +256,9 @@ export const assetUploadSchema = z.object({
   duration_seconds: z.number().nonnegative().optional(),
 }).strict();
 
-export const createDocumentAssetSchema = assetUploadSchema
-  .omit({ path: true })
-  .extend({
-    filename: DocumentAssetFilename.describe("Filename presented for this document asset."),
-    content_type: DocumentAssetContentType,
-  })
-  .strict();
-
-/**
- * One asset, one name. The stored filename follows the path leaf so the dashboard heading, the
- * tree label, the download and the export all agree, instead of the path and a separately chosen
- * filename drifting apart. Only the extension survives from the uploaded name, because it is what
- * makes the bytes open correctly; a compound extension keeps its last segment only.
- */
-export function assetFilenameForPath(path: string, uploadedFilename: string): string {
-  const leaf = path.split("/").at(-1) ?? uploadedFilename;
-  const extension = /\.[a-z0-9]+$/i.exec(uploadedFilename)?.[0].toLowerCase() ?? "";
-  return `${leaf}${extension}`;
-}
-
-export const archiveAssetSchema = z.object({
+export const archiveDocumentAssetSchema = z.object({
   asset_id: UUID,
 }).strict();
-
-export const archiveDocumentAssetSchema = archiveAssetSchema;
 
 export type CreatePageInput = z.infer<typeof createPageSchema>;
 export type UpdatePageInput = z.infer<typeof updatePageSchema>;
@@ -316,7 +266,6 @@ export type CreateDirectoryInput = z.infer<typeof createDirectorySchema>;
 export type UpdateDirectoryInput = z.infer<typeof updateDirectorySchema>;
 export type DeleteDirectoryInput = z.infer<typeof deleteDirectorySchema>;
 export type ArchivePageInput = z.infer<typeof archivePageSchema>;
-export type PublicationIntentInput = z.infer<typeof publicationIntentSchema>;
 export type PathlessPublicationIntentInput = z.infer<typeof pathlessPublicationIntentSchema>;
 export type PathlessPublicationArtifactReceipt = z.infer<
   typeof pathlessPublicationArtifactReceiptSchema
@@ -325,8 +274,6 @@ export type PathlessPublicationEntrypointInput = z.infer<
   typeof pathlessPublicationEntrypointSchema
 >;
 export type PathlessPublicRouteInput = z.infer<typeof pathlessPublicRouteSchema>;
-export type AssetUploadInput = z.infer<typeof assetUploadSchema>;
-export type ArchiveAssetInput = z.infer<typeof archiveAssetSchema>;
 export type CreateKnowledgeDocumentInput = z.infer<typeof createKnowledgeDocumentSchema>;
 export type UpdateKnowledgeDocumentInput = z.infer<typeof updateKnowledgeDocumentSchema>;
 export type ArchiveKnowledgeDocumentInput = z.infer<typeof archiveKnowledgeDocumentSchema>;
