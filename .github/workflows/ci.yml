@@ -162,9 +162,20 @@ jobs:
               SELECT 1 FROM hypermedia_documents
               WHERE id='11111111-1111-4111-8111-111111111111'
             ) OR to_regclass('public.hypermedia_cutover_state') IS NOT NULL
+              OR to_regclass('public.knowledge_directories') IS NOT NULL
+              OR to_regclass('public.publication_intents') IS NOT NULL
+              OR to_regtype('public.publication_intent_store') IS NOT NULL
               OR to_regprocedure('public.finalize_hypermedia_cutover()') IS NOT NULL
-              OR to_regprocedure('public.list_hypermedia_cutover_blockers()') IS NOT NULL THEN
-              RAISE EXCEPTION 'finalized cutover runtime retirement contract failed';
+              OR to_regprocedure('public.list_hypermedia_cutover_blockers()') IS NOT NULL
+              OR EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public'
+                  AND column_name IN (
+                    'current_path','parent_path','public_path','path',
+                    'published_version_id','intent_store'
+                  )
+              ) THEN
+              RAISE EXCEPTION 'filesystem schema retirement contract failed';
             END IF;
           END;
           $$;
@@ -211,21 +222,6 @@ jobs:
           TEST_AUTH_BOUNDARY_ISOLATED=1 \
             bun test apps/server/src/auth-boundary.integration.test.ts
           bun test apps packages
-          history_container=context-use-restore-history
-          trap 'docker rm -f "${history_container}" >/dev/null 2>&1 || true' EXIT
-          docker run --detach --name "${history_container}" \
-            -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=context_use_history \
-            -p 127.0.0.1:55433:5432 postgres:17-alpine
-          # Probe TCP so the entrypoint's temporary Unix-socket server cannot
-          # make us race the shutdown before the final postmaster starts.
-          for _ in $(seq 1 30); do
-            docker exec "${history_container}" pg_isready -h 127.0.0.1 -U postgres -d context_use_history >/dev/null 2>&1 && break
-            sleep 1
-          done
-          docker exec "${history_container}" pg_isready -h 127.0.0.1 -U postgres -d context_use_history >/dev/null
-          MIGRATOR_DATABASE_URL=postgres://postgres:postgres@localhost:55433/context_use_history \
-            MIGRATOR_MAX_VERSION=027_pathless_document_contract.sql \
-            bun packages/database/src/migrate.ts
           # ubuntu-24.04 ships PostgreSQL 16 clients, which cannot dump the
           # PostgreSQL 17 fixtures. Route only this integration's client calls
           # through the already-pulled, major-version-matched container image.
@@ -240,10 +236,7 @@ jobs:
           chmod 0755 "${client_bin}/pg_dump" "${client_bin}/psql"
           PATH="${client_bin}:${PATH}" \
             TEST_RESTORE_OWNERSHIP_DATABASE_URL="${TEST_DATABASE_URL}" \
-            TEST_RESTORE_OWNERSHIP_HISTORICAL_DATABASE_URL=postgres://postgres:postgres@localhost:55433/context_use_history \
             bun test packages/database/test/restore-ownership.integration.test.ts
-          docker rm -f "${history_container}"
-          trap - EXIT
       - run: bun --cwd apps/web build
       - name: Validate Terraform
         run: |

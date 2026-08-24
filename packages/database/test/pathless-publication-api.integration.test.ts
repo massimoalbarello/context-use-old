@@ -30,13 +30,12 @@ async function seedPage(
 ): Promise<PageFixture> {
   const pageId = randomUUID();
   const revisionId = randomUUID();
-  const path = `pathless-api-${randomUUID().slice(0, 8)}`;
   await client.query("BEGIN");
   await client.query("SET CONSTRAINTS ALL DEFERRED");
   try {
     await client.query(
-      "INSERT INTO knowledge_pages(id,current_path,current_version_id) VALUES ($1,$2,$3)",
-      [pageId, path, revisionId],
+      "INSERT INTO knowledge_pages(id,current_version_id) VALUES ($1,$2)",
+      [pageId, revisionId],
     );
     await client.query(
       `INSERT INTO hypermedia_document_revisions(
@@ -47,14 +46,14 @@ async function seedPage(
     );
     await client.query(
       `INSERT INTO knowledge_page_versions(
-         id,page_id,version_number,path,title,summary,commit_message,
+         id,page_id,version_number,title,summary,commit_message,
          actor_kind,actor_subject,created_at
        ) VALUES (
-         $1,$2,1,$3,'Pathless API','A checked publication fixture.',
+         $1,$2,1,'Pathless API','A checked publication fixture.',
          'Create publication fixture','dashboard','context-use-owner',
          '2026-08-23 12:34:56.123456+00'
        )`,
-      [revisionId, pageId, path],
+      [revisionId, pageId],
     );
     await client.query(
       `INSERT INTO knowledge_revision_contracts(
@@ -83,12 +82,11 @@ async function seedAsset(
   const assetId = randomUUID();
   await client.query(
     `INSERT INTO assets(
-       id,current_path,filename,content_type,size_bytes,content_hash,s3_object_key,
+       id,filename,content_type,size_bytes,content_hash,s3_object_key,
        width,height,duration_seconds
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,NULL,$8::numeric)`,
+     ) VALUES ($1,$2,$3,$4,$5,$6,NULL,NULL,$7::numeric)`,
     [
       assetId,
-      `pathless-asset-${randomUUID().slice(0, 8)}`,
       overrides.filename ?? "fixture.png",
       overrides.contentType ?? "image/png",
       overrides.sizeBytes ?? 11,
@@ -103,7 +101,6 @@ async function seedAsset(
 
 async function advancePage(client: Client, page: PageFixture): Promise<void> {
   const revisionId = randomUUID();
-  const path = `pathless-advanced-${randomUUID().slice(0, 8)}`;
   await client.query("BEGIN");
   await client.query("SET CONSTRAINTS ALL DEFERRED");
   try {
@@ -116,13 +113,13 @@ async function advancePage(client: Client, page: PageFixture): Promise<void> {
     );
     await client.query(
       `INSERT INTO knowledge_page_versions(
-         id,page_id,version_number,path,title,summary,commit_message,
+         id,page_id,version_number,title,summary,commit_message,
          actor_kind,actor_subject
        ) VALUES (
-         $1,$2,2,$3,'Advanced page','A newer checked page revision.',
+         $1,$2,2,'Advanced page','A newer checked page revision.',
          'Advance publication fixture','dashboard','context-use-owner'
        )`,
-      [revisionId, page.pageId, path],
+      [revisionId, page.pageId],
     );
     await client.query(
       `INSERT INTO knowledge_revision_contracts(
@@ -132,9 +129,9 @@ async function advancePage(client: Client, page: PageFixture): Promise<void> {
     );
     await client.query(
       `UPDATE knowledge_pages
-       SET current_version_id=$2,current_path=$3,updated_at=now()
+       SET current_version_id=$2,updated_at=now()
        WHERE id=$1`,
-      [page.pageId, revisionId, path],
+      [page.pageId, revisionId],
     );
     await client.query("COMMIT");
   } catch (error) {
@@ -636,10 +633,6 @@ describeDatabase("checked pathless publication planning and staging", () => {
       first.intentId, firstSession, credentialId, 0, 1,
     );
     expect((await client.query(
-      "SELECT public_path FROM assets WHERE id=$1",
-      [asset.assetId],
-    )).rows[0]?.public_path).toBeNull();
-    expect((await client.query(
       "SELECT count(*) AS count FROM public_route_aliases WHERE public_id=$1",
       [first.publicId],
     )).rows[0]?.count).toBe("0");
@@ -674,10 +667,6 @@ describeDatabase("checked pathless publication planning and staging", () => {
       [credentialId],
     )).rows[0]?.counter).toBe(9);
 
-    await client.query(
-      "UPDATE assets SET public_path=current_path WHERE id=$1",
-      [asset.assetId],
-    );
     const aliasCount = (await client.query(
       "SELECT count(*) AS count FROM public_route_aliases WHERE public_id=$1",
       [first.publicId],
@@ -692,10 +681,6 @@ describeDatabase("checked pathless publication planning and staging", () => {
     await confirmPublicationAsRole(
       second.intentId, secondSession, credentialId, 9, 10,
     );
-    expect((await client.query(
-      "SELECT public_path=current_path AS unchanged FROM assets WHERE id=$1",
-      [asset.assetId],
-    )).rows[0]?.unchanged).toBe(true);
     expect((await client.query(
       "SELECT count(*) AS count FROM public_route_aliases WHERE public_id=$1",
       [first.publicId],
@@ -725,10 +710,6 @@ describeDatabase("checked pathless publication planning and staging", () => {
       unpublishIntentId, unpublishSession, credentialId, 10, 11,
     );
     expect((await client.query(
-      "SELECT public_path FROM assets WHERE id=$1",
-      [asset.assetId],
-    )).rows[0]?.public_path).toBeNull();
-    expect((await client.query(
       "SELECT 1 FROM asset_publications WHERE public_id=$1",
       [first.publicId],
     )).rowCount).toBe(0);
@@ -753,11 +734,6 @@ describeDatabase("checked pathless publication planning and staging", () => {
       first.intentId, firstSession, credentialId, 0, 1,
     );
     expect((await client.query(
-      `SELECT published_version_id,public_path
-       FROM knowledge_pages WHERE id=$1`,
-      [page.pageId],
-    )).rows[0]).toEqual({ published_version_id: null, public_path: null });
-    expect((await client.query(
       "SELECT artifact_id FROM page_publications WHERE public_id=$1",
       [first.publicId],
     )).rows[0]?.artifact_id).toBe(first.artifactId);
@@ -766,12 +742,6 @@ describeDatabase("checked pathless publication planning and staging", () => {
       [first.publicId],
     )).rows[0]?.count).toBe("0");
 
-    await client.query(
-      `UPDATE knowledge_pages
-       SET published_version_id=current_version_id,public_path=current_path
-       WHERE id=$1`,
-      [page.pageId],
-    );
     const aliasCount = (await client.query(
       "SELECT count(*) AS count FROM public_route_aliases WHERE public_id=$1",
       [first.publicId],
@@ -786,12 +756,6 @@ describeDatabase("checked pathless publication planning and staging", () => {
     await confirmPublicationAsRole(
       second.intentId, secondSession, credentialId, 1, 2,
     );
-    expect((await client.query(
-      `SELECT published_version_id=current_version_id AS revision_unchanged,
-         public_path=current_path AS path_unchanged
-       FROM knowledge_pages WHERE id=$1`,
-      [page.pageId],
-    )).rows[0]).toEqual({ revision_unchanged: true, path_unchanged: true });
     expect((await client.query(
       "SELECT count(*) AS count FROM public_route_aliases WHERE public_id=$1",
       [first.publicId],
@@ -817,11 +781,6 @@ describeDatabase("checked pathless publication planning and staging", () => {
       unpublishIntentId, unpublishSession, credentialId, 2, 3,
     );
     expect((await client.query(
-      `SELECT published_version_id,public_path
-       FROM knowledge_pages WHERE id=$1`,
-      [page.pageId],
-    )).rows[0]).toEqual({ published_version_id: null, public_path: null });
-    expect((await client.query(
       "SELECT 1 FROM page_publications WHERE public_id=$1",
       [first.publicId],
     )).rowCount).toBe(0);
@@ -830,85 +789,6 @@ describeDatabase("checked pathless publication planning and staging", () => {
       [first.publicId],
     )).rows[0]?.count).toBe("2");
   }, 15_000);
-
-  test("publishes a retained historical legacy page but rejects stale legacy asset sources", async () => {
-    const credentialId = await seedOwnerPasskey(client);
-    const page = await seedPage(client);
-    const pagePath = (await client.query(
-      "SELECT current_path FROM knowledge_pages WHERE id=$1",
-      [page.pageId],
-    )).rows[0]?.current_path as string;
-    const pageIntentId = randomUUID();
-    fixtureExtraIntentIds.add(pageIntentId);
-    const pageSession = `legacy-stale-page-${randomUUID()}`;
-    await client.query(
-      `INSERT INTO publication_intents(
-         id,action,target_kind,target_id,version_id,public_path,
-         owner_user_id,session_id,expires_at
-       ) VALUES (
-         $1,'publish','page',$2,$3,$4,
-         'context-use-owner',$5,now()+interval '5 minutes'
-       )`,
-      [pageIntentId, page.pageId, page.revisionId, pagePath, pageSession],
-    );
-    await client.query(
-      "SELECT issue_confirmation_challenge('publication',$1,$2)",
-      [pageIntentId, Buffer.from(randomUUID()).toString("base64url")],
-    );
-    await advancePage(client, page);
-
-    const asset = await seedAsset(client);
-    const assetPath = (await client.query(
-      "SELECT current_path FROM assets WHERE id=$1",
-      [asset.assetId],
-    )).rows[0]?.current_path as string;
-    const assetIntentId = randomUUID();
-    fixtureExtraIntentIds.add(assetIntentId);
-    const assetSession = `legacy-stale-asset-${randomUUID()}`;
-    await client.query(
-      `INSERT INTO publication_intents(
-         id,action,target_kind,target_id,version_id,public_path,
-         owner_user_id,session_id,expires_at
-       ) VALUES (
-         $1,'publish','asset',$2,NULL,$3,
-         'context-use-owner',$4,now()+interval '5 minutes'
-       )`,
-      [assetIntentId, asset.assetId, assetPath, assetSession],
-    );
-    await client.query(
-      "SELECT issue_confirmation_challenge('publication',$1,$2)",
-      [assetIntentId, Buffer.from(randomUUID()).toString("base64url")],
-    );
-    await client.query(
-      "UPDATE assets SET current_path=$2 WHERE id=$1",
-      [asset.assetId, `legacy-advanced-${randomUUID().slice(0, 8)}`],
-    );
-
-    await confirmPublicationAsRole(
-      pageIntentId, pageSession, credentialId, 0, 1,
-    );
-    expect((await client.query(
-      `SELECT published_version_id,public_path
-       FROM knowledge_pages WHERE id=$1`,
-      [page.pageId],
-    )).rows[0]).toEqual({
-      published_version_id: page.revisionId,
-      public_path: pagePath,
-    });
-    expect(await errorCode(confirmPublicationAsRole(
-      assetIntentId, assetSession, credentialId, 1, 2,
-    ))).toBe("40001");
-    expect((await client.query(
-      `SELECT counter FROM passkey
-       WHERE "userId"='context-use-owner' AND "credentialID"=$1`,
-      [credentialId],
-    )).rows[0]?.counter).toBe(1);
-    expect((await client.query(
-      `SELECT count(*) AS count FROM confirmation_challenges
-       WHERE intent_kind='publication' AND intent_id=ANY($1::uuid[])`,
-      [[pageIntentId, assetIntentId]],
-    )).rows[0]?.count).toBe("1");
-  });
 
   test("rolls back challenge and passkey consumption on a late namespace failure", async () => {
     const asset = await seedAsset(client);
@@ -921,11 +801,10 @@ describeDatabase("checked pathless publication planning and staging", () => {
     );
     await client.query(
       `INSERT INTO assets(
-         id,current_path,filename,content_type,size_bytes,content_hash,s3_object_key
-       ) VALUES ($1,$2,'collision.bin','application/octet-stream',1,$3,$4)`,
+         id,filename,content_type,size_bytes,content_hash,s3_object_key
+       ) VALUES ($1,'collision.bin','application/octet-stream',1,$2,$3)`,
       [
         staged.publicId,
-        `candidate-collision-${randomUUID().slice(0, 8)}`,
         hash("d"),
         `objects/${staged.publicId}`,
       ],
@@ -948,79 +827,6 @@ describeDatabase("checked pathless publication planning and staging", () => {
       "SELECT confirmed_at FROM pathless_publication_intents WHERE id=$1",
       [staged.intentId],
     )).rows[0]?.confirmed_at).toBeNull();
-  });
-
-  test("keeps legacy issuance and export confirmation usable by the confirmation role", async () => {
-    const asset = await seedAsset(client);
-    const legacyIntentId = randomUUID();
-    fixtureExtraIntentIds.add(legacyIntentId);
-    await client.query(
-      `INSERT INTO publication_intents(
-         id,action,target_kind,target_id,version_id,public_path,
-         owner_user_id,session_id,expires_at
-       ) VALUES (
-         $1,'publish','asset',$2,NULL,$3,
-         'context-use-owner',$4,now()+interval '5 minutes'
-       )`,
-      [
-        legacyIntentId,
-        asset.assetId,
-        `legacy-${randomUUID().slice(0, 8)}`,
-        `legacy-role-${randomUUID()}`,
-      ],
-    );
-
-    const exportIntentId = randomUUID();
-    const exportSessionId = `export-role-${randomUUID()}`;
-    const credentialId = `credential-${randomUUID()}`;
-    await ensureFixtureOwner(client);
-    await client.query(
-      `INSERT INTO passkey(
-         id,"publicKey","userId","credentialID",counter,"deviceType","backedUp"
-       ) VALUES ($1,'public-key','context-use-owner',$2,0,'singleDevice',false)`,
-      [randomUUID(), credentialId],
-    );
-    fixtureCredentialIds.add(credentialId);
-    await client.query(
-      `INSERT INTO knowledge_export_intents(
-         id,owner_user_id,session_id,expires_at
-       ) VALUES ($1,'context-use-owner',$2,now()+interval '5 minutes')`,
-      [exportIntentId, exportSessionId],
-    );
-    fixtureExtraIntentIds.add(exportIntentId);
-    await client.query(
-      `INSERT INTO confirmation_challenges(intent_kind,intent_id,challenge)
-       VALUES ('knowledge_export',$1,$2)`,
-      [exportIntentId, Buffer.from(randomUUID()).toString("base64url")],
-    );
-
-    const confirmation = new Client({ connectionString: databaseUrl });
-    await confirmation.connect();
-    try {
-      await confirmation.query("SET ROLE context_use_confirmation");
-      await confirmation.query(
-        "SELECT issue_confirmation_challenge('publication',$1,$2)",
-        [legacyIntentId, Buffer.from(randomUUID()).toString("base64url")],
-      );
-      await confirmation.query(
-        `SELECT confirm_knowledge_export_intent(
-           $1,'context-use-owner',$2,$3,0,1
-         )`,
-        [exportIntentId, exportSessionId, credentialId],
-      );
-    } finally {
-      await confirmation.query("RESET ROLE").catch(() => undefined);
-      await confirmation.end().catch(() => undefined);
-    }
-    expect((await client.query(
-      "SELECT confirmed_at IS NOT NULL AS confirmed FROM knowledge_export_intents WHERE id=$1",
-      [exportIntentId],
-    )).rows[0]?.confirmed).toBe(true);
-    expect((await client.query(
-      `SELECT 1 FROM confirmation_challenges
-       WHERE intent_kind='publication' AND intent_id=$1`,
-      [legacyIntentId],
-    )).rowCount).toBe(1);
   });
 
   test("orders page deletion confirmation before a competing pathless target lock", async () => {

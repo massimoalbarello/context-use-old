@@ -60,7 +60,7 @@ export class ConfirmationRepository {
        JOIN pathless_publication_intents intent ON intent.id=reservation.intent_id
        LEFT JOIN confirmation_challenges ledger
          ON ledger.intent_kind='publication' AND ledger.intent_id=intent.id
-       WHERE reservation.intent_id=$1 AND reservation.intent_store='pathless'
+       WHERE reservation.intent_id=$1
        `,
       [id],
     );

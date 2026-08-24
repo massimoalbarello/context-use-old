@@ -20,13 +20,10 @@ export const DEVELOPMENT_RESET_TABLES = [
   "pathless_knowledge_search",
   "knowledge_revision_contracts",
   "automation_registry",
-  "legacy_public_directory_prefixes",
   "confirmation_challenges",
-  "publication_intents",
   "knowledge_export_intents",
   "page_deletion_intents",
   "published_page_artifacts",
-  "public_projection_state",
   "public_knowledge_settings",
   "public_route_aliases",
   "public_resources",
@@ -41,31 +38,16 @@ export const DEVELOPMENT_RESET_TABLES = [
   "knowledge_page_versions",
   "knowledge_pages",
   "assets",
-  "knowledge_directories",
 ] as const;
 
 export function developmentResetSql(): string {
   return `
     TRUNCATE TABLE ${DEVELOPMENT_RESET_TABLES.join(", ")} RESTART IDENTITY;
-    INSERT INTO public_projection_state(singleton) VALUES (true);
     INSERT INTO public_knowledge_settings(singleton) VALUES (true);
     INSERT INTO pathless_publication_settings(
       singleton,entrypoint_public_id,updated_at
     ) VALUES (true,NULL,NULL);
     INSERT INTO knowledge_settings(singleton) VALUES (true);
-    INSERT INTO knowledge_directories(
-      id,current_path,title,summary,search_vector
-    ) VALUES (
-      gen_random_uuid(),'',
-      'Knowledge',
-      'The root of the owner''s private, progressively discoverable knowledge base.',
-      directory_search_vector(
-        '',
-        'Knowledge',
-        'The root of the owner''s private, progressively discoverable knowledge base.',
-        ''
-      )
-    );
   `;
 }
 

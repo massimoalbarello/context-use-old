@@ -55,7 +55,6 @@ describe("pathless dashboard knowledge responses", () => {
     expect(projected).not.toHaveProperty("path");
     expect(projected).not.toHaveProperty("current_path");
     expect(projected).not.toHaveProperty("body_object_key");
-    expect(projected).not.toHaveProperty("legacy_published");
     expect(projected).not.toHaveProperty("pathless_published");
   });
 

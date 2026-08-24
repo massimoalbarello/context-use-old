@@ -61,7 +61,6 @@ export async function cleanupPathlessPublicationFixtures(
       client,
       `SELECT id FROM pathless_publication_intents
        WHERE target_document_id=ANY($1::uuid[])
-       UNION SELECT id FROM publication_intents WHERE target_id=ANY($1::uuid[])
        UNION SELECT id FROM page_deletion_intents WHERE page_id=ANY($1::uuid[])`,
       [documentIds],
     ),
@@ -125,7 +124,6 @@ export async function cleanupPathlessPublicationFixtures(
     await client.query("DELETE FROM public_page_artifacts WHERE artifact_id=ANY($1::uuid[])", [artifactIds]);
     await client.query("DELETE FROM public_asset_artifacts WHERE artifact_id=ANY($1::uuid[])", [artifactIds]);
     await client.query("DELETE FROM pathless_publication_intents WHERE id=ANY($1::uuid[])", [intentIds]);
-    await client.query("DELETE FROM publication_intents WHERE id=ANY($1::uuid[])", [intentIds]);
     await client.query("DELETE FROM knowledge_export_intents WHERE id=ANY($1::uuid[])", [intentIds]);
     await client.query("DELETE FROM page_deletion_intents WHERE id=ANY($1::uuid[])", [intentIds]);
     await client.query(
@@ -180,8 +178,6 @@ export async function cleanupPathlessPublicationFixtures(
        WHERE target_document_id=ANY($1::uuid[])`,
       [documentIds],
     );
-    await client.query("DELETE FROM legacy_public_directory_prefixes WHERE directory_id=ANY($1::uuid[])", [documentIds]);
-    await client.query("DELETE FROM knowledge_directories WHERE id=ANY($1::uuid[])", [documentIds]);
     if (credentialIds.length > 0) {
       await client.query(
         `DELETE FROM passkey WHERE "credentialID"=ANY($1::text[])`,

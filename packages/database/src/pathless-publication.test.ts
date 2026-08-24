@@ -543,7 +543,7 @@ describe("publication confirmation family dispatch", () => {
       .toEqual(pathlessIntent);
     expect(calls[0]!.sql).toContain("FROM publication_intent_id_reservations");
     expect(calls[0]!.sql).toContain("JOIN pathless_publication_intents");
-    expect(calls[0]!.sql).toContain("reservation.intent_store='pathless'");
+    expect(calls[0]!.sql).not.toContain("intent_store");
     expect(calls[0]!.sql).not.toContain("FROM publication_intents");
     expect(calls[0]!.sql).not.toContain("candidate_public_id");
     expect(calls[0]!.sql).not.toContain("candidate_artifact_id");

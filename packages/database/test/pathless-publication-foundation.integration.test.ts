@@ -69,29 +69,24 @@ describeDatabase("pathless publication global namespaces", () => {
     }
   });
 
-  test("publication intent UUIDs cannot cross families or be reused", async () => {
+  test("publication intent UUIDs cannot be reused", async () => {
     await client.query("BEGIN");
     try {
-      const legacyId = randomUUID();
+      const intentId = randomUUID();
       await client.query(
-        `INSERT INTO publication_intents(
-           id,action,target_kind,target_id,owner_user_id,session_id,expires_at
+        `INSERT INTO pathless_publication_intents(
+           id,action,target_kind,target_document_id,owner_user_id,session_id,
+           expires_at,expected_visibility_generation,
+           expected_visibility_state_hash,expected_target_generation
          ) VALUES (
            $1,'unpublish','page',$2,'context-use-owner','foundation-test',
-           now()+interval '5 minutes'
+           now()+interval '5 minutes',0,$3,0
          )`,
-        [legacyId, randomUUID()],
+        [intentId, randomUUID(), hash("d")],
       );
-      await client.query("DELETE FROM publication_intents WHERE id=$1", [legacyId]);
-      expect(await sqlState(client, () => client.query(
-        `INSERT INTO publication_intents(
-           id,action,target_kind,target_id,owner_user_id,session_id,expires_at
-         ) VALUES (
-           $1,'unpublish','page',$2,'context-use-owner','foundation-test',
-           now()+interval '5 minutes'
-         )`,
-        [legacyId, randomUUID()],
-      ))).toBe("23505");
+      await client.query("SET LOCAL session_replication_role=replica");
+      await client.query("DELETE FROM pathless_publication_intents WHERE id=$1", [intentId]);
+      await client.query("SET LOCAL session_replication_role=origin");
       expect(await sqlState(client, () => client.query(
         `INSERT INTO pathless_publication_intents(
            id,action,target_kind,target_document_id,owner_user_id,session_id,
@@ -101,29 +96,7 @@ describeDatabase("pathless publication global namespaces", () => {
            $1,'unpublish','page',$2,'context-use-owner','foundation-test',
            now()+interval '5 minutes',0,$3,0
          )`,
-        [legacyId, randomUUID(), hash("d")],
-      ))).toBe("23505");
-
-      const pathlessId = randomUUID();
-      await client.query(
-        `INSERT INTO pathless_publication_intents(
-           id,action,target_kind,target_document_id,owner_user_id,session_id,
-           expires_at,expected_visibility_generation,
-           expected_visibility_state_hash,expected_target_generation
-         ) VALUES (
-           $1,'unpublish','asset',$2,'context-use-owner','foundation-test',
-           now()+interval '5 minutes',0,$3,0
-         )`,
-        [pathlessId, randomUUID(), hash("e")],
-      );
-      expect(await sqlState(client, () => client.query(
-        `INSERT INTO publication_intents(
-           id,action,target_kind,target_id,owner_user_id,session_id,expires_at
-         ) VALUES (
-           $1,'unpublish','asset',$2,'context-use-owner','foundation-test',
-           now()+interval '5 minutes'
-         )`,
-        [pathlessId, randomUUID()],
+        [intentId, randomUUID(), hash("e")],
       ))).toBe("23505");
     } finally {
       await client.query("ROLLBACK");
@@ -211,239 +184,15 @@ describeDatabase("pathless publication global namespaces", () => {
     }
   }, 15_000);
 
-  test("serializes a concurrent legacy and pathless intent UUID claim", async () => {
-    const contender = new Client({ connectionString: databaseUrl });
-    const intentId = randomUUID();
-    await contender.connect();
-    try {
-      await client.query("BEGIN");
-      await contender.query("BEGIN");
-      await contender.query("SET LOCAL lock_timeout='3s'");
-      await client.query(
-        `INSERT INTO publication_intents(
-           id,action,target_kind,target_id,owner_user_id,session_id,expires_at
-         ) VALUES (
-           $1,'unpublish','page',$2,'context-use-owner',$3,
-           now()+interval '5 minutes'
-         )`,
-        [intentId, randomUUID(), `legacy-race-${randomUUID()}`],
-      );
-      const pathlessLoser = contender.query(
-        `INSERT INTO pathless_publication_intents(
-           id,action,target_kind,target_document_id,owner_user_id,session_id,
-           expires_at,expected_visibility_generation,
-           expected_visibility_state_hash,expected_target_generation
-         ) VALUES (
-           $1,'unpublish','asset',$2,'context-use-owner',$3,
-           now()+interval '5 minutes',0,$4,0
-         )`,
-        [intentId, randomUUID(), `pathless-race-${randomUUID()}`, hash("a")],
-      ).then(() => undefined, (error: { code?: string }) => error.code);
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      await client.query("COMMIT");
-      expect(await pathlessLoser).toBe("23505");
-      await contender.query("ROLLBACK");
-      expect((await client.query<{ intent_store: string }>(
-        `SELECT intent_store FROM publication_intent_id_reservations
-         WHERE intent_id=$1`,
-        [intentId],
-      )).rows[0]!.intent_store).toBe("legacy");
-      expect((await client.query(
-        "SELECT 1 FROM pathless_publication_intents WHERE id=$1",
-        [intentId],
-      )).rowCount).toBe(0);
-    } finally {
-      await client.query("ROLLBACK").catch(() => undefined);
-      await contender.query("ROLLBACK").catch(() => undefined);
-      await contender.end().catch(() => undefined);
-      await client.query("BEGIN");
-      try {
-        await client.query("SET LOCAL session_replication_role=replica");
-        await client.query("DELETE FROM publication_intents WHERE id=$1", [intentId]);
-        await client.query(
-          "DELETE FROM publication_intent_id_reservations WHERE intent_id=$1",
-          [intentId],
-        );
-        await client.query("COMMIT");
-      } catch (error) {
-        await client.query("ROLLBACK");
-        throw error;
-      }
-    }
-  }, 15_000);
-
-  test("legacy visibility changes advance a fresh resource generation through ABA", async () => {
-    await client.query("BEGIN");
-    await client.query("SET CONSTRAINTS ALL DEFERRED");
-    try {
-      const pageId = randomUUID();
-      const revisionId = randomUUID();
-      const pagePath = `generation-page-${randomUUID().slice(0, 8)}`;
-      await client.query(
-        `INSERT INTO knowledge_pages(id,current_path,current_version_id)
-         VALUES ($1,$2,$3)`,
-        [pageId, pagePath, revisionId],
-      );
-      await client.query(
-        `INSERT INTO hypermedia_document_revisions(
-           id,document_id,revision_number,body_object_key,body_size_bytes,
-           body_content_hash
-         ) VALUES ($1,$2,1,$3,4,$4)`,
-        [revisionId, pageId, `documents/private/${revisionId}.md`, hash("f")],
-      );
-      await client.query(
-        `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,path,title,summary,commit_message,
-           actor_kind,actor_subject
-         ) VALUES (
-           $1,$2,1,$3,'Visibility generation','A generation test page.',
-           'Create generation fixture','dashboard','context-use-owner'
-         )`,
-        [revisionId, pageId, pagePath],
-      );
-      await client.query(
-        `UPDATE knowledge_pages
-         SET published_version_id=$2,public_path=$3 WHERE id=$1`,
-        [pageId, revisionId, pagePath],
-      );
-      const pageInitial = Number((await client.query<{ generation: string }>(
-        `SELECT generation.generation::text
-         FROM public_resources resource
-         JOIN public_visibility_generations generation
-           ON generation.public_id=resource.public_id
-         WHERE resource.original_document_id=$1`,
-        [pageId],
-      )).rows[0]?.generation);
-      expect(pageInitial).toBeGreaterThan(1);
-      await client.query(
-        "UPDATE knowledge_pages SET published_version_id=NULL,public_path=NULL WHERE id=$1",
-        [pageId],
-      );
-      await client.query(
-        `UPDATE knowledge_pages
-         SET published_version_id=$2,public_path=$3 WHERE id=$1`,
-        [pageId, revisionId, pagePath],
-      );
-      const pageAfterAba = Number((await client.query<{ generation: string }>(
-        `SELECT generation.generation::text
-         FROM public_resources resource
-         JOIN public_visibility_generations generation
-           ON generation.public_id=resource.public_id
-         WHERE resource.original_document_id=$1`,
-        [pageId],
-      )).rows[0]?.generation);
-      expect(pageAfterAba).toBeGreaterThanOrEqual(pageInitial + 2);
-      await client.query(
-        "UPDATE knowledge_pages SET published_version_id=NULL,public_path=NULL WHERE id=$1",
-        [pageId],
-      );
-      const pageBeforeLifecycleAba = Number((await client.query<{ generation: string }>(
-        `SELECT generation.generation::text
-         FROM public_resources resource
-         JOIN public_visibility_generations generation
-           ON generation.public_id=resource.public_id
-         WHERE resource.original_document_id=$1`,
-        [pageId],
-      )).rows[0]?.generation);
-      const pageTargetBeforeLifecycleAba = Number((await client.query<{ generation: string }>(
-        `SELECT generation::text FROM publication_target_generations
-         WHERE target_kind='page' AND target_document_id=$1`,
-        [pageId],
-      )).rows[0]?.generation);
-      await client.query("UPDATE knowledge_pages SET archived_at=now() WHERE id=$1", [pageId]);
-      await client.query("UPDATE knowledge_pages SET archived_at=NULL WHERE id=$1", [pageId]);
-      const pageAfterLifecycleAba = Number((await client.query<{ generation: string }>(
-        `SELECT generation.generation::text
-         FROM public_resources resource
-         JOIN public_visibility_generations generation
-           ON generation.public_id=resource.public_id
-         WHERE resource.original_document_id=$1`,
-        [pageId],
-      )).rows[0]?.generation);
-      expect(pageAfterLifecycleAba).toBeGreaterThanOrEqual(pageBeforeLifecycleAba + 2);
-      const pageTargetAfterLifecycleAba = Number((await client.query<{ generation: string }>(
-        `SELECT generation::text FROM publication_target_generations
-         WHERE target_kind='page' AND target_document_id=$1`,
-        [pageId],
-      )).rows[0]?.generation);
-      expect(pageTargetAfterLifecycleAba).toBeGreaterThanOrEqual(pageTargetBeforeLifecycleAba + 2);
-
-      const assetId = randomUUID();
-      const assetPath = `generation-asset-${randomUUID().slice(0, 8)}`;
-      await client.query(
-        `INSERT INTO assets(
-           id,current_path,filename,content_type,size_bytes,content_hash,
-           s3_object_key
-         ) VALUES ($1,$2,'fixture.png','image/png',4,$3,$4)`,
-        [assetId, assetPath, hash("1"), `objects/${assetId}`],
-      );
-      await client.query("UPDATE assets SET public_path=$2 WHERE id=$1", [assetId, assetPath]);
-      const assetInitial = Number((await client.query<{ generation: string }>(
-        `SELECT generation.generation::text
-         FROM public_resources resource
-         JOIN public_visibility_generations generation
-           ON generation.public_id=resource.public_id
-         WHERE resource.original_document_id=$1`,
-        [assetId],
-      )).rows[0]?.generation);
-      expect(assetInitial).toBeGreaterThan(1);
-      await client.query("UPDATE assets SET public_path=NULL WHERE id=$1", [assetId]);
-      await client.query("UPDATE assets SET public_path=$2 WHERE id=$1", [assetId, assetPath]);
-      const assetAfterAba = Number((await client.query<{ generation: string }>(
-        `SELECT generation.generation::text
-         FROM public_resources resource
-         JOIN public_visibility_generations generation
-           ON generation.public_id=resource.public_id
-         WHERE resource.original_document_id=$1`,
-        [assetId],
-      )).rows[0]?.generation);
-      expect(assetAfterAba).toBeGreaterThanOrEqual(assetInitial + 2);
-      await client.query("UPDATE assets SET public_path=NULL WHERE id=$1", [assetId]);
-      const assetBeforeLifecycleAba = Number((await client.query<{ generation: string }>(
-        `SELECT generation.generation::text
-         FROM public_resources resource
-         JOIN public_visibility_generations generation
-           ON generation.public_id=resource.public_id
-         WHERE resource.original_document_id=$1`,
-        [assetId],
-      )).rows[0]?.generation);
-      const assetTargetBeforeLifecycleAba = Number((await client.query<{ generation: string }>(
-        `SELECT generation::text FROM publication_target_generations
-         WHERE target_kind='asset' AND target_document_id=$1`,
-        [assetId],
-      )).rows[0]?.generation);
-      await client.query("UPDATE assets SET deleted_at=now() WHERE id=$1", [assetId]);
-      await client.query("UPDATE assets SET deleted_at=NULL WHERE id=$1", [assetId]);
-      const assetAfterLifecycleAba = Number((await client.query<{ generation: string }>(
-        `SELECT generation.generation::text
-         FROM public_resources resource
-         JOIN public_visibility_generations generation
-           ON generation.public_id=resource.public_id
-         WHERE resource.original_document_id=$1`,
-        [assetId],
-      )).rows[0]?.generation);
-      expect(assetAfterLifecycleAba).toBeGreaterThanOrEqual(assetBeforeLifecycleAba + 2);
-      const assetTargetAfterLifecycleAba = Number((await client.query<{ generation: string }>(
-        `SELECT generation::text FROM publication_target_generations
-         WHERE target_kind='asset' AND target_document_id=$1`,
-        [assetId],
-      )).rows[0]?.generation);
-      expect(assetTargetAfterLifecycleAba).toBeGreaterThanOrEqual(assetTargetBeforeLifecycleAba + 2);
-    } finally {
-      await client.query("ROLLBACK");
-    }
-  });
-
   test("unassigned targets retain lifecycle and UUID-reuse generations", async () => {
     await client.query("BEGIN");
     await client.query("SET CONSTRAINTS ALL DEFERRED");
     try {
       const pageId = randomUUID();
       const revisionId = randomUUID();
-      const pagePath = `unassigned-generation-page-${randomUUID().slice(0, 8)}`;
       await client.query(
-        "INSERT INTO knowledge_pages(id,current_path,current_version_id) VALUES ($1,$2,$3)",
-        [pageId, pagePath, revisionId],
+        "INSERT INTO knowledge_pages(id,current_version_id) VALUES ($1,$2)",
+        [pageId, revisionId],
       );
       await client.query(
         `INSERT INTO hypermedia_document_revisions(
@@ -454,14 +203,14 @@ describeDatabase("pathless publication global namespaces", () => {
       );
       await client.query(
         `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,path,title,summary,commit_message,
+           id,page_id,version_number,title,summary,commit_message,
            actor_kind,actor_subject
          ) VALUES (
-           $1,$2,1,$3,'Unassigned generation',
+           $1,$2,1,'Unassigned generation',
            'An unassigned target generation fixture.',
            'Create unassigned fixture','dashboard','context-use-owner'
          )`,
-        [revisionId, pageId, pagePath],
+        [revisionId, pageId],
       );
       const pageBefore = Number((await client.query<{ generation: string }>(
         `SELECT generation::text FROM publication_target_generations
@@ -482,13 +231,12 @@ describeDatabase("pathless publication global namespaces", () => {
       )).rowCount).toBe(0);
 
       const assetId = randomUUID();
-      const assetPath = `unassigned-generation-asset-${randomUUID().slice(0, 8)}`;
       const insertAsset = () => client.query(
         `INSERT INTO assets(
-           id,current_path,filename,content_type,size_bytes,content_hash,
+           id,filename,content_type,size_bytes,content_hash,
            s3_object_key
-         ) VALUES ($1,$2,'fixture.png','image/png',4,$3,$4)`,
-        [assetId, assetPath, hash("3"), `objects/${assetId}`],
+         ) VALUES ($1,'fixture.png','image/png',4,$2,$3)`,
+        [assetId, hash("3"), `objects/${assetId}`],
       );
       await insertAsset();
       const assetBefore = Number((await client.query<{ generation: string }>(
