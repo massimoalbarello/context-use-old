@@ -1,5 +1,4 @@
 export { createPool } from "./pool.ts";
-export { runTemplateCommand } from "./template-command.ts";
 export {
   assertMarkdownObject,
   MAX_KNOWLEDGE_PAGE_BYTES,

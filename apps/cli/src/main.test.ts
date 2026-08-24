@@ -51,21 +51,19 @@ test("root help lists the operational commands", async () => {
   expect(result.stdout).toContain("resize");
   expect(result.stdout).toContain("recover");
   expect(result.stdout).toContain("nango");
-  expect(result.stdout).toContain("template");
+  expect(result.stdout).not.toContain("template");
   expect(result.stdout).not.toContain("recover-passkey");
   expect(result.stdout).toContain("destroy");
 });
 
 test("command help exposes only intentional sensitive or destructive options", async () => {
-  const [setup, resize, update, destroy, nango, nangoRestore, templatePlan, templateApply, agentSyncInstall] = await Promise.all([
+  const [setup, resize, update, destroy, nango, nangoRestore, agentSyncInstall] = await Promise.all([
     runCli("setup", "--help"),
     runCli("resize", "--help"),
     runCli("update", "--help"),
     runCli("destroy", "--help"),
     runCli("nango", "--help"),
     runCli("nango", "restore", "--help"),
-    runCli("template", "plan", "--help"),
-    runCli("template", "apply", "--help"),
     runCli("agent-sync", "install", "--help"),
   ]);
 
@@ -81,14 +79,6 @@ test("command help exposes only intentional sensitive or destructive options", a
   expect(nango.stdout).not.toContain("credentials");
   expect(nangoRestore.exitCode).toBe(0);
   expect(nangoRestore.stdout).toContain("Restore Nango");
-  expect(templatePlan.exitCode).toBe(0);
-  expect(templatePlan.stdout).toContain("--force-template");
-  expect(templatePlan.stdout).not.toContain("--overwrite-guides");
-  expect(templatePlan.stdout).not.toContain("--overwrite-managed-pages");
-  expect(templateApply.exitCode).toBe(0);
-  expect(templateApply.stdout).toContain("--force-template");
-  expect(templateApply.stdout).not.toContain("--overwrite-guides");
-  expect(templateApply.stdout).not.toContain("--overwrite-managed-pages");
   expect(agentSyncInstall.exitCode).toBe(0);
   expect(agentSyncInstall.stdout).toContain("--codex-path");
   expect(agentSyncInstall.stdout).toContain("--claude-code-path");
