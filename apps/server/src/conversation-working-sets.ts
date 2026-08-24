@@ -51,8 +51,7 @@ function conversationParts(
   const lines = markdown.trimEnd().split(/\r?\n/);
   const markedStarts = lines.flatMap((line, index) => line === CONVERSATION_TURN_MARKER ? [index] : []);
   // Current agent-sync records carry unambiguous markers because message bodies can contain
-  // arbitrary Markdown headings. Heading recognition keeps already-synced records and the
-  // named-speaker eval corpus compatible.
+  // arbitrary Markdown headings. Heading recognition keeps already-synced records compatible.
   const starts = markedStarts.length >= 2
     ? markedStarts
     : lines.flatMap((line, index) => isTurnHeading(line, style) ? [index] : []);

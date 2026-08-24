@@ -33,12 +33,8 @@ describe("local stack commands", () => {
     expect(stackVolumeName("minio-data")).toBe("context-use-dev_minio-data");
   });
 
-  test("development compose can receive an eval-selected template", () => {
+  test("development compose uses MinIO without filesystem storage fallbacks", () => {
     const compose = readFileSync(join(import.meta.dir, "..", "compose.dev.yml"), "utf8");
-    expect(compose).toContain("CONTEXT_USE_TEMPLATE_INSTALL: ${CONTEXT_USE_TEMPLATE_INSTALL:-default}");
-    expect(compose).toContain(
-      "CONTEXT_USE_DEVELOPMENT_TEMPLATE_ROOT: ${CONTEXT_USE_DEVELOPMENT_TEMPLATE_ROOT:-}",
-    );
     expect(compose).toContain("S3_ENDPOINT: http://minio:9000");
     expect(compose).not.toContain("STORAGE_DRIVER");
     expect(compose).not.toContain("STORAGE_PATH");

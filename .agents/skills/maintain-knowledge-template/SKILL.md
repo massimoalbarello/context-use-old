@@ -1,6 +1,6 @@
 ---
 name: maintain-knowledge-template
-description: Maintain or refactor the repository's default knowledge-base template without semantic drift. Use when editing packages/database/templates/default AGENTS.md guides, managed automation instructions, directory or page metadata, or their regression tests; when moving duplicated guidance to its proper owner; or when simplifying prompts while preserving distillation and diary eval behavior.
+description: Maintain or refactor the repository's default knowledge-base template without semantic drift. Use when editing packages/database/templates/default AGENTS.md guides, managed automation instructions, bootstrap document metadata, or their regression tests; when moving duplicated guidance to its proper owner; or when simplifying prompts while preserving distillation and diary behavior.
 ---
 
 # Maintain Knowledge Template
@@ -10,8 +10,7 @@ Keep each rule in one authoritative layer and preserve behavior while improving 
 ## 1. Establish the current contract
 
 Start from the latest remote default branch and inspect the complete affected guidance chain,
-metadata, template tests and relevant eval assertions. Read recent history when wording may
-encode a regression fix.
+metadata and template tests. Read recent history when wording may encode a regression fix.
 
 Record the behaviors that must survive from the authoritative guides, managed instructions,
 tests and history. Treat that as an edit-specific inventory; do not restate their rules here.
@@ -52,7 +51,7 @@ Before deleting guidance, classify it as:
 - duplicated elsewhere: remove the copy;
 - entity-specific: move it to the entity guide;
 - operational: keep it in the relevant workflow step;
-- eval-critical or regression-derived: preserve the behavior explicitly;
+- regression-derived: preserve the behavior explicitly;
 - merely illustrative: shorten or remove it after the rule is unambiguous.
 
 Resolve contradictions according to the newest accepted behavior and add a regression test
@@ -76,9 +75,8 @@ Avoid pinning full sentences unless exact wording is a runtime contract.
 ## 6. Validate in layers
 
 Run focused template tests first, then type or build checks affected by structural changes.
-Run the distillation and diary evals, or the smallest representative eval available, whenever
-guidance could change extraction coverage, entity creation, timelines, links, diary selection
-or checkpoint progression.
+When guidance could change extraction coverage, entity creation, timelines, links, diary
+selection or checkpoint progression, add or update focused behavioral tests for that contract.
 
 Review the final diff for rule ownership, broken guide anchors, accidental semantic loss and
 word-count movement. Report any validation that could not run; never equate a shorter prompt

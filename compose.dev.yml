@@ -133,8 +133,6 @@ services:
       CORPUS_DATABASE_URL: postgres://context_use_corpus:development-only@postgres:5432/context_use
       STORAGE_SOCKET_PATH: /run/context-use-storage/storage.sock
       STORAGE_DASHBOARD_TOKEN: development-storage-dashboard-token
-      CONTEXT_USE_TEMPLATE_INSTALL: ${CONTEXT_USE_TEMPLATE_INSTALL:-default}
-      CONTEXT_USE_DEVELOPMENT_TEMPLATE_ROOT: ${CONTEXT_USE_DEVELOPMENT_TEMPLATE_ROOT:-}
     command:
       - sh
       - -ec
@@ -224,10 +222,6 @@ services:
       MCP_ASSET_CAPABILITY_SECRET: development-only-mcp-capability-secret
       STORAGE_SOCKET_PATH: /run/context-use-storage/storage.sock
       STORAGE_MCP_TOKEN: development-storage-private-mcp-token
-      # Serves the vendored evaluation corpus through read_source_records. The repository
-      # is already bind-mounted at /app, so no extra volume is needed.
-      EVAL_CORPUS_PATH: ${EVAL_CORPUS_PATH-/app/eval/data/amara-life-v1/corpus}
-      EVAL_CORPUS_WINDOW: ${EVAL_CORPUS_WINDOW-full}
     command: ["bun", "--watch", "apps/server/src/mcp-index.ts"]
     volumes:
       - .:/app

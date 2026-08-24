@@ -11,4 +11,3 @@ dist
 *.tfstate*
 .env*
 /data
-.eval-data

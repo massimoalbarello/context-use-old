@@ -44,46 +44,12 @@ bun run db:test down   # discard it
 
 The mark is `ALTER DATABASE … SET "context_use.disposable_test_database" = 'true'`, applied by
 `bun run db:test mark`, which refuses any database with an owner passkey registered against it.
-The local stack above is therefore never eligible: these suites would delete the owner identity
-it and the evals sign in with.
-
-## Knowledge evals
-
-Knowledge evals use the same local instance. Start it with `bun run local up` and create its
-owner once, then connect Codex and drive the activity distiller over a vendored corpus with your
-local ChatGPT subscription:
-
-```sh
-bun run eval connect codex
-bun run eval distill --window dense --days 2
-```
-
-Or run one end-to-end LongMemEval history and QA question:
-
-```sh
-bun run eval longmem:list --limit 5
-bun run eval longmem:run --case <question-id>
-bun run eval longmem:score
-```
-
-The corpus is copied verbatim from
-[`garrytan/gbrain-evals`](https://github.com/garrytan/gbrain-evals) and served through the
-production `read_source_records` tool, one automation run per corpus day, so this exercises the
-real ingestion path rather than an eval-only prompt.
-
-Each run resets local knowledge and assets before it starts, so do not keep development data in
-this disposable instance. The owner, passkeys, sessions, and MCP OAuth grants are preserved.
+The local stack above is therefore never eligible: these suites would delete its owner identity
+while leaving related authentication state behind.
 
 The local stack stores document and asset objects in its MinIO service through the same S3 client
 used in production. `bun run local reset` removes that object-store volume together with the
 database knowledge state; there is no filesystem storage backend or asset directory fallback.
-
-Add `--provider claude` after `claude auth login` to use Claude Code instead. Reports, complete
-agent logs, and per-run snapshots are written beneath the gitignored `eval/results/` directory.
-`bun run eval corpus:verify` confirms a vendored corpus is unchanged; LongMemEval downloads its
-pinned 277 MB dataset once into the gitignored `.eval-data/` cache and verifies it on every use.
-
-See [`eval/README.md`](../eval/README.md) for details.
 
 ## Bootstrap knowledge
 
@@ -93,9 +59,9 @@ template-management API. Once hypermedia cutover is finalized, redeployments ski
 and every retained guide, instruction, state document, and owner document is managed through the
 same stable document identities, revisions, links, and search APIs.
 
-To validate changes to the shipped bootstrap corpus, use its focused database/template tests and
-the local corpus evaluation workflow. Do not add a dashboard or CLI path that reapplies the
-bootstrap tree to an already-finalized knowledge base.
+Validate changes to the shipped bootstrap corpus with its focused database and template tests.
+Do not add a dashboard or CLI path that reapplies the bootstrap documents to an
+already-finalized knowledge base.
 
 ## Knowledge automations
 

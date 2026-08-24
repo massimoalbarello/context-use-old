@@ -1,6 +1,6 @@
 # A PostgreSQL server of the integration suites' own. They mutate cluster-wide
 # roles and clean their fixtures up with trigger and foreign-key enforcement
-# suspended, so sharing a server with the local stack the evals sign in to would
+# suspended, so sharing a server with the local stack would
 # put that installation's owner identity and login roles within their reach.
 # Its data lives in memory: nothing here is meant to survive the container.
 name: context-use-test

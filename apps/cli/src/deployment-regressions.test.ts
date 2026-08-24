@@ -240,8 +240,6 @@ test("deployment diagnoses cloud-init separately and always removes its temporar
       recoveryNangoBackupKey: "postgres/2026-07-20T10-20-31Z.sql.gz",
     },
   )).toThrow("Invalid Nango recovery backup key");
-
-  expect(commands.at(-1)).not.toContain("CONTEXT_USE_TEMPLATE_INSTALL");
 });
 
 test("the scoped Nango pipeline key is installed remotely without crossing the command boundary", () => {
