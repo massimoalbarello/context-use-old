@@ -19,7 +19,12 @@ const requireDatabase = (): string => {
   if (!databaseUrl) throw new Error("TEST_DATABASE_URL is required");
   return databaseUrl;
 };
-const enabled = process.env.TEST_APP_DATABASE_URL === "1";
+// This suite imports every application boundary into one Bun process and installs
+// a process-global storage handler. Run it as its own CI process so unrelated
+// integration modules cannot retain or replace that handler while these tests are
+// exercising the real cross-service boundary.
+const enabled = process.env.TEST_APP_DATABASE_URL === "1"
+  && process.env.TEST_AUTH_BOUNDARY_ISOLATED === "1";
 const testStorageRoot = enabled ? await mkdtemp(join(tmpdir(), "context-use-app-storage-")) : null;
 const testStoragePool = enabled ? new Pool({ connectionString: config.STORAGE_DATABASE_URL }) : null;
 const testStorage = testStorageRoot ? new FilesystemStorage(testStorageRoot) : null;

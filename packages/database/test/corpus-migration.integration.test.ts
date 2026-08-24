@@ -12,7 +12,13 @@ import { markdownObjectMetadata } from "../src/documents.ts";
 import { extractDocumentLinks } from "../src/links.ts";
 
 const databaseUrl = await disposableDatabaseUrl();
-const describeDatabase = databaseUrl ? describe : describe.skip;
+// Corpus migration audits the complete pre-cutover corpus and therefore needs the
+// freshly migrated database, not state accumulated by unrelated integration
+// files. CI runs this file in a dedicated process before the shared-state suite.
+const describeDatabase = databaseUrl
+  && process.env.TEST_CORPUS_MIGRATION_ISOLATED === "1"
+  ? describe
+  : describe.skip;
 
 function bodyMetadata(revisionId: string, body: string) {
   return { id: revisionId, ...markdownObjectMetadata(revisionId, body) };
