@@ -28,13 +28,11 @@ describe("pathless dashboard knowledge responses", () => {
     const document: KnowledgeDocument = {
       document_id: revision.document_id,
       current_revision_id: revision.revision_id,
-      published_revision_id: null,
       public_id: null,
       revision_number: revision.revision_number,
       title: revision.title,
       summary: revision.summary,
       archived_at: null,
-      legacy_published: false,
       current_link_contract: "generic_document_v1",
       pathless_search_ready: true,
       created_at: revision.created_at,

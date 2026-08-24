@@ -26,7 +26,6 @@ export type DocumentAsset = {
   width: number | null;
   height: number | null;
   duration_seconds: string | null;
-  legacy_published: boolean;
   created_at: Date | string;
   deleted_at: Date | string | null;
 };
@@ -68,7 +67,6 @@ function compatibilityPath(): string {
 const ASSET_COLUMNS = `asset.id AS document_id,resource.public_id,
     asset.filename,asset.content_type,asset.size_bytes,asset.content_hash,
     asset.width,asset.height,asset.duration_seconds,
-    asset.public_path IS NOT NULL AS legacy_published,
     asset.created_at,asset.deleted_at`;
 
 const ASSET_FROM = `
@@ -117,7 +115,7 @@ export class DocumentAssetRepository {
          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
          RETURNING id AS document_id,NULL::uuid AS public_id,
            filename,content_type,size_bytes,content_hash,
-           width,height,duration_seconds,false AS legacy_published,
+           width,height,duration_seconds,
            created_at,deleted_at`,
         [documentId, path, input.filename, input.content_type,
           input.size_bytes, input.sha256, objectKey,
@@ -232,9 +230,16 @@ export class DocumentAssetRepository {
       await client.query(
         "SELECT pg_advisory_xact_lock_shared(hashtextextended('filesystem-hypermedia-corpus-transition',0))",
       );
-      const selected = await client.query<{ public_path: string | null }>(
-        `SELECT public_path FROM assets
-         WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`,
+      const selected = await client.query<{ published: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1
+           FROM public_resources resource
+           JOIN asset_publications publication ON publication.public_id=resource.public_id
+           WHERE resource.document_id=asset.id
+         ) AS published
+         FROM assets asset
+         WHERE asset.id=$1 AND asset.deleted_at IS NULL
+         FOR UPDATE OF asset`,
         [documentId],
       );
       if (!selected.rowCount) {
@@ -244,7 +249,7 @@ export class DocumentAssetRepository {
         );
         return existing.rows[0] ? normalizeAsset(existing.rows[0]) : null;
       }
-      if (selected.rows[0]!.public_path !== null) {
+      if (selected.rows[0]!.published) {
         throw new AssetArchiveConflictError("published");
       }
       const referenced = await client.query(

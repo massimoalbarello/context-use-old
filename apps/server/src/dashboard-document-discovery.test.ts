@@ -39,7 +39,6 @@ const catalogItem: PrivateDocumentCatalogItem = {
   source_record_id: null,
   operational_roles: ["directory_hub"],
   public_id: "44444444-4444-4444-8444-444444444444",
-  legacy_published: true,
   current_link_contract: "generic_document_v1",
   links_indexed_at: "2026-08-23T10:00:00.000Z",
   pathless_search_ready: true,

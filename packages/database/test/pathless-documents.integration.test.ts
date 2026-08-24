@@ -82,14 +82,13 @@ describeDatabase("pathless private documents", () => {
     createdDocumentIds.add(asset.document.document_id);
     expect(Object.keys(asset.document).sort()).toEqual([
       "content_hash", "content_type", "created_at", "deleted_at", "document_id",
-      "duration_seconds", "filename", "height", "legacy_published", "public_id",
+      "duration_seconds", "filename", "height", "public_id",
       "size_bytes", "width",
     ]);
     expect(asset.document).toMatchObject({
       size_bytes: "1234",
       duration_seconds: "1.25",
       public_id: null,
-      legacy_published: false,
     });
     // The storage locator is an explicit internal handoff. Only the legacy
     // compatibility path (verified below for pages) must be unlinkable from

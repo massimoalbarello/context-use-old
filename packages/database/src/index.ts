@@ -21,8 +21,6 @@ export {
 } from "./documents.ts";
 export {
   DocumentMaintenanceRepository,
-  type PublishedProjectionPage,
-  type PublicProjectionSnapshot,
   type UnindexedDocumentRevision,
 } from "./document-maintenance.ts";
 export {
@@ -90,8 +88,6 @@ export { ConfirmationRepository } from "./confirmation.ts";
 export type {
   ConfirmationIntentKind,
   ConfirmationPasskey,
-  LegacyPublicationConfirmationIntent,
-  PathlessPublicationConfirmationIntent,
   PublicationConfirmationIntent,
   VerifiedPasskey,
 } from "./confirmation.ts";

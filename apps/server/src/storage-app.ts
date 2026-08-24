@@ -1,4 +1,4 @@
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { unlink } from "node:fs/promises";
 import { chmod } from "node:fs/promises";
 import {
@@ -23,7 +23,6 @@ import {
   type StoredAsset,
 } from "./storage.ts";
 import { disableStreamingRequestIdleTimeout } from "./streaming-timeout.ts";
-import { projectPublicMarkdown } from "./public-markdown-projection.ts";
 import { projectPathlessPublicMarkdown } from "./pathless-public-markdown.ts";
 
 const objectKeySchema = z.string().regex(/^objects\/[a-f0-9-]{36}$/);
@@ -295,8 +294,6 @@ export async function materializePathlessPublicationArtifact(input: {
 export function createStorageBrokerApp(input: {
   storage: ObjectStorageBackend;
   privateAssets: PrivateAssetLookup;
-  /** Ignored source-compatibility input for in-flight test/application callers. */
-  publicAssets?: unknown;
   pathlessPublications?: PathlessPublicationClaims;
   tokens: StorageBrokerTokens;
 }) {
@@ -495,45 +492,6 @@ export const storageApp = createStorageBrokerApp({
 
 let maintenanceRunning = false;
 
-export async function reconcileDocumentObjects(input: {
-  storage: ObjectStorageBackend;
-  maintenance: Pick<DocumentMaintenanceRepository,
-    "projectionSnapshot" | "recordPublishedArtifact">;
-}): Promise<void> {
-  const { storage, maintenance } = input;
-  const snapshot = await maintenance.projectionSnapshot();
-  for (const page of snapshot.pages) {
-    if (!await storage.verify(
-      page.body_object_key,
-      Number(page.body_size_bytes),
-      page.body_content_hash,
-    )) throw new Error(`Published revision ${page.version_id} is unavailable`);
-    const privateMarkdown = await new Response(await storage.read(page.body_object_key)).text();
-    const publicMarkdown = projectPublicMarkdown(privateMarkdown, page.source_path, snapshot);
-    const bytes = Buffer.from(publicMarkdown, "utf8");
-    const artifactId = randomUUID();
-    const objectKey = `documents/public/${artifactId}.md`;
-    const contentHash = createHash("sha256").update(bytes).digest("hex");
-    await storage.write({
-      id: artifactId,
-      objectKey,
-      filename: `${artifactId}.md`,
-      contentType: "text/markdown; charset=utf-8",
-      sizeBytes: bytes.byteLength,
-      contentHash,
-    }, new Blob([bytes]).stream());
-    await maintenance.recordPublishedArtifact({
-      pageId: page.page_id,
-      versionId: page.version_id,
-      generation: snapshot.generation,
-      artifactId,
-      objectKey,
-      sizeBytes: bytes.byteLength,
-      contentHash,
-    });
-  }
-}
-
 export async function reconcileDocumentLinks(input: {
   storage: ObjectStorageBackend;
   maintenance: Pick<DocumentMaintenanceRepository,
@@ -544,9 +502,7 @@ export async function reconcileDocumentLinks(input: {
 }> {
   const { storage, maintenance } = input;
   // One bounded batch keeps storage startup and the recurring maintenance tick
-  // responsive even when a large historical corpus still needs indexing. The
-  // filesystem cutover has its own completion gate; this additive release does
-  // not pretend an unfinished backfill is complete.
+  // responsive when revisions are waiting for hyperlink indexing.
   const revisions = await maintenance.unindexedLinkRevisions();
   let indexed = 0;
   const failures: Array<{ revisionId: string; error: unknown }> = [];
@@ -607,10 +563,6 @@ export async function maintainDocumentObjects(): Promise<void> {
           : { type: typeof failure.error }),
       });
     }
-    await reconcileDocumentObjects({
-      storage: defaultStorage,
-      maintenance: documentMaintenance,
-    });
   } finally {
     maintenanceRunning = false;
   }
