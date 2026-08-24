@@ -9,14 +9,13 @@ import { DocumentDetails } from "./components/DocumentDetails.tsx";
 import { DocumentNavigator } from "./components/DocumentNavigator.tsx";
 import { KnowledgeHistory } from "./components/KnowledgeHistory.tsx";
 import { Login } from "./components/Login.tsx";
-import { McpClients } from "./components/McpClients.tsx";
 import { NewKnowledgeDocument } from "./components/NewKnowledgeDocument.tsx";
 import { OAuthConsent } from "./components/OAuthConsent.tsx";
 import { Settings, type PasskeySummary } from "./components/Settings.tsx";
 import type { Asset } from "./types.ts";
 
 type SessionInfo = { owner: { id: string; email: string }; passkey_count: number; passkeys: PasskeySummary[] };
-type Section = "knowledge" | "automations" | "history" | "mcp" | "settings";
+type Section = "knowledge" | "automations" | "history" | "settings";
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "context-use.sidebar.width.v1";
 const SIDEBAR_OPEN_STORAGE_KEY = "context-use.sidebar.open.v1";
@@ -48,7 +47,6 @@ function SectionIcon({ section }: { section: Section }) {
   if (section === "knowledge") return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4.5 3.5h8a3 3 0 0 1 3 3v10h-8a3 3 0 0 1-3-3v-10Z" /><path d="M7.5 6.5h5M7.5 9.5h5M7.5 12.5h3" /></svg>;
   if (section === "automations") return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.75v3.5M10 13.75v3.5M2.75 10h3.5M13.75 10h3.5" /><circle cx="10" cy="10" r="3.75" /><path d="m4.9 4.9 2.45 2.45M12.65 12.65l2.45 2.45M15.1 4.9l-2.45 2.45M7.35 12.65 4.9 15.1" /></svg>;
   if (section === "history") return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4.5h12M4 10h12M4 15.5h12" /><circle cx="6" cy="4.5" r="1" /><circle cx="10" cy="10" r="1" /><circle cx="14" cy="15.5" r="1" /></svg>;
-  if (section === "mcp") return <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="5" cy="6" r="2" /><circle cx="15" cy="6" r="2" /><circle cx="10" cy="15" r="2" /><path d="m6.75 7 2.2 5.25M13.25 7l-2.2 5.25M7 6h6" /></svg>;
   return <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="2.5" /><path d="M16.5 11.5v-3l-2-.5a5.1 5.1 0 0 0-.7-1.2l.55-2-2.6-1.5-1.45 1.45a5.3 5.3 0 0 0-1.4 0L7.45 3.3l-2.6 1.5.55 2A5.1 5.1 0 0 0 4.7 8l-2 .5v3l2 .5c.18.43.42.84.7 1.2l-.55 2 2.6 1.5 1.45-1.45a5.3 5.3 0 0 0 1.4 0l1.45 1.45 2.6-1.5-.55-2c.28-.36.52-.77.7-1.2l2-.5Z" /></svg>;
 }
 
@@ -73,10 +71,9 @@ function selectionFromLocation(): DashboardSelection | null {
 }
 
 function sectionFromLocation(): Section {
-  if (window.location.pathname === "/app/settings") return "settings";
+  if (window.location.pathname === "/app/settings" || window.location.pathname === "/app/mcp") return "settings";
   if (window.location.pathname === "/app/automations") return "automations";
   if (window.location.pathname === "/app/history") return "history";
-  if (window.location.pathname === "/app/mcp") return "mcp";
   return "knowledge";
 }
 
@@ -114,6 +111,9 @@ export function App() {
   useEffect(() => { if (!isPending) setSessionResolved(true); }, [isPending]);
   useEffect(() => { if (authSession) loadSession().catch(() => setSession(null)); }, [authSession]);
   useEffect(() => { if (session) loadAssets().catch(() => undefined); }, [session]);
+  useEffect(() => {
+    if (window.location.pathname === "/app/mcp") history.replaceState({}, "", "/app/settings");
+  }, []);
   useEffect(() => {
     const syncLocation = () => {
       setSelected(selectionFromLocation());
@@ -262,13 +262,6 @@ export function App() {
     if (window.location.pathname !== "/app/settings") history.pushState({}, "", "/app/settings");
   };
 
-  const openMcpClients = () => {
-    setCreatingDocument(false);
-    setSection("mcp");
-    setMobileSidebarOpen(false);
-    history.pushState({}, "", "/app/mcp");
-  };
-
   const openHistory = () => {
     setCreatingDocument(false);
     setSection("history");
@@ -339,7 +332,7 @@ export function App() {
         aria-expanded={mobileSidebarOpen}
         onClick={() => setMobileSidebarOpen((open) => !open)}
       ><SidebarToggleIcon /></button>
-      <strong className="mobile-current-section">{section === "mcp" ? "MCP clients" : section[0]!.toUpperCase() + section.slice(1)}</strong>
+      <strong className="mobile-current-section">{section[0]!.toUpperCase() + section.slice(1)}</strong>
     </header>
     <button
       type="button"
@@ -365,7 +358,6 @@ export function App() {
           <button className={section === "history" ? "active" : ""} onClick={openHistory}><SectionIcon section="history" /><span>History</span></button>
         </nav>
         <button className={section === "settings" ? "settings-button active" : "settings-button"} onClick={openSettings}><SectionIcon section="settings" /><span>Settings</span></button>
-        <button className={section === "mcp" ? "settings-button settings-subnav active" : "settings-button settings-subnav"} onClick={openMcpClients}><SectionIcon section="mcp" /><span>MCP clients</span></button>
         <div className="sidebar-account"><span className="user-avatar">{session.owner.email.slice(0, 1).toUpperCase()}</span><span className="sidebar-user"><strong>{session.owner.email}</strong><small>{session.passkey_count} secure passkey{session.passkey_count === 1 ? "" : "s"}</small></span><button type="button" className="sign-out-button" onClick={() => authClient.signOut({ fetchOptions: { onSuccess: () => location.assign("/app") } })}><SignOutIcon /><span>Sign out</span></button></div>
       </footer>
     </aside>
@@ -382,7 +374,7 @@ export function App() {
       onKeyDown={resizeSidebarWithKeyboard}
       onDoubleClick={() => setSidebarWidth(DEFAULT_SIDEBAR_WIDTH)}
     />
-    {section === "settings" ? <Settings passkeys={session.passkeys} onPasskeysChanged={loadSession} /> : section === "automations" ? <Automations onOpenDocument={(documentId) => openDocumentId(documentId)} /> : section === "history" ? <KnowledgeHistory onOpenDocument={(documentId) => openDocumentId(documentId)} /> : section === "mcp" ? <McpClients /> : creatingDocument ? <NewKnowledgeDocument onCancel={openKnowledge} onCreated={(documentId) => { setNavigatorRefresh((value) => value + 1); openDocumentId(documentId); }} /> : selected && selectedDocument?.document_kind === "knowledge" ? <Editor pageId={selected.id} onChanged={async () => { setNavigatorRefresh((value) => value + 1); }} onDeleted={async () => { setSelected(null); setSelectedDocument(null); history.pushState({}, "", "/app"); setNavigatorRefresh((value) => value + 1); setMessage("Document and retained revisions deleted. A body-free tombstone remains in Change history."); }} onOpenDocument={openDocument} /> : selectedAsset ? <AssetDetails key={selectedAsset.id} asset={selectedAsset} onChanged={async () => { await loadAssets(); setNavigatorRefresh((value) => value + 1); }} onDeleted={async () => { setSelected(null); setSelectedDocument(null); history.pushState({}, "", "/app"); await loadAssets(); setNavigatorRefresh((value) => value + 1); setMessage("Asset deleted. S3 versioning retains a recoverable noncurrent copy for the configured safety period."); }} /> : selectedDocument ? <DocumentDetails document={selectedDocument} /> : selected ? <main className="editor-empty">Loading document…</main> : <main className="editor-empty"><div className="empty-content"><span className="empty-kicker"><i />Private by default</span><h1>Your context,<br />ready when you need it.</h1><p>Search your knowledge, open a document, then follow its links and backlinks. Your content stays private until you explicitly publish an exact version.</p><div className="empty-details"><span>Search-first</span><span>Hyperlinked</span><span>Versioned history</span></div></div><div className="empty-sigil" aria-hidden="true"><span>c</span><span>u</span></div></main>}
+    {section === "settings" ? <Settings passkeys={session.passkeys} onPasskeysChanged={loadSession} /> : section === "automations" ? <Automations onOpenDocument={(documentId) => openDocumentId(documentId)} /> : section === "history" ? <KnowledgeHistory onOpenDocument={(documentId) => openDocumentId(documentId)} /> : creatingDocument ? <NewKnowledgeDocument onCancel={openKnowledge} onCreated={(documentId) => { setNavigatorRefresh((value) => value + 1); openDocumentId(documentId); }} /> : selected && selectedDocument?.document_kind === "knowledge" ? <Editor pageId={selected.id} onChanged={async () => { setNavigatorRefresh((value) => value + 1); }} onDeleted={async () => { setSelected(null); setSelectedDocument(null); history.pushState({}, "", "/app"); setNavigatorRefresh((value) => value + 1); setMessage("Document and retained revisions deleted. A body-free tombstone remains in Change history."); }} onOpenDocument={openDocument} /> : selectedAsset ? <AssetDetails key={selectedAsset.id} asset={selectedAsset} onChanged={async () => { await loadAssets(); setNavigatorRefresh((value) => value + 1); }} onDeleted={async () => { setSelected(null); setSelectedDocument(null); history.pushState({}, "", "/app"); await loadAssets(); setNavigatorRefresh((value) => value + 1); setMessage("Asset deleted. S3 versioning retains a recoverable noncurrent copy for the configured safety period."); }} /> : selectedDocument ? <DocumentDetails document={selectedDocument} /> : selected ? <main className="editor-empty">Loading document…</main> : <main className="editor-empty"><div className="empty-content"><span className="empty-kicker"><i />Private by default</span><h1>Your context,<br />ready when you need it.</h1><p>Search your knowledge, open a document, then follow its links and backlinks. Your content stays private until you explicitly publish an exact version.</p><div className="empty-details"><span>Search-first</span><span>Hyperlinked</span><span>Versioned history</span></div></div><div className="empty-sigil" aria-hidden="true"><span>c</span><span>u</span></div></main>}
     {message && <div className="toast">{message}</div>}
   </div>;
 }

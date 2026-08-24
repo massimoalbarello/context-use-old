@@ -73,17 +73,16 @@ export function McpClients() {
   const clients = result?.items ?? [];
   const totalPages = Math.max(1, result?.total_pages ?? 0);
 
-  return <main className="content-page mcp-clients-page">
-    <header><div><span className="eyebrow">Agent connections</span><h1>MCP clients</h1><p>Connect agents to private tools with owner authorization and review the clients that currently have access.</p></div></header>
+  return <>
     {message && <div className="mcp-message" role="status">{message}</div>}
     {error && <div className="mcp-message error" role="alert">{error}</div>}
 
     <section className="mcp-endpoint-section">
-      <div className="section-heading"><div><h2>Private server URL</h2><p>Connect agents and external automation harnesses to versioned private knowledge and assets through OAuth.</p></div></div>
+      <div className="section-heading"><div><h2>MCP clients</h2><p>Connect agents to private tools with owner authorization and review the clients that currently have access.</p></div></div>
       <article className="mcp-endpoint-card">
-        <span className="mcp-access-badge private">Knowledge</span>
+        <h3>Private server URL</h3>
         <p>Read and manage private knowledge and assets. Scheduling and execution remain the responsibility of the connected harness.</p>
-        <div className="mcp-endpoint-copy"><code>{endpoints.knowledge_url || "Loading…"}</code><button type="button" disabled={!endpoints.knowledge_url} onClick={() => void copyUrl(endpoints.knowledge_url, "Knowledge")}>Copy URL</button></div>
+        <div className="mcp-endpoint-copy"><code>{endpoints.knowledge_url || "Loading…"}</code><button type="button" disabled={!endpoints.knowledge_url} onClick={() => void copyUrl(endpoints.knowledge_url, "Private server")}>Copy URL</button></div>
       </article>
     </section>
 
@@ -91,7 +90,7 @@ export function McpClients() {
       <div className="mcp-client-heading"><div><h2>Connected clients</h2><p>Clients you authorized to access private tools.</p></div></div>
 
       {loading ? <p className="mcp-empty">Loading clients…</p> : clients.length === 0 ? <p className="mcp-empty">No MCP client has connected yet.</p> : <div className="mcp-client-list">{clients.map((client) => <article key={client.client_id}>
-        <div className="mcp-client-main"><div className="mcp-client-title"><strong>{client.name || client.client_id}</strong><span className="mcp-access-badge private">Knowledge</span></div><span>{client.version ? `Version ${client.version} · ` : ""}Approved {formatDate(client.approved_at)}</span><span>Last connected {formatDate(client.last_connected_at)}</span></div>
+        <div className="mcp-client-main"><div className="mcp-client-title"><strong>{client.name || client.client_id}</strong></div><span>{client.version ? `Version ${client.version} · ` : ""}Approved {formatDate(client.approved_at)}</span><span>Last connected {formatDate(client.last_connected_at)}</span></div>
         <button type="button" className="danger" onClick={() => { setRevokeError(""); setRevoking(client); }}>Revoke</button>
       </article>)}</div>}
 
@@ -113,5 +112,5 @@ export function McpClients() {
       onCancel={() => setRevoking(null)}
       onConfirm={() => void revoke(revoking)}
     />}
-  </main>;
+  </>;
 }
