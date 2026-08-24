@@ -44,7 +44,7 @@ export function developmentResetSql(): string {
     TRUNCATE TABLE ${DEVELOPMENT_RESET_TABLES.join(", ")} RESTART IDENTITY;
     INSERT INTO publication_settings(
       singleton,entrypoint_public_id,updated_at
-    ) VALUES (true,NULL,NULL);
+    ) VALUES (true,NULL,clock_timestamp());
     INSERT INTO knowledge_settings(singleton) VALUES (true);
   `;
 }
