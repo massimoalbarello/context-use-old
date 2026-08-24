@@ -175,6 +175,13 @@ function boundedLimit(value: number | undefined, fallback: number, maximum: numb
   return Math.min(Math.max(Math.floor(value ?? fallback), 1), maximum);
 }
 
+function activePublicationBlocked(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { code?: unknown; message?: unknown };
+  return candidate.code === "23514"
+    && candidate.message === "an actively published v2 page cannot be archived or deleted";
+}
+
 const CURRENT_DOCUMENT_SELECT = `
   SELECT page.id AS document_id,page.current_version_id AS current_revision_id,
     resource.public_id,
@@ -407,15 +414,8 @@ export class KnowledgeDocumentRepository {
         version_number: number;
         title: string;
         summary: string;
-        published: boolean;
       }>(
-        `SELECT page.current_path,version.version_number,version.title,version.summary,
-           EXISTS (
-             SELECT 1
-             FROM public_resources resource
-             JOIN page_publications publication ON publication.public_id=resource.public_id
-             WHERE resource.document_id=page.id
-           ) AS published
+        `SELECT page.current_path,version.version_number,version.title,version.summary
          FROM knowledge_pages page
          JOIN knowledge_page_versions version
            ON version.id=page.current_version_id AND version.page_id=page.id
@@ -428,7 +428,6 @@ export class KnowledgeDocumentRepository {
       if (row.version_number !== input.expected_revision_number) {
         throw new VersionConflictError(row.version_number);
       }
-      if (row.published) throw new PublicationStateError();
       const revisionNumber = row.version_number + 1;
       await client.query(
         `INSERT INTO hypermedia_document_revisions(
@@ -455,10 +454,15 @@ export class KnowledgeDocumentRepository {
         "SELECT register_generic_knowledge_revision($1,$2,$3::uuid[])",
         [revisionId, source.body_markdown, targets],
       );
-      await client.query(
-        "UPDATE knowledge_pages SET archived_at=now(),updated_at=now() WHERE id=$1",
-        [documentId],
-      );
+      try {
+        await client.query(
+          "UPDATE knowledge_pages SET archived_at=now(),updated_at=now() WHERE id=$1",
+          [documentId],
+        );
+      } catch (error) {
+        if (activePublicationBlocked(error)) throw new PublicationStateError();
+        throw error;
+      }
       await client.query(
         "UPDATE hypermedia_documents SET updated_at=now() WHERE id=$1",
         [documentId],
