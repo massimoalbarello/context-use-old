@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
-import { isFinalizedZipFooter, zipFooterRange } from "./zip-footer.ts";
 import {
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
@@ -40,9 +39,12 @@ export interface ObjectStorage {
 export interface ObjectStorageBackend extends ObjectStorage {
   exists(objectKey: string): Promise<boolean>;
   writeOnce(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void>;
-  writeGenerated(objectKey: string, body: ReadableStream<Uint8Array> | null): Promise<GeneratedObjectMetadata>;
-  inspectGenerated(objectKey: string): Promise<GeneratedObjectMetadata | null>;
-  deleteGenerated(objectKey: string): Promise<void>;
+  writeBundle(objectKey: string, body: ReadableStream<Uint8Array> | null): Promise<GeneratedObjectMetadata>;
+  inspectBundle(objectKey: string): Promise<GeneratedObjectMetadata | null>;
+  deleteBundle(objectKey: string): Promise<void>;
+  writeImportPart(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void>;
+  inspectImportPart(objectKey: string): Promise<GeneratedObjectMetadata | null>;
+  deleteImportPart(objectKey: string): Promise<void>;
 }
 
 export type S3StorageConfig = {
@@ -104,7 +106,7 @@ export class ObjectAlreadyExistsError extends Error {
 }
 
 const S3_MULTIPART_PART_SIZE = 8 * 1024 * 1024;
-const MAX_GENERATED_OBJECT_BYTES = 5 * 1024 ** 3 + 64 * 1024 ** 2;
+const MAX_GENERATED_OBJECT_BYTES = 64 * 1024 ** 3;
 
 function generatedManifestKey(objectKey: string): string {
   return `${objectKey}.json`;
@@ -325,20 +327,27 @@ export class S3Storage implements ObjectStorageBackend {
     }
   }
 
-  async writeGenerated(
+  async writeBundle(
     objectKey: string,
     body: ReadableStream<Uint8Array> | null,
   ): Promise<GeneratedObjectMetadata> {
-    if (!body) throw new Error("Generated object body is missing");
+    return this.writeBundleObject(objectKey, body);
+  }
+
+  private async writeBundleObject(
+    objectKey: string,
+    body: ReadableStream<Uint8Array> | null,
+  ): Promise<GeneratedObjectMetadata> {
+    if (!body) throw new Error("Knowledge bundle body is missing");
     const created = await this.client.send(new CreateMultipartUploadCommand({
       Bucket: this.options.bucket,
       Key: objectKey,
-      ContentType: "application/zip",
+      ContentType: "application/vnd.context-use.knowledge-bundle",
       ChecksumAlgorithm: "SHA256",
-      Metadata: { generated: "knowledge-export" },
+      Metadata: { generated: "knowledge-bundle" },
       ...this.encryption(),
     }));
-    if (!created.UploadId) throw new Error("S3 did not create an export multipart upload");
+    if (!created.UploadId) throw new Error("S3 did not create a knowledge bundle multipart upload");
     const uploadId = created.UploadId;
     const parts: Array<{ ETag: string; PartNumber: number; ChecksumSHA256: string }> = [];
     const buffered = new ChunkAccumulator();
@@ -357,7 +366,7 @@ export class S3Storage implements ObjectStorageBackend {
         ContentLength: bytes.byteLength,
         ChecksumSHA256: partChecksum,
       }));
-      if (!uploaded.ETag) throw new Error("S3 did not return an export part ETag");
+      if (!uploaded.ETag) throw new Error("S3 did not return a knowledge bundle part ETag");
       parts.push({ ETag: uploaded.ETag, PartNumber: partNumber, ChecksumSHA256: partChecksum });
     };
     try {
@@ -367,7 +376,7 @@ export class S3Storage implements ObjectStorageBackend {
           const chunk = await reader.read();
           if (chunk.done) break;
           sizeBytes += chunk.value.byteLength;
-          if (sizeBytes > MAX_GENERATED_OBJECT_BYTES) throw new Error("Generated object is too large");
+          if (sizeBytes > MAX_GENERATED_OBJECT_BYTES) throw new Error("Knowledge bundle is too large");
           hash.update(chunk.value);
           buffered.push(chunk.value);
           while (buffered.byteLength >= S3_MULTIPART_PART_SIZE) {
@@ -378,7 +387,7 @@ export class S3Storage implements ObjectStorageBackend {
         await reader.cancel(error).catch(() => undefined);
         throw error;
       }
-      if (!sizeBytes) throw new Error("Generated object is empty");
+      if (!sizeBytes) throw new Error("Knowledge bundle is empty");
       if (buffered.byteLength) await uploadPart(buffered.take());
       await this.client.send(new CompleteMultipartUploadCommand({
         Bucket: this.options.bucket,
@@ -398,21 +407,6 @@ export class S3Storage implements ObjectStorageBackend {
     }
 
     const metadata = { sizeBytes, contentHash: hash.digest("hex") };
-    const footerRange = zipFooterRange(sizeBytes);
-    if (!footerRange) {
-      await this.delete(objectKey);
-      throw new Error("Generated ZIP is too short to be finalized");
-    }
-    const footerResult = await this.client.send(new GetObjectCommand({
-      Bucket: this.options.bucket,
-      Key: objectKey,
-      Range: `bytes=${footerRange.start}-${footerRange.end}`,
-    }));
-    if (!footerResult.Body
-        || !isFinalizedZipFooter(await footerResult.Body.transformToByteArray())) {
-      await this.delete(objectKey);
-      throw new Error("Generated ZIP central directory was not finalized");
-    }
     const manifest = generatedManifest(metadata);
     const manifestHash = createHash("sha256").update(manifest).digest("base64");
     await this.client.send(new PutObjectCommand({
@@ -427,7 +421,7 @@ export class S3Storage implements ObjectStorageBackend {
     return metadata;
   }
 
-  async inspectGenerated(objectKey: string): Promise<GeneratedObjectMetadata | null> {
+  async inspectBundle(objectKey: string): Promise<GeneratedObjectMetadata | null> {
     try {
       const [manifestResult, objectResult] = await Promise.all([
         this.client.send(new GetObjectCommand({
@@ -448,11 +442,37 @@ export class S3Storage implements ObjectStorageBackend {
     }
   }
 
-  async deleteGenerated(objectKey: string): Promise<void> {
+  async deleteBundle(objectKey: string): Promise<void> {
     await Promise.all([
       this.delete(objectKey),
       this.delete(generatedManifestKey(objectKey)),
     ]);
+  }
+
+  async writeImportPart(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void> {
+    return this.writeOnce(asset, body);
+  }
+
+  async inspectImportPart(objectKey: string): Promise<GeneratedObjectMetadata | null> {
+    try {
+      const result = await this.client.send(new HeadObjectCommand({
+        Bucket: this.options.bucket,
+        Key: objectKey,
+        ChecksumMode: "ENABLED",
+      }));
+      const sizeBytes = Number(result.ContentLength);
+      const contentHash = result.Metadata?.sha256 ?? "";
+      return Number.isSafeInteger(sizeBytes) && sizeBytes > 0 && /^[a-f0-9]{64}$/.test(contentHash)
+        ? { sizeBytes, contentHash }
+        : null;
+    } catch (error) {
+      if (error instanceof Error && ["NoSuchKey", "NotFound"].includes(error.name)) return null;
+      throw error;
+    }
+  }
+
+  async deleteImportPart(objectKey: string): Promise<void> {
+    await this.delete(objectKey);
   }
 
   async delete(objectKey: string): Promise<void> {

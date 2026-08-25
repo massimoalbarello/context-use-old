@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { isFinalizedZipFooter, zipFooterRange } from "./zip-footer.ts";
 import {
   AssetIntegrityError,
   AssetNotFoundError,
@@ -43,18 +42,12 @@ export class MemoryObjectStorage implements ObjectStorageBackend {
     this.objects.set(asset.objectKey, value);
   }
 
-  async writeGenerated(
+  async writeBundle(
     objectKey: string,
     body: ReadableStream<Uint8Array> | null,
   ): Promise<GeneratedObjectMetadata> {
-    if (!body) throw new Error("Generated object body is missing");
     const value = await collect(body);
-    if (!value.byteLength) throw new Error("Generated object is empty");
-    const footerRange = zipFooterRange(value.byteLength);
-    if (!footerRange
-        || !isFinalizedZipFooter(value.slice(footerRange.start, footerRange.end + 1))) {
-      throw new Error("Generated ZIP central directory was not finalized");
-    }
+    if (!value.byteLength) throw new Error("Knowledge bundle is empty");
     const metadata = {
       sizeBytes: value.byteLength,
       contentHash: createHash("sha256").update(value).digest("hex"),
@@ -64,13 +57,29 @@ export class MemoryObjectStorage implements ObjectStorageBackend {
     return metadata;
   }
 
-  async inspectGenerated(objectKey: string): Promise<GeneratedObjectMetadata | null> {
+  async inspectBundle(objectKey: string): Promise<GeneratedObjectMetadata | null> {
     return this.objects.has(objectKey) ? this.generated.get(objectKey) ?? null : null;
   }
 
-  async deleteGenerated(objectKey: string): Promise<void> {
+  async deleteBundle(objectKey: string): Promise<void> {
     this.generated.delete(objectKey);
     this.objects.delete(objectKey);
+  }
+
+  async writeImportPart(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void> {
+    return this.writeOnce(asset, body);
+  }
+
+  async inspectImportPart(objectKey: string): Promise<GeneratedObjectMetadata | null> {
+    const value = this.objects.get(objectKey);
+    return value ? {
+      sizeBytes: value.byteLength,
+      contentHash: createHash("sha256").update(value).digest("hex"),
+    } : null;
+  }
+
+  async deleteImportPart(objectKey: string): Promise<void> {
+    return this.delete(objectKey);
   }
 
   async delete(objectKey: string): Promise<void> {

@@ -16,7 +16,7 @@ const tokens = {
 const publishedKey = "objects/11111111-1111-4111-8111-111111111111";
 const privateKey = "objects/22222222-2222-4222-8222-222222222222";
 const newKey = "objects/33333333-3333-4333-8333-333333333333";
-const exportKey = "exports/44444444-4444-4444-8444-444444444444.zip";
+const bundleKey = "bundles/44444444-4444-4444-8444-444444444444.cuse";
 const publicDocumentKey = "documents/public/55555555-5555-4555-8555-555555555555.md";
 const publicArtifactKey = "artifacts/public/88888888-8888-4888-8888-888888888888";
 
@@ -81,7 +81,7 @@ class MemoryStorage implements ObjectStorageBackend {
     this.objects.delete(objectKey);
   }
 
-  async writeGenerated(objectKey: string, body: ReadableStream<Uint8Array> | null): Promise<GeneratedObjectMetadata> {
+  async writeBundle(objectKey: string, body: ReadableStream<Uint8Array> | null): Promise<GeneratedObjectMetadata> {
     const bytes = new Uint8Array(await new Response(body).arrayBuffer());
     const metadata = {
       sizeBytes: bytes.byteLength,
@@ -92,13 +92,29 @@ class MemoryStorage implements ObjectStorageBackend {
     return metadata;
   }
 
-  async inspectGenerated(objectKey: string): Promise<GeneratedObjectMetadata | null> {
+  async inspectBundle(objectKey: string): Promise<GeneratedObjectMetadata | null> {
     return this.generated.get(objectKey) ?? null;
   }
 
-  async deleteGenerated(objectKey: string): Promise<void> {
+  async deleteBundle(objectKey: string): Promise<void> {
     this.objects.delete(objectKey);
     this.generated.delete(objectKey);
+  }
+
+  async writeImportPart(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void> {
+    return this.writeOnce(asset, body);
+  }
+
+  async inspectImportPart(objectKey: string): Promise<GeneratedObjectMetadata | null> {
+    const bytes = this.objects.get(objectKey);
+    return bytes ? {
+      sizeBytes: bytes.byteLength,
+      contentHash: createHash("sha256").update(bytes).digest("hex"),
+    } : null;
+  }
+
+  async deleteImportPart(objectKey: string): Promise<void> {
+    return this.delete(objectKey);
   }
 
   async exists(objectKey: string): Promise<boolean> {
@@ -609,71 +625,113 @@ describe("storage broker capabilities", () => {
     expect((await app.handle(authorized("invalid-token-that-is-long-enough-for-parser", `/private/object?key=${publishedKey}`))).status).toBe(404);
   });
 
-  test("only the dashboard can stage and range-read a committed generated export", async () => {
+  test("stages full bundles and resumable import parts behind the dashboard capability", async () => {
     const storage = new MemoryStorage();
-    const app = createStorageBrokerApp({
-      storage,
-      privateAssets: privateAssets({}),
-      tokens,
-    });
-    const bytes = Buffer.from("complete-knowledge-export");
-
-    expect((await app.handle(authorized(tokens.mcp, `/private/export?key=${encodeURIComponent(exportKey)}`, {
+    storage.objects.set(publicDocumentKey, Buffer.from("retained public projection"));
+    const app = createStorageBrokerApp({ storage, privateAssets: privateAssets({}), tokens });
+    const bundle = Buffer.from("CONTEXT-USE-KNOWLEDGE-BUNDLE-V1\ncomplete");
+    expect((await app.handle(authorized(
+      tokens.dashboard,
+      "/private/export?key=exports%2F44444444-4444-4444-8444-444444444444.zip",
+    ))).status).toBe(404);
+    const staged = await app.handle(authorized(tokens.dashboard, `/private/bundle?key=${encodeURIComponent(bundleKey)}`, {
       method: "PUT",
-      body: bytes,
-    }))).status).toBe(404);
-    const staged = await app.handle(authorized(tokens.dashboard, `/private/export?key=${encodeURIComponent(exportKey)}`, {
-      method: "PUT",
-      body: bytes,
+      body: bundle,
     }));
     expect(staged.status).toBe(201);
-    expect(await staged.json()).toEqual({
-      size_bytes: bytes.byteLength,
-      content_hash: createHash("sha256").update(bytes).digest("hex"),
+    expect(await (await app.handle(authorized(tokens.dashboard, `/private/bundle?key=${encodeURIComponent(bundleKey)}`))).text())
+      .toBe(bundle.toString());
+    expect(await (await app.handle(authorized(
+      tokens.dashboard,
+      `/private/bundle-source?key=${encodeURIComponent(publicDocumentKey)}`,
+    ))).text()).toBe("retained public projection");
+    expect((await app.handle(authorized(
+      tokens.mcp,
+      `/private/bundle-source?key=${encodeURIComponent(publicDocumentKey)}`,
+    ))).status).toBe(404);
+
+    const importId = "77777777-7777-4777-8777-777777777777";
+    const part = Buffer.from("one resumable bundle part");
+    const partHash = createHash("sha256").update(part).digest("hex");
+    const requestPart = (token: string, hash = partHash) => authorized(token, "/private/import-part", {
+      method: "PUT",
+      headers: {
+        "content-length": String(part.byteLength),
+        "x-import-id": importId,
+        "x-part-number": "0",
+        "x-object-key": `imports/${importId}/parts/0`,
+        "x-content-sha256": hash,
+      },
+      body: part,
     });
-
-    const inspected = await app.handle(authorized(tokens.dashboard, `/private/export?key=${encodeURIComponent(exportKey)}`, {
-      method: "HEAD",
-    }));
-    expect(inspected.status).toBe(200);
-    expect(inspected.headers.get("content-length")).toBe(String(bytes.byteLength));
-    expect(inspected.headers.get("accept-ranges")).toBe("bytes");
-
-    const ranged = await app.handle(authorized(tokens.dashboard, `/private/export?key=${encodeURIComponent(exportKey)}`, {
-      headers: { range: "bytes=9-17" },
-    }));
-    expect(ranged.status).toBe(206);
-    expect(ranged.headers.get("content-range")).toBe(`bytes 9-17/${bytes.byteLength}`);
-    expect(await ranged.text()).toBe("knowledge");
-    expect((await app.handle(authorized(tokens.mcp, `/private/export?key=${encodeURIComponent(exportKey)}`))).status).toBe(404);
-
-    expect((await app.handle(authorized(tokens.dashboard, `/private/export?key=${encodeURIComponent(exportKey)}`, {
-      method: "DELETE",
-    }))).status).toBe(204);
-    expect(await storage.inspectGenerated(exportKey)).toBeNull();
+    expect((await app.handle(requestPart(tokens.mcp))).status).toBe(404);
+    expect((await app.handle(requestPart(tokens.dashboard))).status).toBe(204);
+    expect((await app.handle(requestPart(tokens.dashboard))).status).toBe(204);
+    expect((await app.handle(requestPart(tokens.dashboard, "a".repeat(64)))).status).toBe(404);
   });
 
-  test("dashboard storage client round-trips generated metadata and resumable bytes", async () => {
+  test("writes imported objects only when confirmed staging metadata authorizes exact bytes", async () => {
+    const storage = new MemoryStorage();
+    const importId = "77777777-7777-4777-8777-777777777777";
+    const objectId = "99999999-9999-4999-8999-999999999999";
+    const objectKey = `objects/${objectId}`;
+    const body = Buffer.from("restored immutable bytes");
+    const hash = createHash("sha256").update(body).digest("hex");
+    const app = createStorageBrokerApp({
+      storage,
+      privateAssets: privateAssets({}),
+      tokens,
+      knowledgeBundles: {
+        importObjectAuthorization: async (id, key) => id === importId && key === objectKey ? {
+          import_id: importId,
+          ordinal: 1,
+          object_kind: "asset",
+          object_key: objectKey,
+          size_bytes: body.byteLength,
+          content_hash: hash,
+          content_type: "application/octet-stream",
+          confirmed_at: new Date(),
+          expires_at: new Date(Date.now() + 60_000),
+          status: "restoring",
+        } : null,
+      },
+    });
+    const imported = await app.handle(authorized(tokens.dashboard, "/private/import-object", {
+      method: "PUT",
+      headers: {
+        "content-length": String(body.byteLength),
+        "x-import-id": importId,
+        "x-object-key": objectKey,
+        "x-content-type": "application/octet-stream",
+        "x-content-sha256": hash,
+      },
+      body,
+    }));
+    expect(imported.status).toBe(204);
+    expect(Buffer.from(storage.objects.get(objectKey)!)).toEqual(body);
+  });
+
+  test("dashboard storage client round-trips bundle metadata and resumable bytes", async () => {
     const storage = new MemoryStorage();
     const app = createStorageBrokerApp({
       storage,
       privateAssets: privateAssets({}),
       tokens,
     });
-    const directory = await mkdtemp(join(tmpdir(), "context-use-generated-storage-"));
+    const directory = await mkdtemp(join(tmpdir(), "context-use-bundle-storage-"));
     const socketPath = join(directory, "storage.sock");
     const server = Bun.serve({ unix: socketPath, fetch: app.handle });
-    const bytes = Buffer.from("complete-knowledge-export");
+    const bytes = Buffer.from("complete-knowledge-bundle");
 
     try {
       const client = new BrokeredStorage({ socketPath, token: tokens.dashboard });
-      const written = await client.writeGenerated(exportKey, new Blob([bytes]).stream());
-      expect(await client.writeGenerated(exportKey, new Blob(["different bytes"]).stream())).toEqual(written);
-      expect(await client.inspectGenerated(exportKey)).toEqual(written);
-      const ranged = await client.read(exportKey, { start: 9, end: 17 });
+      const written = await client.writeBundle(bundleKey, new Blob([bytes]).stream());
+      expect(await client.writeBundle(bundleKey, new Blob(["different bytes"]).stream())).toEqual(written);
+      expect(await client.inspectBundle(bundleKey)).toEqual(written);
+      const ranged = await client.read(bundleKey, { start: 9, end: 17 });
       expect(await new Response(ranged).text()).toBe("knowledge");
-      await client.deleteGenerated(exportKey);
-      expect(await client.inspectGenerated(exportKey)).toBeNull();
+      await client.deleteBundle(bundleKey);
+      expect(await client.inspectBundle(bundleKey)).toBeNull();
     } finally {
       server.stop(true);
       await rm(directory, { recursive: true, force: true });

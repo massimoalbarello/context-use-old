@@ -28,14 +28,6 @@ const storage = client
   : null;
 const objectKeys: string[] = [];
 
-function zipBytes(): Uint8Array {
-  const value = new Uint8Array(128).fill(17);
-  const footer = value.byteLength - 22;
-  value.set([0x50, 0x4b, 0x05, 0x06], footer);
-  value.fill(0, footer + 4);
-  return value;
-}
-
 describeMinio("MinIO S3-compatible object storage", () => {
   beforeAll(async () => {
     await ensureObjectStorageBucket({
@@ -49,7 +41,7 @@ describeMinio("MinIO S3-compatible object storage", () => {
 
   afterAll(async () => {
     try {
-      await Promise.all(objectKeys.map((key) => storage!.deleteGenerated(key)
+      await Promise.all(objectKeys.map((key) => storage!.deleteBundle(key)
         .catch(() => storage!.delete(key))));
       await client!.send(new DeleteBucketCommand({ Bucket: bucket }));
     } finally {
@@ -57,7 +49,7 @@ describeMinio("MinIO S3-compatible object storage", () => {
     }
   });
 
-  test("matches the immutable and generated-object semantics used in production", async () => {
+  test("matches the immutable-object and knowledge-bundle semantics used in production", async () => {
     const value = new TextEncoder().encode("MinIO follows the production S3 path.");
     const objectKey = `objects/${randomUUID()}`;
     objectKeys.push(objectKey);
@@ -77,17 +69,17 @@ describeMinio("MinIO S3-compatible object storage", () => {
     expect(await new Response(await storage!.read(objectKey, { start: 0, end: 4 })).text())
       .toBe("MinIO");
 
-    const generatedKey = `exports/${randomUUID()}.zip`;
-    objectKeys.push(generatedKey);
-    const generated = zipBytes();
-    const metadata = await storage!.writeGenerated(
-      generatedKey,
-      new Blob([Buffer.from(generated)]).stream(),
+    const bundleKey = `bundles/${randomUUID()}.cuse`;
+    objectKeys.push(bundleKey);
+    const bundle = new TextEncoder().encode("CONTEXT-USE-KNOWLEDGE-BUNDLE-V1\ncomplete");
+    const metadata = await storage!.writeBundle(
+      bundleKey,
+      new Blob([Buffer.from(bundle)]).stream(),
     );
     expect(metadata).toEqual({
-      sizeBytes: generated.byteLength,
-      contentHash: createHash("sha256").update(generated).digest("hex"),
+      sizeBytes: bundle.byteLength,
+      contentHash: createHash("sha256").update(bundle).digest("hex"),
     });
-    expect(await storage!.inspectGenerated(generatedKey)).toEqual(metadata);
+    expect(await storage!.inspectBundle(bundleKey)).toEqual(metadata);
   }, 15_000);
 });

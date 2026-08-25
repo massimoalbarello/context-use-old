@@ -83,28 +83,24 @@ describeApplication("HTTP credential and OAuth boundary", () => {
     }
   });
 
-  test("bearer and anonymous credentials cannot reach knowledge export APIs", async () => {
-    const intent = await application!.handle(new Request("http://localhost:3000/api/dashboard/knowledge-export-intents", {
-      method: "POST",
-      headers: { authorization: "Bearer forged", "content-type": "application/json" },
-      body: "{}",
-    }));
-    expect(intent.status).toBe(401);
-    const download = await application!.handle(new Request(
-      "http://localhost:3000/api/dashboard/knowledge-exports/11111111-1111-4111-8111-111111111111/download",
-      { headers: { "sec-fetch-site": "same-origin" } },
-    ));
-    expect(download.status).toBe(401);
-    const status = await application!.handle(new Request(
-      "http://localhost:3000/api/dashboard/knowledge-exports/11111111-1111-4111-8111-111111111111/status",
-    ));
-    expect(status.status).toBe(401);
-    const confirm = await application!.handle(new Request("http://localhost:3000/api/dashboard/knowledge-exports/confirm", {
-      method: "POST",
-      headers: { authorization: "Bearer forged", "content-type": "application/json" },
-      body: "{}",
-    }));
-    expect(confirm.status).toBe(401);
+  test("bearer and anonymous credentials cannot reach knowledge bundle APIs", async () => {
+    for (const [path, method] of [
+      ["/api/dashboard/knowledge-bundle-export-intents", "POST"],
+      ["/api/dashboard/knowledge-bundle-exports/confirm", "POST"],
+      ["/api/dashboard/knowledge-bundles/11111111-1111-4111-8111-111111111111/status", "GET"],
+      ["/api/dashboard/knowledge-bundles/11111111-1111-4111-8111-111111111111/download", "GET"],
+      ["/api/dashboard/knowledge-imports", "POST"],
+      ["/api/dashboard/knowledge-imports/11111111-1111-4111-8111-111111111111/status", "GET"],
+      ["/api/dashboard/knowledge-imports/confirm", "POST"],
+    ] as const) {
+      const response = await application!.handle(new Request(`http://localhost:3000${path}`, {
+        method,
+        headers: { authorization: "Bearer forged", "content-type": "application/json",
+          ...(path.endsWith("/download") ? { "sec-fetch-site": "same-origin" } : {}) },
+        ...(method === "POST" ? { body: "{}" } : {}),
+      }));
+      expect(response.status).toBe(401);
+    }
   });
 
   test("bearer credentials cannot create or confirm permanent page deletions", async () => {

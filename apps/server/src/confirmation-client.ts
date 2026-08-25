@@ -23,12 +23,12 @@ export async function issueConfirmationOptions(
   return response.json();
 }
 
-async function exportDownloadMark(
+async function bundleExportDownloadMark(
   intentId: string,
   principal: DashboardPrincipal,
 ): Promise<void> {
   const endpoint = config.CONFIRMATION_INTERNAL_URL;
-  const internalRequest = new Request(`${endpoint}/internal/knowledge-exports/${encodeURIComponent(intentId)}/claim`, {
+  const internalRequest = new Request(`${endpoint}/internal/knowledge-bundle-exports/${encodeURIComponent(intentId)}/claim`, {
     method: "POST",
     headers: {
       authorization: `Bearer ${config.CONFIRMATION_DASHBOARD_TOKEN}`,
@@ -43,6 +43,6 @@ async function exportDownloadMark(
   if (!response.ok) throw new Error(`Confirmation service could not mark the export (${response.status})`);
 }
 
-export async function claimConfirmedExport(intentId: string, principal: DashboardPrincipal): Promise<void> {
-  await exportDownloadMark(intentId, principal);
+export async function claimConfirmedBundleExport(intentId: string, principal: DashboardPrincipal): Promise<void> {
+  await bundleExportDownloadMark(intentId, principal);
 }

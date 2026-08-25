@@ -1,6 +1,6 @@
 import { startAuthentication } from "@simplewebauthn/browser";
 import { useEffect, useState } from "react";
-import { api, ApiError } from "../api.ts";
+import { api, uploadKnowledgeBundlePart } from "../api.ts";
 import { ActionDialog } from "./ActionDialog.tsx";
 import { McpClients } from "./McpClients.tsx";
 import { RunningRelease } from "./RunningRelease.tsx";
@@ -14,24 +14,50 @@ export type PasskeySummary = {
   backed_up: boolean;
 };
 
-type KnowledgeExportIntent = {
-  intent: { id: string; expires_at: string };
-  summary: {
-    page_count: number;
-    asset_count: number;
-    total_bytes: number;
-  };
-  authentication_options: Parameters<typeof startAuthentication>[0]["optionsJSON"];
-};
-
-type KnowledgeExportConfirmation = {
+type KnowledgeBundleExportConfirmation = {
   download_url: string;
 };
 
-type KnowledgeExportStatus =
-  | { status: "processing"; status_url: string }
-  | { status: "ready"; download_url: string; filename: string; size_bytes: number }
-  | { status: "failed"; message: string; code: string };
+type FullBundleIntent = {
+  intent: { id: string; expires_at: string };
+  summary: { page_count: number; asset_count: number; estimated_bytes: number };
+  authentication_options: Parameters<typeof startAuthentication>[0]["optionsJSON"];
+  status_url: string;
+};
+
+type FullBundleStatus = {
+  status: "pending" | "snapshotting" | "processing" | "ready" | "failed";
+  phase: string;
+  records_completed: number;
+  records_total: number;
+  objects_completed: number;
+  objects_total: number;
+  bytes_completed: number;
+  bytes_total: number;
+  download_url?: string;
+  filename?: string;
+  size_bytes?: number;
+  message?: string;
+};
+
+type KnowledgeImportStatus = {
+  import_id: string;
+  status: "uploading" | "validating" | "awaiting_confirmation" | "restoring" | "complete" | "failed";
+  phase: string;
+  parts_completed: number;
+  total_parts: number;
+  uploaded_parts: number[];
+  records_completed: number;
+  records_total: number;
+  objects_completed: number;
+  objects_total: number;
+  bytes_completed: number;
+  bytes_total: number;
+  authentication_options?: Parameters<typeof startAuthentication>[0]["optionsJSON"];
+  message?: string;
+};
+
+type KnowledgeImportJob = KnowledgeImportStatus & { part_size: number; filename: string };
 
 type PublicEntrypointCandidate = {
   public_id: string;
@@ -53,35 +79,8 @@ export function publicEntrypointOptionLabel(page: PublicEntrypointCandidate): st
   return `${page.public_title} — ${page.public_summary}`;
 }
 
-export type KnowledgeExportJob = {
-  intentId: string;
-  status: "processing" | "ready" | "failed";
-  downloadUrl: string;
-  filename?: string | undefined;
-  sizeBytes?: number | undefined;
-  error?: string | undefined;
-};
-
-const exportJobStorageKey = "context-use.knowledge-export-job";
-
-export function storedExportJob(storage?: Pick<Storage, "getItem"> | null): KnowledgeExportJob | null {
-  try {
-    const source = storage === undefined
-      ? typeof window === "undefined" ? null : window.localStorage
-      : storage;
-    if (!source) return null;
-    const value = JSON.parse(source.getItem(exportJobStorageKey) ?? "null") as Partial<KnowledgeExportJob> | null;
-    if (!value || typeof value.intentId !== "string" || !/^[a-f0-9-]{36}$/.test(value.intentId)) return null;
-    if ((value as { reset?: unknown }).reset === true) return null;
-    return {
-      intentId: value.intentId,
-      status: "processing",
-      downloadUrl: `/api/dashboard/knowledge-exports/${encodeURIComponent(value.intentId)}/download`,
-    };
-  } catch {
-    return null;
-  }
-}
+const bundleJobStorageKey = "context-use.knowledge-bundle-job";
+const importJobStorageKey = "context-use.knowledge-import-job";
 
 type EnrollmentIntent = {
   intent: {
@@ -123,47 +122,18 @@ export function formatExportBytes(bytes: number): string {
   return `${value >= 10 ? value.toFixed(1) : value.toFixed(2)} ${unit}`;
 }
 
-function exportPreparationCopy(job: KnowledgeExportJob): { headline: string; detail: string } {
-  const archive = `${job.filename ?? ""}${job.sizeBytes ? ` · ${formatExportBytes(job.sizeBytes)}` : ""}`;
-  if (job.status === "failed") {
-    return { headline: "Archive preparation stopped", detail: "" };
-  }
-  if (job.status === "processing") {
-    return {
-      headline: "Preparing latest snapshot…",
-      detail: "The ZIP is being assembled and checked. You can leave Settings and return while this export remains available.",
-    };
-  }
-  return { headline: "Archive ready to download", detail: archive };
+async function sha256(blob: Blob): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export function KnowledgeExportPreparationStatus({
-  job,
-  onDownload,
-  onReset,
-}: {
-  job: KnowledgeExportJob;
-  onDownload: () => void;
-  onReset: () => void;
-}) {
-  const { headline, detail } = exportPreparationCopy(job);
-  return <div className={`export-preparation ${job.status}`} role="status" aria-live="polite">
-    <div className="export-preparation-copy">
-      {job.status === "processing" && <span className="export-spinner" aria-hidden="true" />}
-      <div>
-        <strong>{headline}</strong>
-        {job.status === "failed"
-          ? <small className="error">{job.error || "The archive could not be prepared."}</small>
-          : detail && <small>{detail}</small>}
-      </div>
+function ProgressBar({ value, label }: { value: number | null; label: string }) {
+  const percentage = value === null ? null : Math.max(0, Math.min(100, value * 100));
+  return <div className="archive-upload" role="status" aria-live="polite">
+    <div className="archive-upload-copy"><strong>{label}</strong>
+      <small>{percentage === null ? "Working…" : `${percentage.toFixed(1)}%`}</small>
     </div>
-    {job.status === "ready" && <div className="export-preparation-actions">
-      <a className="button primary" href={job.downloadUrl} onClick={onDownload}>Download archive</a>
-      <button onClick={onReset}>Prepare another</button>
-    </div>}
-    {job.status === "failed" && <div className="export-preparation-actions">
-      <button className="primary" onClick={onReset}>Start over</button>
-    </div>}
+    <progress max={100} value={percentage ?? undefined} aria-label={label} />
   </div>;
 }
 
@@ -186,11 +156,51 @@ export function Settings({
   const [removalPreparingId, setRemovalPreparingId] = useState("");
   const [removalWorking, setRemovalWorking] = useState(false);
   const [removalError, setRemovalError] = useState("");
-  const [exportIntent, setExportIntent] = useState<KnowledgeExportIntent | null>(null);
-  const [exportJob, setExportJob] = useState<KnowledgeExportJob | null>(storedExportJob);
-  const [exportPreparing, setExportPreparing] = useState(false);
-  const [exportWorking, setExportWorking] = useState(false);
-  const [exportError, setExportError] = useState("");
+  const [bundleIntent, setBundleIntent] = useState<FullBundleIntent | null>(null);
+  const [bundleJobId, setBundleJobId] = useState<string | null>(() => {
+    try {
+      if (typeof window === "undefined") return null;
+      const value = window.localStorage.getItem(bundleJobStorageKey);
+      return value && /^[a-f0-9-]{36}$/.test(value) ? value : null;
+    } catch {
+      return null;
+    }
+  });
+  const [bundleStatus, setBundleStatus] = useState<FullBundleStatus | null>(null);
+  const [bundleWorking, setBundleWorking] = useState(false);
+  const [bundleError, setBundleError] = useState("");
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importJob, setImportJob] = useState<KnowledgeImportJob | null>(() => {
+    try {
+      if (typeof window === "undefined") return null;
+      const saved = JSON.parse(window.localStorage.getItem(importJobStorageKey) ?? "null") as {
+        import_id?: unknown; filename?: unknown; size_bytes?: unknown; part_size?: unknown; total_parts?: unknown;
+      } | null;
+      if (!saved || typeof saved.import_id !== "string" || !/^[a-f0-9-]{36}$/.test(saved.import_id)
+          || typeof saved.filename !== "string" || !Number.isSafeInteger(saved.size_bytes)
+          || !Number.isSafeInteger(saved.part_size) || !Number.isSafeInteger(saved.total_parts)) return null;
+      return {
+        import_id: saved.import_id,
+        filename: saved.filename,
+        part_size: Number(saved.part_size),
+        status: "uploading",
+        phase: "upload",
+        parts_completed: 0,
+        total_parts: Number(saved.total_parts),
+        uploaded_parts: [],
+        records_completed: 0,
+        records_total: 0,
+        objects_completed: 0,
+        objects_total: 0,
+        bytes_completed: 0,
+        bytes_total: Number(saved.size_bytes),
+      };
+    } catch {
+      return null;
+    }
+  });
+  const [importWorking, setImportWorking] = useState(false);
+  const [importError, setImportError] = useState("");
   const [publicEntrypoint, setPublicEntrypoint] = useState<PublicEntrypoint | null>(null);
   const [publicEntrypointId, setPublicEntrypointId] = useState("");
   const [publicEntrypointWorking, setPublicEntrypointWorking] = useState(false);
@@ -231,63 +241,83 @@ export function Settings({
   };
 
   useEffect(() => {
-    try {
-      if (exportJob) {
-        window.localStorage.setItem(exportJobStorageKey, JSON.stringify({
-          intentId: exportJob.intentId,
-        }));
-      } else {
-        window.localStorage.removeItem(exportJobStorageKey);
-      }
-    } catch {
-      // The server-side intent remains resumable even when browser storage is unavailable.
-    }
-  }, [exportJob?.intentId]);
-
-  useEffect(() => {
-    if (!exportJob || exportJob.status !== "processing") return;
-    const { intentId } = exportJob;
+    const intentId = bundleJobId;
+    if (!intentId || bundleStatus?.status === "ready" || bundleStatus?.status === "failed") return;
     let active = true;
     let timeout: number | undefined;
     const poll = async () => {
       try {
-        const status = await api<KnowledgeExportStatus>(
-          `/api/dashboard/knowledge-exports/${encodeURIComponent(intentId)}/status`,
+        const status = await api<FullBundleStatus>(
+          `/api/dashboard/knowledge-bundles/${encodeURIComponent(intentId)}/status`,
         );
         if (!active) return;
-        setExportJob((current) => {
-          if (!current || current.intentId !== intentId) return current;
-          if (status.status === "ready") {
-            return {
-              ...current,
-              status: "ready",
-              downloadUrl: status.download_url,
-              filename: status.filename,
-              sizeBytes: status.size_bytes,
-              error: undefined,
-            };
-          }
-          if (status.status === "failed") {
-            return { ...current, status: "failed", error: status.message };
-          }
-          return current;
-        });
-      } catch (error) {
-        if (!active) return;
-        if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
-          setExportJob((current) => current?.intentId === intentId ? null : current);
-          setMessage(error.message);
-          return;
+        setBundleStatus(status);
+        if (!["ready", "failed"].includes(status.status)) {
+          timeout = window.setTimeout(() => void poll(), 1_500);
         }
+      } catch (error) {
+        if (active) setBundleError(error instanceof Error ? error.message : "Bundle status could not be loaded");
       }
-      if (active) timeout = window.setTimeout(() => void poll(), 2_000);
     };
     void poll();
     return () => {
       active = false;
       if (timeout !== undefined) window.clearTimeout(timeout);
     };
-  }, [exportJob?.intentId, exportJob?.status]);
+  }, [bundleJobId, bundleStatus?.status]);
+
+  useEffect(() => {
+    try {
+      if (bundleJobId) window.localStorage.setItem(bundleJobStorageKey, bundleJobId);
+      else window.localStorage.removeItem(bundleJobStorageKey);
+    } catch {
+      // The server-side job remains available until its expiry.
+    }
+  }, [bundleJobId]);
+
+  useEffect(() => {
+    const importId = importJob?.import_id;
+    if (!importId || !["uploading", "validating", "restoring"].includes(importJob.status)) return;
+    let active = true;
+    let timeout: number | undefined;
+    const poll = async () => {
+      try {
+        const status = await api<KnowledgeImportStatus>(
+          `/api/dashboard/knowledge-imports/${encodeURIComponent(importId)}/status`,
+        );
+        if (!active) return;
+        setImportJob((current) => current?.import_id === importId ? { ...current, ...status } : current);
+        if (["uploading", "validating", "restoring"].includes(status.status)) {
+          timeout = window.setTimeout(() => void poll(), 1_500);
+        }
+      } catch (error) {
+        if (active) setImportError(error instanceof Error ? error.message : "Import status could not be loaded");
+      }
+    };
+    void poll();
+    return () => {
+      active = false;
+      if (timeout !== undefined) window.clearTimeout(timeout);
+    };
+  }, [importJob?.import_id, importJob?.status]);
+
+  useEffect(() => {
+    try {
+      if (importJob && importJob.status !== "complete") {
+        window.localStorage.setItem(importJobStorageKey, JSON.stringify({
+          import_id: importJob.import_id,
+          filename: importJob.filename,
+          size_bytes: importJob.bytes_total,
+          part_size: importJob.part_size,
+          total_parts: importJob.total_parts,
+        }));
+      } else {
+        window.localStorage.removeItem(importJobStorageKey);
+      }
+    } catch {
+      // The upload remains resumable on the server when browser storage is unavailable.
+    }
+  }, [importJob?.import_id, importJob?.status]);
 
   const prepareEnrollment = async () => {
     const name = passkeyName.trim();
@@ -395,59 +425,154 @@ export function Settings({
     }
   };
 
-  const prepareExport = async () => {
-    setExportPreparing(true);
-    setExportError("");
-    setMessage("");
+  const prepareFullBundle = async () => {
+    setBundleWorking(true);
+    setBundleError("");
     try {
-      setExportIntent(await api<KnowledgeExportIntent>("/api/dashboard/knowledge-export-intents", {
+      setBundleIntent(await api<FullBundleIntent>("/api/dashboard/knowledge-bundle-export-intents", {
         method: "POST",
         body: "{}",
       }));
+      setBundleStatus(null);
     } catch (error) {
-      setMessage(error instanceof Error
-        ? error.message
-        : "Could not prepare the knowledge export");
+      setBundleError(error instanceof Error ? error.message : "Could not prepare the full knowledge bundle");
     } finally {
-      setExportPreparing(false);
+      setBundleWorking(false);
     }
   };
 
-  const cancelExportIntent = async () => {
-    if (!exportIntent || exportWorking) return;
-    const { id } = exportIntent.intent;
-    setExportIntent(null);
-    setExportError("");
-    await api(`/api/dashboard/knowledge-export-intents/${encodeURIComponent(id)}`, {
-      method: "DELETE",
-      body: "{}",
-    }).catch(() => undefined);
-  };
-
-  const downloadExport = async () => {
-    if (!exportIntent) return;
-    setExportWorking(true);
-    setExportError("");
+  const authorizeFullBundle = async () => {
+    if (!bundleIntent) return;
+    setBundleWorking(true);
+    setBundleError("");
     try {
-      const response = await startAuthentication({ optionsJSON: exportIntent.authentication_options });
-      const confirmed = await api<KnowledgeExportConfirmation>("/api/dashboard/knowledge-exports/confirm", {
+      const response = await startAuthentication({ optionsJSON: bundleIntent.authentication_options });
+      await api<KnowledgeBundleExportConfirmation>("/api/dashboard/knowledge-bundle-exports/confirm", {
         method: "POST",
-        body: JSON.stringify({ intent_id: exportIntent.intent.id, response }),
+        body: JSON.stringify({ intent_id: bundleIntent.intent.id, response }),
       });
-      const intentId = exportIntent.intent.id;
-      setExportIntent(null);
-      setMessage("");
-      setExportJob({
-        intentId,
-        status: "processing",
-        downloadUrl: confirmed.download_url,
+      setBundleStatus({
+        status: "pending",
+        phase: "snapshot",
+        records_completed: 0,
+        records_total: 0,
+        objects_completed: 0,
+        objects_total: 0,
+        bytes_completed: 0,
+        bytes_total: bundleIntent.summary.estimated_bytes,
       });
+      setBundleJobId(bundleIntent.intent.id);
+      setBundleIntent(null);
     } catch (error) {
-      setExportError(error instanceof Error ? error.message : "Knowledge export failed");
+      setBundleError(error instanceof Error ? error.message : "Full knowledge export failed");
     } finally {
-      setExportWorking(false);
+      setBundleWorking(false);
     }
   };
+
+  const uploadFullBundle = async () => {
+    if (!importFile) return;
+    setImportWorking(true);
+    setImportError("");
+    try {
+      let job: KnowledgeImportJob;
+      if (importJob?.status === "uploading") {
+        if (importJob.filename !== importFile.name || importJob.bytes_total !== importFile.size) {
+          throw new Error(`Choose the original ${importJob.filename} file (${formatExportBytes(importJob.bytes_total)}) to resume this upload.`);
+        }
+        const status = await api<KnowledgeImportStatus>(
+          `/api/dashboard/knowledge-imports/${encodeURIComponent(importJob.import_id)}/status`,
+        );
+        if (status.status !== "uploading") throw new Error("This upload is no longer accepting parts.");
+        job = { ...importJob, ...status };
+      } else {
+        const created = await api<{
+          import_id: string;
+          part_size: number;
+          total_parts: number;
+          uploaded_parts: number[];
+        }>("/api/dashboard/knowledge-imports", {
+          method: "POST",
+          body: JSON.stringify({ filename: importFile.name, size_bytes: importFile.size }),
+        });
+        job = {
+          import_id: created.import_id,
+          filename: importFile.name,
+          part_size: created.part_size,
+          status: "uploading",
+          phase: "upload",
+          parts_completed: 0,
+          total_parts: created.total_parts,
+          uploaded_parts: [],
+          records_completed: 0,
+          records_total: 0,
+          objects_completed: 0,
+          objects_total: 0,
+          bytes_completed: 0,
+          bytes_total: importFile.size,
+        };
+      }
+      setImportJob(job);
+      const uploaded = new Set(job.uploaded_parts);
+      for (let partNumber = 0; partNumber < job.total_parts; partNumber += 1) {
+        if (uploaded.has(partNumber)) continue;
+        const start = partNumber * job.part_size;
+        const part = importFile.slice(start, Math.min(importFile.size, start + job.part_size));
+        await uploadKnowledgeBundlePart(job.import_id, partNumber, part, await sha256(part));
+        uploaded.add(partNumber);
+        job = {
+          ...job,
+          parts_completed: uploaded.size,
+          uploaded_parts: [...uploaded].sort((left, right) => left - right),
+          bytes_completed: [...uploaded].reduce((total, number) => (
+            total + Math.min(job.part_size, importFile.size - number * job.part_size)
+          ), 0),
+        };
+        setImportJob(job);
+      }
+      await api(`/api/dashboard/knowledge-imports/${encodeURIComponent(job.import_id)}/validate`, {
+        method: "POST",
+        body: "{}",
+      });
+      setImportJob({ ...job, status: "validating", phase: "manifest", bytes_completed: 0 });
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Knowledge bundle upload failed");
+    } finally {
+      setImportWorking(false);
+    }
+  };
+
+  const authorizeImport = async () => {
+    if (!importJob?.authentication_options) return;
+    setImportWorking(true);
+    setImportError("");
+    try {
+      const response = await startAuthentication({ optionsJSON: importJob.authentication_options });
+      await api("/api/dashboard/knowledge-imports/confirm", {
+        method: "POST",
+        body: JSON.stringify({ intent_id: importJob.import_id, response }),
+      });
+      setImportJob({ ...importJob, status: "restoring", phase: "objects", bytes_completed: 0,
+        objects_completed: 0, records_completed: 0 });
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Knowledge import authorization failed");
+    } finally {
+      setImportWorking(false);
+    }
+  };
+
+  const bundleProgress = bundleStatus
+    ? bundleStatus.bytes_total > 0
+      ? bundleStatus.bytes_completed / bundleStatus.bytes_total
+      : null
+    : null;
+  const importProgress = importJob
+    ? importJob.status === "uploading"
+      ? importJob.bytes_total > 0 ? importJob.bytes_completed / importJob.bytes_total : null
+      : importJob.objects_total > 0
+        ? importJob.objects_completed / importJob.objects_total
+        : null
+    : null;
   return <main className="content-page settings-page"><header><div><span className="eyebrow">Owner-only controls</span><h1>Settings</h1></div><RunningRelease /></header>
     {message && <p>{message}</p>}
     <IntrinsicServices />
@@ -480,17 +605,42 @@ export function Settings({
         {enrollmentLink && <div className="passkey-link"><strong>One-time setup link</strong><p>Open this on the device you are adding. It expires five minutes after authorization.</p><div><input readOnly value={enrollmentLink} onFocus={(event) => event.currentTarget.select()} /><button onClick={() => void copyEnrollmentLink()}>Copy</button></div></div>}
       </div>
     </section>
-    <section><h2>Export knowledge</h2>
-      <p>Download the current active pages and assets as a readable, navigable Markdown vault. This portable snapshot is not an infrastructure backup and cannot be imported into Context Use.</p>
-      {!exportJob && <button className="primary export-start-button" disabled={exportPreparing || exportWorking} onClick={() => void prepareExport()}>{exportPreparing ? "Checking assets…" : "Export with passkey"}</button>}
-      {exportJob && <KnowledgeExportPreparationStatus
-        job={exportJob}
-        onDownload={() => {
-          try { window.localStorage.removeItem(exportJobStorageKey); } catch { /* Browser storage may be unavailable. */ }
-          setMessage("Archive download started.");
-        }}
-        onReset={() => setExportJob(null)}
-      />}
+    <section><h2>Full backup and migration</h2>
+      <p>Export every page, retained revision, source record, asset, internal link, and publication record in a versioned Context Use bundle. Original UUIDs are retained, so <code>context-use://document/&lt;uuid&gt;</code> links remain valid after import.</p>
+      <p>The bundle is an unencrypted logical backup, independent of the current SQL schema. Keep it somewhere private.</p>
+      {bundleError && <p className="error" role="alert">{bundleError}</p>}
+      {!bundleStatus && !bundleIntent && <button className="primary export-start-button" disabled={bundleWorking} onClick={() => void prepareFullBundle()}>{bundleWorking ? "Preparing…" : "Export full bundle with passkey"}</button>}
+      {bundleStatus && !["ready", "failed"].includes(bundleStatus.status)
+        && <ProgressBar value={bundleProgress} label={bundleStatus.phase === "records" ? "Writing records" : bundleStatus.phase === "objects" ? "Streaming assets and content" : "Capturing a consistent snapshot"} />}
+      {bundleStatus?.status === "ready" && <div className="archive-upload">
+        <div className="archive-upload-copy"><strong>Full bundle ready</strong><small>{bundleStatus.filename} · {formatExportBytes(bundleStatus.size_bytes ?? 0)}</small></div>
+        <a className="button primary" href={bundleStatus.download_url}>Download full bundle</a>
+        <button onClick={() => { setBundleStatus(null); setBundleJobId(null); }}>Prepare another</button>
+      </div>}
+      {bundleStatus?.status === "failed" && <div><p className="error" role="alert">{bundleStatus.message || "The full bundle could not be prepared."}</p><button onClick={() => { setBundleStatus(null); setBundleJobId(null); }}>Start over</button></div>}
+    </section>
+    <section><h2>Import full bundle</h2>
+      <p>Restore a full bundle onto a fresh Context Use instance. Local account credentials, passkeys, and service secrets remain those of this destination instance.</p>
+      <p><strong>Important:</strong> import replaces the untouched default knowledge template and becomes unavailable after personal knowledge or assets have been added.</p>
+      <div className="archive-import">
+        {(!importJob || importJob.status === "uploading") && <div className="archive-import-field">
+          <span className="archive-import-label">Context Use bundle</span>
+          <label className={`archive-picker${importFile ? " has-file" : ""}${importWorking ? " is-disabled" : ""}`}>
+            <input className="archive-picker-input" type="file" accept=".cuse,application/vnd.context-use.knowledge-bundle" disabled={importWorking} onChange={(event) => { setImportFile(event.currentTarget.files?.[0] ?? null); setImportError(""); }} />
+            <span className="archive-picker-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 3.75h7l3 3v13.5H7z" /><path d="M14 3.75v3h3M10 9.25h4m-4 3h4m-4 3h4" /></svg></span>
+            <span className="archive-picker-copy"><strong>{importFile ? importFile.name : "Choose a full bundle"}</strong><small>{importFile ? formatExportBytes(importFile.size) : "Select the original .cuse file"}</small></span>
+            <span className="archive-picker-action">{importFile ? "Replace" : "Browse files"}</span>
+          </label>
+          {importJob?.status === "uploading" && <small className="archive-upload-note">This upload is resumable. Re-select the same file after a reload or network interruption; completed parts are skipped.</small>}
+          <button className="primary" disabled={!importFile || importWorking} onClick={() => void uploadFullBundle()}>{importWorking ? "Uploading…" : importJob?.status === "uploading" ? "Resume upload" : "Upload and validate"}</button>
+        </div>}
+        {importJob && !["awaiting_confirmation", "complete", "failed"].includes(importJob.status)
+          && <ProgressBar value={importProgress} label={importJob.status === "uploading" ? "Uploading bundle" : importJob.status === "validating" ? "Validating every record and object" : importJob.phase === "database" ? "Restoring database relationships" : "Restoring assets and content"} />}
+        {importJob?.status === "awaiting_confirmation" && <div className="archive-upload"><div className="archive-upload-copy"><strong>Bundle verified</strong><small>Every frame passed structural and integrity validation. Owner authorization is required before restoring it.</small></div><button className="primary" disabled={importWorking} onClick={() => void authorizeImport()}>{importWorking ? "Waiting for passkey…" : "Import with passkey"}</button></div>}
+        {importJob?.status === "complete" && <div className="archive-upload"><div className="archive-upload-copy"><strong>Knowledge import complete</strong><small>Original UUIDs, links, history, assets, and publication records were restored.</small></div></div>}
+        {importJob?.status === "failed" && <div><p className="error" role="alert">{importJob.message || "The knowledge bundle could not be imported."}</p><button onClick={() => { setImportJob(null); setImportFile(null); }}>Choose another bundle</button></div>}
+        {importError && <p className="error" role="alert">{importError}</p>}
+      </div>
     </section>
     {enrollmentIntent && <ActionDialog
       eyebrow="Passkey enrollment"
@@ -516,21 +666,21 @@ export function Settings({
       onCancel={() => { setRemovalError(""); setRemovalIntent(null); }}
       onConfirm={() => void removePasskey()}
     />}
-    {exportIntent && <ActionDialog
-      eyebrow="Private knowledge export"
-      title="Download your knowledge snapshot?"
-      description="The ZIP contains the current private and public knowledge as a readable Markdown vault. It is unencrypted and requires a fresh owner-passkey verification."
-      confirmLabel="Verify passkey and download"
+    {bundleIntent && !bundleStatus && <ActionDialog
+      eyebrow="Full knowledge backup"
+      title="Export the complete knowledge base?"
+      description="This unencrypted logical bundle contains every retained record and immutable content object with its original UUID. A fresh owner-passkey verification is required."
+      confirmLabel="Verify and build bundle"
       workingLabel="Waiting for passkey…"
-      working={exportWorking}
-      error={exportError}
-      onCancel={() => void cancelExportIntent()}
-      onConfirm={() => void downloadExport()}
+      working={bundleWorking}
+      error={bundleError}
+      onCancel={() => { setBundleIntent(null); setBundleError(""); }}
+      onConfirm={() => void authorizeFullBundle()}
     >
       <dl className="action-dialog-details">
-        <div><dt>Current pages</dt><dd>about {exportIntent.summary.page_count}</dd></div>
-        <div><dt>Active assets</dt><dd>about {exportIntent.summary.asset_count}</dd></div>
-        <div><dt>Size</dt><dd>about {formatExportBytes(exportIntent.summary.total_bytes)}</dd></div>
+        <div><dt>Current pages</dt><dd>about {bundleIntent.summary.page_count}</dd></div>
+        <div><dt>Active assets</dt><dd>about {bundleIntent.summary.asset_count}</dd></div>
+        <div><dt>Content bytes</dt><dd>at least {formatExportBytes(bundleIntent.summary.estimated_bytes)}</dd></div>
       </dl>
     </ActionDialog>}
   </main>;

@@ -4,6 +4,7 @@ import { chmod } from "node:fs/promises";
 import {
   DocumentAssetRepository,
   DocumentMaintenanceRepository,
+  KnowledgeBundleRepository,
   MAX_MARKDOWN_DOCUMENT_BYTES,
   StoragePublicationRepository,
   createPool,
@@ -29,7 +30,14 @@ const objectKeySchema = z.string().regex(/^objects\/[a-f0-9-]{36}$/);
 const privateDocumentKeySchema = z.string().regex(/^documents\/private\/[a-f0-9-]{36}\.md$/);
 const publicDocumentKeySchema = z.string().regex(/^documents\/public\/[a-f0-9-]{36}\.md$/);
 const publicAssetArtifactKeySchema = z.string().regex(/^artifacts\/public\/[a-f0-9-]{36}$/);
-const generatedObjectKeySchema = z.string().regex(/^exports\/[a-f0-9-]{36}\.zip$/);
+const bundleObjectKeySchema = z.string().regex(/^bundles\/[a-f0-9-]{36}\.cuse$/);
+const importPartKeySchema = z.string().regex(/^imports\/[a-f0-9-]{36}\/parts\/[0-9]{1,6}$/);
+const importedObjectKeySchema = z.union([
+  objectKeySchema,
+  privateDocumentKeySchema,
+  publicDocumentKeySchema,
+  publicAssetArtifactKeySchema,
+]);
 const verificationSchema = z.object({
   // Public projection artifacts are verify-only through this privileged
   // integrity endpoint. Accepting their exact key shape here does not expose
@@ -105,6 +113,7 @@ const defaultStorage: ObjectStorageBackend = new S3Storage(undefined, {
 const storagePool = createPool(config.STORAGE_DATABASE_URL, { application_name: "context-use-storage-boundary" });
 const defaultPrivateAssets = new DocumentAssetRepository(storagePool);
 const defaultPublications = new StoragePublicationRepository(storagePool);
+const defaultKnowledgeBundles = new KnowledgeBundleRepository(storagePool);
 const documentMaintenance = new DocumentMaintenanceRepository(storagePool);
 const defaultTokens: StorageBrokerTokens = {
   dashboard: config.STORAGE_DASHBOARD_TOKEN,
@@ -129,12 +138,12 @@ async function readObject(
   }
 }
 
-async function generatedObjectResponse(
+async function bundleObjectResponse(
   request: Request,
   storage: ObjectStorageBackend,
   objectKey: string,
 ): Promise<Response> {
-  const metadata = await storage.inspectGenerated(objectKey);
+  const metadata = await storage.inspectBundle(objectKey);
   if (!metadata) return denied();
   const range = parseRange(request.headers.get("range"));
   if (request.headers.has("range") && !range) return denied();
@@ -147,7 +156,7 @@ async function generatedObjectResponse(
       "accept-ranges": "bytes",
       "cache-control": "no-store",
       "content-length": String(contentLength),
-      "content-type": "application/zip",
+      "content-type": "application/vnd.context-use.knowledge-bundle",
       "x-content-sha256": metadata.contentHash,
       ...(range ? { "content-range": `bytes ${range.start}-${range.end}/${metadata.sizeBytes}` } : {}),
     },
@@ -295,9 +304,10 @@ export function createStorageBrokerApp(input: {
   storage: ObjectStorageBackend;
   privateAssets: PrivateAssetLookup;
   publications?: PublicationClaims;
+  knowledgeBundles?: Pick<KnowledgeBundleRepository, "importObjectAuthorization">;
   tokens: StorageBrokerTokens;
 }) {
-  const { storage, privateAssets, publications, tokens } = input;
+  const { storage, privateAssets, publications, knowledgeBundles, tokens } = input;
   const activeWrites = new Set<string>();
   return new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
   .onError(() => denied())
@@ -376,26 +386,106 @@ export function createStorageBrokerApp(input: {
       parseRange(request.headers.get("range")),
     );
   })
-  .put("/private/export", async ({ request, query }) => {
+  .get("/private/bundle-source", async ({ request, query }) => {
     if (privateCapability(request, tokens) !== "dashboard") return denied();
-    const objectKey = generatedObjectKeySchema.parse(query.key);
-    const existing = await storage.inspectGenerated(objectKey);
-    if (existing) {
-      return Response.json({
-        size_bytes: existing.sizeBytes,
-        content_hash: existing.contentHash,
-      }, { headers: { "cache-control": "no-store" } });
-    }
+    return readObject(
+      storage,
+      z.union([publicDocumentKeySchema, publicAssetArtifactKeySchema]).parse(query.key),
+      parseRange(request.headers.get("range")),
+    );
+  })
+  .put("/private/bundle", async ({ request, query }) => {
+    if (privateCapability(request, tokens) !== "dashboard") return denied();
+    const objectKey = bundleObjectKeySchema.parse(query.key);
+    const existing = await storage.inspectBundle(objectKey);
+    if (existing) return Response.json({
+      size_bytes: existing.sizeBytes,
+      content_hash: existing.contentHash,
+    }, { headers: { "cache-control": "no-store" } });
     if (activeWrites.has(objectKey)) {
-      return new Response("Export already exists", { status: 409, headers: { "cache-control": "no-store" } });
+      return new Response("Bundle already exists", { status: 409, headers: { "cache-control": "no-store" } });
     }
     activeWrites.add(objectKey);
     try {
-      const metadata = await storage.writeGenerated(objectKey, request.body);
+      const metadata = await storage.writeBundle(objectKey, request.body);
       return Response.json({
         size_bytes: metadata.sizeBytes,
         content_hash: metadata.contentHash,
       }, { status: 201, headers: { "cache-control": "no-store" } });
+    } finally {
+      activeWrites.delete(objectKey);
+    }
+  }, { parse: "none" })
+  .put("/private/import-part", async ({ request }) => {
+    if (privateCapability(request, tokens) !== "dashboard") return denied();
+    const importId = z.string().uuid().parse(request.headers.get("x-import-id"));
+    const partNumber = z.number().int().nonnegative().max(99_999)
+      .parse(Number(request.headers.get("x-part-number")));
+    const objectKey = importPartKeySchema.parse(request.headers.get("x-object-key"));
+    const sizeBytes = z.number().int().positive().max(64 * 1024 * 1024)
+      .parse(Number(request.headers.get("content-length")));
+    const contentHash = z.string().regex(/^[a-f0-9]{64}$/)
+      .parse(request.headers.get("x-content-sha256"));
+    if (objectKey !== `imports/${importId}/parts/${partNumber}`) return denied();
+    const existing = await storage.inspectImportPart(objectKey);
+    if (existing) {
+      return existing.sizeBytes === sizeBytes && existing.contentHash === contentHash
+        ? new Response(null, { status: 204 })
+        : denied();
+    }
+    if (activeWrites.has(objectKey)) return denied();
+    activeWrites.add(objectKey);
+    try {
+      await storage.writeImportPart({
+        id: importId,
+        objectKey,
+        filename: `${partNumber}.part`,
+        contentType: "application/octet-stream",
+        sizeBytes,
+        contentHash,
+      }, request.body);
+      return new Response(null, { status: 204 });
+    } finally {
+      activeWrites.delete(objectKey);
+    }
+  }, { parse: "none" })
+  .put("/private/import-object", async ({ request }) => {
+    if (privateCapability(request, tokens) !== "dashboard" || !knowledgeBundles) return denied();
+    const importId = z.string().uuid().parse(request.headers.get("x-import-id"));
+    const objectKey = importedObjectKeySchema.parse(request.headers.get("x-object-key"));
+    const contentType = z.string().min(1).max(255).parse(request.headers.get("x-content-type"));
+    const sizeBytes = z.number().int().nonnegative().max(5_000_000_000)
+      .parse(Number(request.headers.get("content-length")));
+    const contentHash = z.string().regex(/^[a-f0-9]{64}$/)
+      .parse(request.headers.get("x-content-sha256"));
+    const authorization = await knowledgeBundles.importObjectAuthorization(importId, objectKey);
+    if (!authorization || authorization.status !== "restoring" || !authorization.confirmed_at
+        || new Date(authorization.expires_at).getTime() <= Date.now()
+        || Number(authorization.size_bytes) !== sizeBytes
+        || authorization.content_hash !== contentHash
+        || authorization.content_type !== contentType) return denied();
+    if (await storage.exists(objectKey)) {
+      return await storage.verify(objectKey, sizeBytes, contentHash)
+        ? new Response(null, { status: 204 })
+        : denied();
+    }
+    if (activeWrites.has(objectKey)) return denied();
+    activeWrites.add(objectKey);
+    try {
+      try {
+        await storage.writeOnce({
+          id: importId,
+          objectKey,
+          filename: objectKey.split("/").at(-1) ?? importId,
+          contentType,
+          sizeBytes,
+          contentHash,
+        }, request.body);
+      } catch (error) {
+        if (!(error instanceof ObjectAlreadyExistsError)
+            || !await storage.verify(objectKey, sizeBytes, contentHash)) throw error;
+      }
+      return new Response(null, { status: 204 });
     } finally {
       activeWrites.delete(objectKey);
     }
@@ -412,17 +502,26 @@ export function createStorageBrokerApp(input: {
     });
     return new Response(null, { status: 204 });
   }, { parse: "none" })
-  .head("/private/export", async ({ request, query }) => {
+  .head("/private/bundle", async ({ request, query }) => {
     if (privateCapability(request, tokens) !== "dashboard") return denied();
-    return generatedObjectResponse(request, storage, generatedObjectKeySchema.parse(query.key));
+    return bundleObjectResponse(request, storage, bundleObjectKeySchema.parse(query.key));
   })
-  .get("/private/export", async ({ request, query }) => {
+  .get("/private/bundle", async ({ request, query }) => {
     if (privateCapability(request, tokens) !== "dashboard") return denied();
-    return generatedObjectResponse(request, storage, generatedObjectKeySchema.parse(query.key));
+    return bundleObjectResponse(request, storage, bundleObjectKeySchema.parse(query.key));
   })
-  .delete("/private/export", async ({ request, query }) => {
+  .get("/private/import-part", async ({ request, query }) => {
     if (privateCapability(request, tokens) !== "dashboard") return denied();
-    await storage.deleteGenerated(generatedObjectKeySchema.parse(query.key));
+    return readObject(storage, importPartKeySchema.parse(query.key), parseRange(request.headers.get("range")));
+  })
+  .delete("/private/bundle", async ({ request, query }) => {
+    if (privateCapability(request, tokens) !== "dashboard") return denied();
+    await storage.deleteBundle(bundleObjectKeySchema.parse(query.key));
+    return new Response(null, { status: 204 });
+  })
+  .delete("/private/import-part", async ({ request, query }) => {
+    if (privateCapability(request, tokens) !== "dashboard") return denied();
+    await storage.deleteImportPart(importPartKeySchema.parse(query.key));
     return new Response(null, { status: 204 });
   })
   .delete("/private/object", async ({ request, query }) => {
@@ -487,6 +586,7 @@ export const storageApp = createStorageBrokerApp({
   storage: defaultStorage,
   privateAssets: defaultPrivateAssets,
   publications: defaultPublications,
+  knowledgeBundles: defaultKnowledgeBundles,
   tokens: defaultTokens,
 });
 
@@ -576,7 +676,10 @@ export async function listenStorageSocket(): Promise<void> {
     maxRequestBodySize: 5_500_000_000,
     fetch(request, server) {
       if (["GET", "PUT"].includes(request.method)
-          && ["/private/object", "/private/document", "/private/export", "/private/publication-artifact"].includes(new URL(request.url).pathname)) {
+          && ["/private/object", "/private/document", "/private/bundle",
+            "/private/import-part", "/private/import-object", "/private/bundle-source",
+            "/private/publication-artifact"]
+            .includes(new URL(request.url).pathname)) {
         disableStreamingRequestIdleTimeout(server, request);
       }
       return storageApp.handle(request);
