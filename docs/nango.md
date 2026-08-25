@@ -34,7 +34,7 @@ required to include private repositories.
 Each saved PR's Markdown body contains the description, status, branches, participants,
 change-size summary, commits, reviews, and comments. File patches are discarded.
 
-## Granola meeting summaries
+## Granola meetings
 
 Create the Granola integration in the Nango dashboard first: choose **Granola (MCP)**, set the
 integration ID to `granola`, and leave client credentials empty. Only the dashboard path performs
@@ -45,10 +45,12 @@ Create a connection through Nango's OAuth flow, then run:
 context-use nango integrations add --integration granola
 ```
 
-The hourly `meetings` sync uses the free-tier-compatible `list_meetings` and `get_meetings` tools.
-Granola Basic exposes personal notes from the last 30 days. Each record contains the meeting
-title, date, source link, attendees, and the Granola-generated summary. Private notes and
-transcripts are not stored.
+The hourly `meetings` sync uses the free-tier-compatible `list_meetings` and `get_meetings` tools,
+then requests each meeting's full transcript with `get_meeting_transcript`. Granola Basic exposes
+personal notes from the last 30 days but restricts raw transcript access to paid tiers. Each record
+contains the meeting title, date, source link, attendees, and Granola-generated summary followed by
+the verbatim transcript when the connected Granola plan permits it. Private notes are not stored,
+and an unavailable transcript does not prevent the summary from syncing.
 
 ## Managing integrations
 
