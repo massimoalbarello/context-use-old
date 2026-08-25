@@ -1032,7 +1032,7 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   expect(backupService).toContain("AWS_PROFILE: context-use-backup");
   expect(backupService).toContain("backup-aws-credentials:/run/context-use-aws-backup:ro");
   expect(backupService).toContain("networks: [backup_data, backup_egress]");
-  expect(backupService).toContain("SCHEMA_VERSION: 006_neutral_blob_keys.sql");
+  expect(backupService).toContain("SCHEMA_VERSION: 007_fix_full_knowledge_bundle_boundaries.sql");
   expect(backupService).not.toContain("RETENTION_DAYS");
   expect(backupScript).toContain("context-use-postgres-v1");
   expect(backupScript).toContain("sha256sum -c");

@@ -510,6 +510,10 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
       content_hash: status.bundle_sha256!,
     }, storage, false, stagedBundleKey(intentId));
   })
+  .get("/api/dashboard/knowledge-imports/availability", async ({ request }) => {
+    await ownerRequest(request);
+    return json({ available: await knowledgeBundles.acceptsFullImport() });
+  })
   .post("/api/dashboard/knowledge-imports", async ({ request }) => {
     const principal = await ownerRequest(request, true);
     const input = z.object({

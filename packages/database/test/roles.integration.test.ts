@@ -398,6 +398,8 @@ describeDatabase("PostgreSQL security roles", () => {
     }
     for (const fn of [
       "capture_full_knowledge_bundle(uuid,text,text)",
+      "full_knowledge_bundle_summary()",
+      "full_knowledge_import_available()",
       "restore_full_knowledge_bundle(uuid,text,text)",
     ]) {
       expect((await admin.query<{ allowed: boolean }>(
@@ -411,6 +413,33 @@ describeDatabase("PostgreSQL security roles", () => {
         )).rows[0]?.allowed).toBe(false);
       }
     }
+    for (const fn of [
+      "confirm_knowledge_bundle_import_unchecked(uuid,text,text,text,integer,integer)",
+      "restore_full_knowledge_bundle_unchecked(uuid,text,text)",
+    ]) {
+      for (const role of [
+        "context_use_auth", "context_use_dashboard", "context_use_mcp",
+        "context_use_public", "context_use_confirmation", "context_use_storage",
+        "context_use_backup",
+      ]) {
+        expect((await admin.query<{ allowed: boolean }>(
+          "SELECT has_function_privilege($1,$2,'EXECUTE') AS allowed",
+          [role, fn],
+        )).rows[0]?.allowed).toBe(false);
+      }
+    }
+    for (const role of [
+      "context_use_auth", "context_use_dashboard", "context_use_mcp",
+      "context_use_public", "context_use_confirmation", "context_use_storage",
+    ]) {
+      expect((await admin.query<{ allowed: boolean }>(
+        "SELECT has_table_privilege($1,'knowledge_bundle_import_policy','SELECT') AS allowed",
+        [role],
+      )).rows[0]?.allowed).toBe(false);
+    }
+    expect((await admin.query<{ allowed: boolean }>(
+      "SELECT has_table_privilege('context_use_backup','knowledge_bundle_import_policy','SELECT') AS allowed",
+    )).rows[0]?.allowed).toBe(true);
     for (const column of ["confirmed_at", "consumed_at"]) {
       expect((await admin.query<{ allowed: boolean }>(
         "SELECT has_column_privilege('context_use_dashboard','knowledge_bundle_imports',$1,'INSERT') AS allowed",

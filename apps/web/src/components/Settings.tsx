@@ -1,5 +1,5 @@
 import { startAuthentication } from "@simplewebauthn/browser";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api, uploadKnowledgeBundlePart } from "../api.ts";
 import { ActionDialog } from "./ActionDialog.tsx";
 import { McpClients } from "./McpClients.tsx";
@@ -137,6 +137,23 @@ function ProgressBar({ value, label }: { value: number | null; label: string }) 
   </div>;
 }
 
+export function FullImportAvailability({
+  available,
+  error,
+  children,
+}: {
+  available: boolean | null;
+  error?: string;
+  children?: ReactNode;
+}) {
+  if (error) return <p className="error" role="alert">{error}</p>;
+  if (available === null) return <p role="status">Checking whether this instance can import a bundle…</p>;
+  if (!available) {
+    return <p>This instance already contains personal knowledge, assets, publication state, or customized settings. Full bundle import is only available during initialization.</p>;
+  }
+  return <>{children}</>;
+}
+
 export function Settings({
   passkeys,
   onPasskeysChanged,
@@ -201,6 +218,8 @@ export function Settings({
   });
   const [importWorking, setImportWorking] = useState(false);
   const [importError, setImportError] = useState("");
+  const [importAvailable, setImportAvailable] = useState<boolean | null>(null);
+  const [importAvailabilityError, setImportAvailabilityError] = useState("");
   const [publicEntrypoint, setPublicEntrypoint] = useState<PublicEntrypoint | null>(null);
   const [publicEntrypointId, setPublicEntrypointId] = useState("");
   const [publicEntrypointWorking, setPublicEntrypointWorking] = useState(false);
@@ -219,6 +238,20 @@ export function Settings({
       })
       .catch((error: unknown) => {
         if (active) setPublicEntrypointError(error instanceof Error ? error.message : "Public entry point could not be loaded");
+      });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    api<{ available: boolean }>("/api/dashboard/knowledge-imports/availability")
+      .then(({ available }) => {
+        if (active) setImportAvailable(available);
+      })
+      .catch((error: unknown) => {
+        if (active) setImportAvailabilityError(error instanceof Error
+          ? error.message
+          : "Import availability could not be checked");
       });
     return () => { active = false; };
   }, []);
@@ -621,8 +654,9 @@ export function Settings({
     </section>
     <section><h2>Import full bundle</h2>
       <p>Restore a full bundle onto a fresh Context Use instance. Local account credentials, passkeys, and service secrets remain those of this destination instance.</p>
-      <p><strong>Important:</strong> import replaces the untouched default knowledge template and becomes unavailable after personal knowledge or assets have been added.</p>
-      <div className="archive-import">
+      <p><strong>Initialization only:</strong> import may replace the untouched default knowledge template. The first personal knowledge, asset, publication, automation, or settings change permanently closes this import window.</p>
+      <FullImportAvailability available={importAvailable} error={importAvailabilityError}>
+        <div className="archive-import">
         {(!importJob || importJob.status === "uploading") && <div className="archive-import-field">
           <span className="archive-import-label">Context Use bundle</span>
           <label className={`archive-picker${importFile ? " has-file" : ""}${importWorking ? " is-disabled" : ""}`}>
@@ -640,7 +674,8 @@ export function Settings({
         {importJob?.status === "complete" && <div className="archive-upload"><div className="archive-upload-copy"><strong>Knowledge import complete</strong><small>Original UUIDs, links, history, assets, and publication records were restored.</small></div></div>}
         {importJob?.status === "failed" && <div><p className="error" role="alert">{importJob.message || "The knowledge bundle could not be imported."}</p><button onClick={() => { setImportJob(null); setImportFile(null); }}>Choose another bundle</button></div>}
         {importError && <p className="error" role="alert">{importError}</p>}
-      </div>
+        </div>
+      </FullImportAvailability>
     </section>
     {enrollmentIntent && <ActionDialog
       eyebrow="Passkey enrollment"
