@@ -976,6 +976,26 @@ button:disabled {
 
 .status.public::before { background: #3c8a63; }
 
+.status-link {
+  text-decoration: none;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.status-link:hover {
+  background: #d5e8dd;
+  color: #245b42;
+}
+
+.status-link svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+
 .tabs {
   padding: 0 52px;
   display: flex;
@@ -1049,6 +1069,8 @@ button:disabled {
   width: min(1016px, calc(100% - 104px));
   margin: 0 auto 24px;
 }
+
+.publication-alert > .primary { flex: 0 0 auto; }
 
 .publication-notice > div {
   display: flex;
@@ -3301,6 +3323,11 @@ button:disabled {
   .history-list {
     padding-left: 18px;
     padding-right: 18px;
+  }
+
+  .publication-alert {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 

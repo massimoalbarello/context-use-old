@@ -1,7 +1,37 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { PageVersionDiff } from "../types.ts";
-import { VersionDiffContents } from "./Editor.tsx";
+import { OutdatedPublicationNotice, PagePublicationStatus, VersionDiffContents } from "./Editor.tsx";
+
+describe("page publication controls", () => {
+  test("puts the permanent public link in the version status without exposing the URL", () => {
+    const html = renderToStaticMarkup(<PagePublicationStatus
+      archivedAt={null}
+      publishedVersionId="published-version-id"
+      publishedVersionNumber={19}
+      publicUrl="https://example.com/p/permanent-opaque-id"
+    />);
+
+    expect(html).toContain("Public v19");
+    expect(html).toContain('href="https://example.com/p/permanent-opaque-id"');
+    expect(html).toContain('target="_blank"');
+    expect(html).toContain("Open public v19 in a new tab");
+    expect(html).not.toContain("Permanent public URL");
+  });
+
+  test("keeps the publish action inside the outdated-version warning", () => {
+    const html = renderToStaticMarkup(<OutdatedPublicationNotice
+      canPublish
+      latestVersionNumber={20}
+      onPublishLatest={() => undefined}
+      publishedVersionNumber={19}
+    />);
+
+    expect(html).toContain('class="publication-notice pending publication-alert"');
+    expect(html).toContain("v19 is public, while v20 is the latest version available.");
+    expect(html).toContain("Publish latest</button></div>");
+  });
+});
 
 describe("page version diff", () => {
   test("renders changed metadata and compact Markdown additions and removals", () => {
