@@ -7,6 +7,7 @@ import {
 import {
   applyHypermediaBootstrap,
   hypermediaBootstrapDocuments,
+  synchronizeGlobalGuide,
 } from "./hypermedia-bootstrap-command.ts";
 
 const kinds = [
@@ -97,5 +98,137 @@ describe("hypermedia bootstrap command", () => {
       ...allocations(),
       { ...allocations()[0]!, document_kind: "unexpected" as never },
     ])).toThrow("unexpected allocation");
+  });
+
+  test("leaves an existing configured guide unchanged when it matches the embedded template", async () => {
+    const guide = defaultHypermediaBootstrapTemplate.documents.global_guide;
+    const documentId = crypto.randomUUID();
+    const revisionId = crypto.randomUUID();
+    let updates = 0;
+    const result = await synchronizeGlobalGuide({
+      guide,
+      templateName: defaultHypermediaBootstrapTemplate.name,
+      repositories: {
+        settings: {
+          async globalGuide() {
+            return {
+              document_id: documentId,
+              current_revision_id: revisionId,
+              revision_number: 4,
+              title: guide.title,
+              summary: guide.summary,
+              body_object_key: "knowledge/test.md",
+              body_size_bytes: guide.body_markdown.length,
+              body_content_hash: "a".repeat(64),
+              settings_updated_at: new Date(),
+            };
+          },
+        },
+        documents: {
+          async get() {
+            return {
+              document_id: documentId,
+              current_revision_id: revisionId,
+              public_id: null,
+              revision_number: 4,
+              title: guide.title,
+              summary: guide.summary,
+              archived_at: null,
+              current_link_contract: "generic_document_v1" as const,
+              search_ready: true,
+              created_at: new Date(),
+              updated_at: new Date(),
+              body_markdown: guide.body_markdown,
+            };
+          },
+          async update() {
+            updates += 1;
+            throw new Error("unexpected update");
+          },
+        },
+      },
+    });
+
+    expect(result).toEqual({ document_id: documentId, revision_number: 4, updated: false });
+    expect(updates).toBe(0);
+  });
+
+  test("replaces a customized configured guide with a new managed revision", async () => {
+    const guide = defaultHypermediaBootstrapTemplate.documents.global_guide;
+    const documentId = crypto.randomUUID();
+    const revisionId = crypto.randomUUID();
+    const updates: Array<Record<string, unknown>> = [];
+    const result = await synchronizeGlobalGuide({
+      guide,
+      templateName: defaultHypermediaBootstrapTemplate.name,
+      repositories: {
+        settings: {
+          async globalGuide() {
+            return {
+              document_id: documentId,
+              current_revision_id: revisionId,
+              revision_number: 7,
+              title: "Customized guide",
+              summary: "Customized instructions.",
+              body_object_key: "knowledge/test.md",
+              body_size_bytes: 12,
+              body_content_hash: "b".repeat(64),
+              settings_updated_at: new Date(),
+            };
+          },
+        },
+        documents: {
+          async get() {
+            return {
+              document_id: documentId,
+              current_revision_id: revisionId,
+              public_id: null,
+              revision_number: 7,
+              title: "Customized guide",
+              summary: "Customized instructions.",
+              archived_at: null,
+              current_link_contract: "generic_document_v1" as const,
+              search_ready: true,
+              created_at: new Date(),
+              updated_at: new Date(),
+              body_markdown: "# Customized\n",
+            };
+          },
+          async update(id, update, actor) {
+            updates.push({ id, update, actor });
+            return {
+              document_id: documentId,
+              current_revision_id: crypto.randomUUID(),
+              public_id: null,
+              revision_number: 8,
+              title: update.title,
+              summary: update.summary,
+              archived_at: null,
+              current_link_contract: "generic_document_v1" as const,
+              search_ready: true,
+              created_at: new Date(),
+              updated_at: new Date(),
+              body_markdown: update.body_markdown,
+            };
+          },
+        },
+      },
+    });
+
+    expect(result).toEqual({ document_id: documentId, revision_number: 8, updated: true });
+    expect(updates).toEqual([{
+      id: documentId,
+      update: {
+        title: guide.title,
+        summary: guide.summary,
+        body_markdown: guide.body_markdown,
+        commit_message: "Synchronize default managed global guide",
+        expected_revision_number: 7,
+      },
+      actor: {
+        kind: "dashboard",
+        subject: "context-use-managed-global-guide/v1",
+      },
+    }]);
   });
 });
