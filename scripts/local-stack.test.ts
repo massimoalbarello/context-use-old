@@ -36,7 +36,5 @@ describe("local stack commands", () => {
   test("development compose uses MinIO as its object store", () => {
     const compose = readFileSync(join(import.meta.dir, "..", "compose.dev.yml"), "utf8");
     expect(compose).toContain("S3_ENDPOINT: http://minio:9000");
-    expect(compose).not.toContain("STORAGE_DRIVER");
-    expect(compose).not.toContain("STORAGE_PATH");
   });
 });

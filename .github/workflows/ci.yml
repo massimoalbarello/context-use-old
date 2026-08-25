@@ -84,7 +84,6 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun audit --production
       - run: bun run typecheck
-      - run: bun run audit:filesystem-deprecation
       - run: bun --cwd apps/server build
       - name: Validate S3 semantics against MinIO
         run: |

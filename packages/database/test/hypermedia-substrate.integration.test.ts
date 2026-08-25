@@ -151,6 +151,10 @@ describeDatabase("hypermedia document substrate", () => {
        ) VALUES ($1::uuid,$2,1,'documents/private/'||($1::uuid)::text||'.md',0,$3)`,
       [sourceRevisionId, sourceDocumentId, "0".repeat(64)],
     );
+    await expect(admin.query(
+      "SELECT replace_document_links($1,NULL::uuid[])",
+      [sourceRevisionId],
+    )).rejects.toThrow("source revision and target document array are required");
 
     await admin.query("BEGIN");
     await admin.query("SET LOCAL ROLE context_use_storage");
