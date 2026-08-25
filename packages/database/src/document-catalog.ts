@@ -3,6 +3,7 @@ import type { Pool, PoolClient } from "pg";
 
 export type PrivateDocumentKind = "knowledge" | "record" | "asset";
 export type PrivateDocumentLifecycle = "active" | "archived" | "deleted";
+export type PrivateDocumentCatalogType = PrivateDocumentKind | "public" | "archived";
 export type PrivateDocumentOperationalRole =
   | "global_guide"
   | "automation_instructions"
@@ -13,6 +14,7 @@ export type PrivateDocumentCatalogFilters = {
   representation?: "markdown" | "asset";
   document_kind?: PrivateDocumentKind;
   lifecycle?: PrivateDocumentLifecycle;
+  catalog_types?: PrivateDocumentCatalogType[];
   integration?: string;
   operational_role?: PrivateDocumentOperationalRole;
 };
@@ -197,6 +199,7 @@ function searchFingerprint(
     representation: options.representation ?? null,
     document_kind: options.document_kind ?? null,
     lifecycle: options.lifecycle ?? null,
+    catalog_types: options.catalog_types?.slice().sort() ?? null,
     integration: options.integration ?? null,
     operational_role: options.operational_role ?? null,
   })).digest("hex");
@@ -332,10 +335,23 @@ export class PrivateDocumentCatalogRepository {
            AND document_id::text COLLATE "C">$2::text COLLATE "C"
          ))
          AND (
-           $7::private_document_lifecycle IS NOT NULL
-             AND lifecycle=$7::private_document_lifecycle::text
-           OR $7::private_document_lifecycle IS NULL
-             AND ($3::boolean OR lifecycle='active')
+           $10::text[] IS NULL AND (
+             $7::private_document_lifecycle IS NOT NULL
+               AND lifecycle=$7::private_document_lifecycle::text
+             OR $7::private_document_lifecycle IS NULL
+               AND ($3::boolean OR lifecycle='active')
+           )
+           OR $10::text[] IS NOT NULL AND (
+             ('knowledge'=ANY($10) AND document_kind='knowledge' AND lifecycle='active')
+             OR ('record'=ANY($10) AND document_kind='record' AND lifecycle='active')
+             OR ('asset'=ANY($10) AND document_kind='asset' AND lifecycle='active')
+             OR ('archived'=ANY($10) AND lifecycle='archived')
+             OR ('public'=ANY($10) AND document_kind='knowledge'
+               AND lifecycle='active' AND EXISTS (
+                 SELECT 1 FROM page_publications publication
+                 WHERE publication.public_id=catalog.public_id
+               ))
+           )
          )
          AND ($4::hypermedia_document_authority IS NULL OR authority=$4)
          AND ($5::hypermedia_document_representation IS NULL OR representation=$5)
@@ -345,12 +361,13 @@ export class PrivateDocumentCatalogRepository {
          AND ($9::private_document_operational_role IS NULL
            OR $9::private_document_operational_role::text=ANY(operational_roles))
        ORDER BY updated_at DESC,document_id::text COLLATE "C"
-       LIMIT $10`,
+       LIMIT $11`,
       [cursor?.updated_at_epoch_micros ?? null, cursor?.document_id ?? null,
         options.include_retired ?? false,
         options.authority ?? null, options.representation ?? null,
         options.document_kind ?? null, options.lifecycle ?? null,
-        options.integration ?? null, options.operational_role ?? null, limit + 1],
+        options.integration ?? null, options.operational_role ?? null,
+        options.catalog_types?.length ? options.catalog_types : null, limit + 1],
     );
     const rows = result.rows.slice(0, limit);
     const documents = rows.map(({ cursor_updated_at_epoch_micros: _cursor, ...document }) => (
@@ -376,13 +393,14 @@ export class PrivateDocumentCatalogRepository {
     const cursor = decodeSearchCursor(options.cursor, fingerprint);
     const result = await this.pool.query<PrivateDocumentSearchRow>(
       `SELECT * FROM search_private_document_catalog(
-         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13
        )`,
       [query.trim(), cursor?.rank ?? null, cursor?.updated_at_epoch_micros ?? null,
         cursor?.document_id ?? null, options.include_retired ?? false, limit + 1,
         options.authority ?? null, options.representation ?? null,
         options.document_kind ?? null, options.lifecycle ?? null,
-        options.integration ?? null, options.operational_role ?? null],
+        options.integration ?? null, options.operational_role ?? null,
+        options.catalog_types?.length ? options.catalog_types : null],
     );
     const rows = result.rows.slice(0, limit);
     const documents = rows.map((row) => normalizeCatalogItem(row.document));

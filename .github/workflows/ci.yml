@@ -137,7 +137,7 @@ jobs:
           psql "${TEST_DATABASE_URL}" --set ON_ERROR_STOP=1 <<'SQL'
           DO $$
           BEGIN
-            IF (SELECT count(*) FROM schema_migrations)<>4
+            IF (SELECT count(*) FROM schema_migrations)<>5
                OR NOT EXISTS (
                  SELECT 1 FROM schema_migrations WHERE version='001_baseline.sql'
                )
@@ -152,6 +152,10 @@ jobs:
                OR NOT EXISTS (
                  SELECT 1 FROM schema_migrations
                  WHERE version='004_full_knowledge_bundles.sql'
+               )
+               OR NOT EXISTS (
+                 SELECT 1 FROM schema_migrations
+                 WHERE version='005_add_dashboard_catalog_types.sql'
                )
                OR to_regclass('public.public_route_aliases') IS NULL THEN
               RAISE EXCEPTION 'current forward migration contract failed';

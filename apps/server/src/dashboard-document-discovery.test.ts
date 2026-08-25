@@ -56,6 +56,7 @@ describe("dashboard document discovery", () => {
       authority: "knowledge",
       kind: "knowledge",
       lifecycle: "archived",
+      types: "knowledge,public,archived",
     })).toEqual({
       query: "investment notes",
       options: {
@@ -65,6 +66,7 @@ describe("dashboard document discovery", () => {
         authority: "knowledge",
         document_kind: "knowledge",
         lifecycle: "archived",
+        catalog_types: ["knowledge", "public", "archived"],
       },
     });
     expect(parseDashboardDocumentCatalogQuery({ q: "" })).toEqual({
@@ -72,6 +74,8 @@ describe("dashboard document discovery", () => {
       options: {},
     });
     expect(() => parseDashboardDocumentCatalogQuery({ limit: "101" })).toThrow();
+    expect(() => parseDashboardDocumentCatalogQuery({ types: "public,public" })).toThrow();
+    expect(() => parseDashboardDocumentCatalogQuery({ types: "public,private" })).toThrow();
     expect(() => parseDashboardDocumentCatalogQuery({ extra: "private" })).toThrow();
 
     expect(parseDashboardDocumentNeighborhoodQuery({
