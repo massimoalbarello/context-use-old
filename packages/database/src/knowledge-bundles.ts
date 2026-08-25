@@ -42,10 +42,11 @@ export type KnowledgeBundleExportRecord = {
   record: Record<string, unknown>;
 };
 
-export type KnowledgeBundleObject = {
+/** A stored byte payload. Wire-format v1 retains `object_*` frame field names. */
+export type KnowledgeBundleBlob = {
   ordinal: number | string;
-  object_kind: "private_revision" | "asset" | "retained_page" | "public_page" | "public_asset";
-  object_key: string;
+  blob_kind: "private_revision" | "asset" | "retained_page" | "public_page" | "public_asset";
+  blob_key: string;
   size_bytes: number | string;
   content_hash: string;
   content_type: string;
@@ -101,7 +102,7 @@ export type KnowledgeBundleImportPart = {
   content_hash: string;
 };
 
-export type KnowledgeBundleImportObjectAuthorization = KnowledgeBundleObject & {
+export type KnowledgeBundleImportBlobAuthorization = KnowledgeBundleBlob & {
   import_id: string;
   confirmed_at: Date | string;
   expires_at: Date | string;
@@ -253,9 +254,10 @@ export class KnowledgeBundleRepository {
     }));
   }
 
-  async exportObjects(intentId: string, after: number, limit = 100): Promise<KnowledgeBundleObject[]> {
-    const result = await this.pool.query<KnowledgeBundleObject>(
-      `SELECT ordinal,object_kind,object_key,size_bytes,content_hash,content_type
+  async exportBlobs(intentId: string, after: number, limit = 100): Promise<KnowledgeBundleBlob[]> {
+    const result = await this.pool.query<KnowledgeBundleBlob>(
+      `SELECT ordinal,object_kind AS blob_kind,object_key AS blob_key,
+         size_bytes,content_hash,content_type
        FROM knowledge_bundle_export_objects
        WHERE intent_id=$1 AND ordinal>$2 ORDER BY ordinal LIMIT $3`,
       [intentId, after, limit],
@@ -409,13 +411,13 @@ export class KnowledgeBundleRepository {
     );
   }
 
-  async insertImportObject(id: string, object: KnowledgeBundleObject): Promise<void> {
+  async insertImportBlob(id: string, blob: KnowledgeBundleBlob): Promise<void> {
     await this.pool.query(
       `INSERT INTO knowledge_bundle_import_objects(
          import_id,ordinal,object_kind,object_key,size_bytes,content_hash,content_type
        ) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [id, Number(object.ordinal), object.object_kind, object.object_key,
-        object.size_bytes, object.content_hash, object.content_type],
+      [id, Number(blob.ordinal), blob.blob_kind, blob.blob_key,
+        blob.size_bytes, blob.content_hash, blob.content_type],
     );
   }
 
@@ -491,7 +493,7 @@ export class KnowledgeBundleRepository {
     );
   }
 
-  async markImportObjectMaterialized(id: string, ordinal: number): Promise<void> {
+  async markImportBlobMaterialized(id: string, ordinal: number): Promise<void> {
     await this.pool.query(
       `UPDATE knowledge_bundle_import_objects SET materialized_at=now()
        WHERE import_id=$1 AND ordinal=$2`,
@@ -499,15 +501,16 @@ export class KnowledgeBundleRepository {
     );
   }
 
-  async importObjectAuthorization(id: string, objectKey: string): Promise<KnowledgeBundleImportObjectAuthorization | null> {
-    const result = await this.pool.query<KnowledgeBundleImportObjectAuthorization>(
-      `SELECT object.import_id,object.ordinal,object.object_kind,object.object_key,
+  async importBlobAuthorization(id: string, blobKey: string): Promise<KnowledgeBundleImportBlobAuthorization | null> {
+    const result = await this.pool.query<KnowledgeBundleImportBlobAuthorization>(
+      `SELECT object.import_id,object.ordinal,object.object_kind AS blob_kind,
+         object.object_key AS blob_key,
          object.size_bytes,object.content_hash,object.content_type,
          job.confirmed_at,job.expires_at,job.status
        FROM knowledge_bundle_import_objects object
        JOIN knowledge_bundle_imports job ON job.id=object.import_id
        WHERE object.import_id=$1 AND object.object_key=$2`,
-      [id, objectKey],
+      [id, blobKey],
     );
     return result.rows[0] ?? null;
   }

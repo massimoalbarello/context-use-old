@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { describe, expect, test } from "bun:test";
-import type { DocumentAssetRepository } from "@context-use/database";
+import type { AssetRepository } from "@context-use/database";
 import { createAssetCapability, verifyAssetCapability } from "./mcp-asset-capability.ts";
 import { createMcpAssetUploadHandler } from "./mcp-asset-upload.ts";
-import type { ObjectStorage, StoredAsset } from "./storage.ts";
+import type { BlobStorage, StoredBlob } from "./storage.ts";
 
 const assetId = "11111111-1111-4111-8111-111111111111";
 const bytes = new TextEncoder().encode("private asset bytes");
@@ -12,24 +12,24 @@ const principal = { clientId: "mcp-client", sessionId: "mcp-session" };
 
 function fixture() {
   const asset = {
-    document_id: assetId,
+    object_id: assetId,
     filename: "private.pdf",
     content_type: "application/pdf",
     size_bytes: bytes.byteLength,
     content_hash: contentHash,
-    object_key: `objects/${assetId}`,
+    blob_key: `blobs/${assetId}`,
   };
-  let written: { asset: StoredAsset; bytes: Uint8Array } | null = null;
+  let written: { asset: StoredBlob; bytes: Uint8Array } | null = null;
   const assets = {
     async getForStorage(id: string) {
       return id === assetId ? asset : null;
     },
-  } as unknown as DocumentAssetRepository;
+  } as unknown as AssetRepository;
   const storage = {
-    async write(storedAsset: StoredAsset, body: ReadableStream<Uint8Array> | null) {
+    async write(storedAsset: StoredBlob, body: ReadableStream<Uint8Array> | null) {
       written = { asset: storedAsset, bytes: new Uint8Array(await new Response(body).arrayBuffer()) };
     },
-  } as unknown as ObjectStorage;
+  } as unknown as BlobStorage;
   const handler = createMcpAssetUploadHandler(assets, storage, async () => true);
   return { handler, written: () => written };
 }
@@ -68,7 +68,7 @@ describe("MCP asset upload capabilities", () => {
     const response = await handler(uploadRequest(capability.token), assetId);
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ uploaded: true, asset_id: assetId });
+    expect(await response.json()).toEqual({ uploaded: true, object_id: assetId });
     expect(written()).toMatchObject({ asset: { id: assetId, contentHash } });
     expect(written()?.bytes).toEqual(bytes);
   });
@@ -105,7 +105,7 @@ describe("MCP asset upload capabilities", () => {
 
   test("rejects a signed capability after its MCP lineage is revoked", async () => {
     const capability = createAssetCapability("upload", assetId, principal);
-    const revoked = createMcpAssetUploadHandler({} as DocumentAssetRepository, {} as ObjectStorage, async () => false);
+    const revoked = createMcpAssetUploadHandler({} as AssetRepository, {} as BlobStorage, async () => false);
 
     expect((await revoked(uploadRequest(capability.token), assetId)).status).toBe(401);
   });

@@ -1,9 +1,9 @@
 import {
-  DocumentAssetRepository,
-  DocumentLinkRepository,
-  KnowledgeDocumentRepository,
+  AssetRepository,
+  ObjectLinkRepository,
+  KnowledgePageRepository,
   KnowledgeSettingsRepository,
-  PrivateDocumentCatalogRepository,
+  PrivateObjectCatalogRepository,
   SourceRecordRepository,
   createPool,
 } from "@context-use/database";
@@ -17,36 +17,36 @@ import { createMcpAssetUploadHandler } from "./mcp-asset-upload.ts";
 import { NangoRecordReader } from "./nango-records.ts";
 import { securityHeaders } from "./security.ts";
 import { BrokeredStorage } from "./storage-client.ts";
-import { BrokeredMarkdownObjectStore } from "./markdown-object-store.ts";
+import { BrokeredMarkdownBlobStore } from "./markdown-blob-store.ts";
 
 const pool = createPool(config.MCP_DATABASE_URL, { application_name: "context-use-private-mcp" });
 const storage = new BrokeredStorage({
   socketPath: config.STORAGE_SOCKET_PATH,
   token: config.STORAGE_MCP_TOKEN,
 });
-const markdownObjects = new BrokeredMarkdownObjectStore(storage);
-const knowledgeDocuments = new KnowledgeDocumentRepository(pool, markdownObjects);
-const documentAssets = new DocumentAssetRepository(pool);
-const documentCatalog = new PrivateDocumentCatalogRepository(pool);
-const recordDocuments = new SourceRecordRepository(pool, markdownObjects);
+const markdownBlobs = new BrokeredMarkdownBlobStore(storage);
+const pages = new KnowledgePageRepository(pool, markdownBlobs);
+const assets = new AssetRepository(pool);
+const objectCatalog = new PrivateObjectCatalogRepository(pool);
+const recordObjects = new SourceRecordRepository(pool, markdownBlobs);
 const knowledgeSettings = new KnowledgeSettingsRepository(pool);
-const documentLinks = new DocumentLinkRepository(pool);
+const objectLinks = new ObjectLinkRepository(pool);
 const sourceRecords = config.NANGO_PIPELINE_API_KEY
   ? new NangoRecordReader({
     baseUrl: config.NANGO_INTERNAL_URL,
     apiKey: config.NANGO_PIPELINE_API_KEY,
-    recordWriter: recordDocuments,
+    recordWriter: recordObjects,
   })
   : undefined;
 const knowledgeMcp = createMcpRequestHandler(
   sourceRecords,
-  recordDocuments,
+  recordObjects,
   knowledgeSettings,
-  documentLinks,
-  { knowledgeDocuments, documentAssets, documentCatalog },
+  objectLinks,
+  { pages, assets, objectCatalog },
 );
-const upload = createMcpAssetUploadHandler(documentAssets, storage);
-const download = createMcpAssetDownloadHandler(documentAssets, storage);
+const upload = createMcpAssetUploadHandler(assets, storage);
+const download = createMcpAssetDownloadHandler(assets, storage);
 const protectedResourceMetadata = () => json({
   resource: config.MCP_RESOURCE,
   authorization_servers: [config.OAUTH_ISSUER],

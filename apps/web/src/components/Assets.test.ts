@@ -20,7 +20,7 @@ describe("asset previews", () => {
 });
 
 describe("asset references", () => {
-  test("shows the asset's canonical private document reference", () => {
+  test("shows the asset's canonical private object reference", () => {
     const id = "11111111-1111-4111-8111-111111111111";
     const html = renderToStaticMarkup(createElement(AssetDetails, {
       asset: {
@@ -37,7 +37,7 @@ describe("asset references", () => {
       onDeleted: () => undefined,
     }));
 
-    expect(html).toContain(`context-use://document/${id}`);
+    expect(html).toContain(`context-use://object/${id}`);
     expect(html).not.toContain("context-use://asset/");
   });
 });

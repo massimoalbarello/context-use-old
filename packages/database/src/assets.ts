@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type {
-  ArchiveDocumentAssetInput,
-  CreateDocumentAssetInput,
+  ArchiveAssetInput,
+  CreateAssetInput,
 } from "@context-use/shared";
 
 export type AssetArchiveConflictReason = "published" | "referenced";
@@ -23,8 +23,8 @@ function activePublicationBlocked(error: unknown): boolean {
     && candidate.message === "an actively published v2 asset cannot be archived or deleted";
 }
 
-export type DocumentAsset = {
-  document_id: string;
+export type AssetMetadata = {
+  object_id: string;
   public_id: string | null;
   filename: string;
   content_type: string;
@@ -37,24 +37,24 @@ export type DocumentAsset = {
   deleted_at: Date | string | null;
 };
 
-/** Explicit internal storage handoff; API/catalog projections return only `document`. */
-export type DocumentAssetCreateResult = {
-  document: DocumentAsset;
-  storage: { object_key: string };
+/** Explicit internal storage handoff; API/catalog projections return only `object`. */
+export type AssetCreateResult = {
+  object: AssetMetadata;
+  storage: { blob_key: string };
 };
 
-export type DocumentAssetStorageObject = {
-  document_id: string;
-  object_key: string;
+export type AssetStorageBlob = {
+  object_id: string;
+  blob_key: string;
   filename: string;
   content_type: string;
   size_bytes: string;
   content_hash: string;
 };
 
-export type DeletedDocumentAssetStorageObject = {
-  document_id: string;
-  object_key: string;
+export type DeletedAssetStorageBlob = {
+  object_id: string;
+  blob_key: string;
 };
 
 async function transaction<T>(pool: Pool, work: (client: PoolClient) => Promise<T>): Promise<T> {
@@ -97,30 +97,35 @@ const ASSET_STORAGE_SELECT = `
    AND document.representation='asset'
 `;
 
-type DocumentAssetDatabaseRow = Omit<DocumentAsset, "size_bytes" | "duration_seconds"> & {
+type AssetDatabaseRow = Omit<AssetMetadata, "object_id" | "size_bytes" | "duration_seconds"> & {
+  document_id: string;
   size_bytes: number | string;
   duration_seconds: number | string | null;
 };
-type DocumentAssetStorageRow = Omit<DocumentAssetStorageObject, "size_bytes"> & {
+type AssetStorageRow = Omit<AssetStorageBlob, "object_id" | "blob_key" | "size_bytes"> & {
+  document_id: string;
+  object_key: string;
   size_bytes: number | string;
 };
 
-function normalizeAsset(row: DocumentAssetDatabaseRow): DocumentAsset {
+function normalizeAsset(row: AssetDatabaseRow): AssetMetadata {
+  const { document_id, ...metadata } = row;
   return {
-    ...row,
+    ...metadata,
+    object_id: document_id,
     size_bytes: String(row.size_bytes),
     duration_seconds: row.duration_seconds === null ? null : String(row.duration_seconds),
   };
 }
 
-export class DocumentAssetRepository {
+export class AssetRepository {
   constructor(private readonly pool: Pool) {}
 
-  async create(input: CreateDocumentAssetInput): Promise<DocumentAssetCreateResult> {
-    const documentId = randomUUID();
-    const objectKey = `objects/${documentId}`;
+  async create(input: CreateAssetInput): Promise<AssetCreateResult> {
+    const objectId = randomUUID();
+    const blobKey = `blobs/${objectId}`;
     return transaction(this.pool, async (client) => {
-      const result = await client.query<DocumentAssetDatabaseRow>(
+      const result = await client.query<AssetDatabaseRow>(
         `INSERT INTO assets(
            id,filename,content_type,size_bytes,content_hash,
            s3_object_key,width,height,duration_seconds
@@ -129,22 +134,22 @@ export class DocumentAssetRepository {
            filename,content_type,size_bytes,content_hash,
            width,height,duration_seconds,
            created_at,deleted_at`,
-        [documentId, input.filename, input.content_type,
-          input.size_bytes, input.sha256, objectKey,
+        [objectId, input.filename, input.content_type,
+          input.size_bytes, input.sha256, blobKey,
           input.width ?? null, input.height ?? null, input.duration_seconds ?? null],
       );
       return {
-        document: normalizeAsset(result.rows[0]!),
-        storage: { object_key: objectKey },
+        object: normalizeAsset(result.rows[0]!),
+        storage: { blob_key: blobKey },
       };
     });
   }
 
-  async get(documentId: string, options: { include_deleted?: boolean } = {}): Promise<DocumentAsset | null> {
-    const result = await this.pool.query<DocumentAssetDatabaseRow>(
+  async get(objectId: string, options: { include_deleted?: boolean } = {}): Promise<AssetMetadata | null> {
+    const result = await this.pool.query<AssetDatabaseRow>(
       `${ASSET_SELECT}
        WHERE asset.id=$1 ${options.include_deleted ? "" : "AND asset.deleted_at IS NULL"}`,
-      [documentId],
+      [objectId],
     );
     return result.rows[0] ? normalizeAsset(result.rows[0]) : null;
   }
@@ -154,19 +159,25 @@ export class DocumentAssetRepository {
    * Keep this projection independent of publication metadata: the storage role
    * deliberately cannot map public identifiers back to private documents.
    */
-  async getForStorage(documentId: string): Promise<DocumentAssetStorageObject | null> {
-    const result = await this.pool.query<DocumentAssetStorageRow>(
+  async getForStorage(objectId: string): Promise<AssetStorageBlob | null> {
+    const result = await this.pool.query<AssetStorageRow>(
       `${ASSET_STORAGE_SELECT} WHERE asset.id=$1 AND asset.deleted_at IS NULL`,
-      [documentId],
+      [objectId],
     );
     const row = result.rows[0];
     if (!row) return null;
-    return { ...row, size_bytes: String(row.size_bytes) };
+    const { document_id, object_key, ...metadata } = row;
+    return {
+      ...metadata,
+      object_id: document_id,
+      blob_key: object_key,
+      size_bytes: String(row.size_bytes),
+    };
   }
 
   /** Exact deleted byte locator used only by the isolated storage cleanup boundary. */
-  async getDeletedForStorage(documentId: string): Promise<DeletedDocumentAssetStorageObject | null> {
-    const result = await this.pool.query<DeletedDocumentAssetStorageObject>(
+  async getDeletedForStorage(objectId: string): Promise<DeletedAssetStorageBlob | null> {
+    const result = await this.pool.query<{ document_id: string; object_key: string }>(
       `SELECT asset.id AS document_id,asset.s3_object_key AS object_key
        FROM assets asset
        JOIN hypermedia_documents document
@@ -174,13 +185,14 @@ export class DocumentAssetRepository {
         AND document.authority='knowledge'
         AND document.representation='asset'
        WHERE asset.id=$1 AND asset.deleted_at IS NOT NULL`,
-      [documentId],
+      [objectId],
     );
-    return result.rows[0] ?? null;
+    const row = result.rows[0];
+    return row ? { object_id: row.document_id, blob_key: row.object_key } : null;
   }
 
-  async list(): Promise<DocumentAsset[]> {
-    const result = await this.pool.query<DocumentAssetDatabaseRow>(
+  async list(): Promise<AssetMetadata[]> {
+    const result = await this.pool.query<AssetDatabaseRow>(
       `${ASSET_SELECT}
        WHERE asset.deleted_at IS NULL
        ORDER BY asset.created_at,asset.id`,
@@ -188,7 +200,7 @@ export class DocumentAssetRepository {
     return result.rows.map(normalizeAsset);
   }
 
-  async delete(documentId: string): Promise<string | null> {
+  async delete(objectId: string): Promise<string | null> {
     return transaction(this.pool, async (client) => {
       const selected = await client.query<{ s3_object_key: string }>(
         `SELECT asset.s3_object_key
@@ -201,7 +213,7 @@ export class DocumentAssetRepository {
              WHERE resource.document_id=asset.id
            )
          FOR UPDATE`,
-        [documentId],
+        [objectId],
       );
       if (!selected.rows[0]) return null;
       const referenced = await client.query(
@@ -217,7 +229,7 @@ export class DocumentAssetRepository {
              AND link.target_asset_id=$1
          )
          LIMIT 1`,
-        [documentId],
+        [objectId],
       );
       if (referenced.rowCount) return null;
       if ((await client.query(
@@ -228,27 +240,27 @@ export class DocumentAssetRepository {
         `UPDATE assets SET deleted_at=now()
          WHERE id=$1 AND deleted_at IS NULL
          RETURNING s3_object_key`,
-        [documentId],
+        [objectId],
       );
       if (!deleted.rows[0]) return null;
-      await client.query("UPDATE hypermedia_documents SET updated_at=now() WHERE id=$1", [documentId]);
+      await client.query("UPDATE hypermedia_documents SET updated_at=now() WHERE id=$1", [objectId]);
       return deleted.rows[0].s3_object_key;
     });
   }
 
-  async archive(input: ArchiveDocumentAssetInput): Promise<DocumentAsset | null> {
-    const documentId = input.asset_id;
+  async archive(input: ArchiveAssetInput): Promise<AssetMetadata | null> {
+    const objectId = input.object_id;
     return transaction(this.pool, async (client) => {
       const selected = await client.query(
         `SELECT 1 FROM assets asset
          WHERE asset.id=$1 AND asset.deleted_at IS NULL
          FOR UPDATE OF asset`,
-        [documentId],
+        [objectId],
       );
       if (!selected.rowCount) {
-        const existing = await client.query<DocumentAssetDatabaseRow>(
+        const existing = await client.query<AssetDatabaseRow>(
           `${ASSET_SELECT} WHERE asset.id=$1`,
-          [documentId],
+          [objectId],
         );
         return existing.rows[0] ? normalizeAsset(existing.rows[0]) : null;
       }
@@ -265,13 +277,13 @@ export class DocumentAssetRepository {
              AND link.target_asset_id=$1
          )
          LIMIT 1`,
-        [documentId],
+        [objectId],
       );
       if (referenced.rowCount) throw new AssetArchiveConflictError("referenced");
       try {
         await client.query(
           "UPDATE assets SET deleted_at=now() WHERE id=$1 AND deleted_at IS NULL",
-          [documentId],
+          [objectId],
         );
       } catch (error) {
         if (activePublicationBlocked(error)) throw new AssetArchiveConflictError("published");
@@ -279,11 +291,11 @@ export class DocumentAssetRepository {
       }
       await client.query(
         "UPDATE hypermedia_documents SET updated_at=now() WHERE id=$1",
-        [documentId],
+        [objectId],
       );
-      const result = await client.query<DocumentAssetDatabaseRow>(
+      const result = await client.query<AssetDatabaseRow>(
         `${ASSET_SELECT} WHERE asset.id=$1`,
-        [documentId],
+        [objectId],
       );
       return result.rows[0] ? normalizeAsset(result.rows[0]) : null;
     });

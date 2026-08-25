@@ -20,7 +20,7 @@ export function publicationIntentBody({
   return {
     action,
     target_kind: targetKind,
-    target_document_id: targetId,
+    target_object_id: targetId,
     ...(action === "publish" && targetKind === "page"
       ? { expected_revision_id: versionId }
       : {}),

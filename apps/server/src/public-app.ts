@@ -44,7 +44,7 @@ const markdownHeaders = {
 };
 const xmlHeaders = { ...securityHeaders, "content-type": "application/xml; charset=utf-8" };
 const unavailableResolvers = {
-  document: async () => ({ available: false as const }),
+  object: async () => ({ available: false as const }),
   publicAssetPath: async (path: string) => {
     const parsed = publicRouteSchema.safeParse(`/a/${path}`);
     if (!parsed.success) return { available: false as const };

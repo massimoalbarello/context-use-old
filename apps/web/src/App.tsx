@@ -1,15 +1,15 @@
-import type { DashboardDocumentSummary } from "@context-use/shared";
+import type { DashboardObjectSummary } from "@context-use/shared";
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { api, refreshCsrf } from "./api.ts";
 import { authClient } from "./auth-client.ts";
 import { AssetDetails } from "./components/Assets.tsx";
 import { Automations } from "./components/Automations.tsx";
 import { Editor } from "./components/Editor.tsx";
-import { DocumentDetails } from "./components/DocumentDetails.tsx";
-import { DocumentNavigator } from "./components/DocumentNavigator.tsx";
+import { ObjectDetails } from "./components/ObjectDetails.tsx";
+import { ObjectNavigator } from "./components/ObjectNavigator.tsx";
 import { KnowledgeHistory } from "./components/KnowledgeHistory.tsx";
 import { Login } from "./components/Login.tsx";
-import { NewKnowledgeDocument } from "./components/NewKnowledgeDocument.tsx";
+import { NewPage } from "./components/NewPage.tsx";
 import { OAuthConsent } from "./components/OAuthConsent.tsx";
 import { Settings, type PasskeySummary } from "./components/Settings.tsx";
 import { SourceRecord } from "./components/SourceRecord.tsx";
@@ -63,12 +63,12 @@ function CloseIcon() {
   return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" /></svg>;
 }
 
-type DashboardSelection = { kind: "document"; id: string };
+type DashboardSelection = { kind: "object"; id: string };
 
 function selectionFromLocation(): DashboardSelection | null {
-  const match = window.location.pathname.match(/^\/app\/(documents|pages|assets|records)\/([0-9a-f-]+)/);
+  const match = window.location.pathname.match(/^\/app\/(objects|pages|assets|records)\/([0-9a-f-]+)/);
   if (!match) return null;
-  return { kind: "document", id: match[2]! };
+  return { kind: "object", id: match[2]! };
 }
 
 function sectionFromLocation(): Section {
@@ -84,9 +84,9 @@ export function App() {
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [selected, setSelected] = useState<DashboardSelection | null>(selectionFromLocation);
-  const [selectedDocument, setSelectedDocument] = useState<DashboardDocumentSummary | null>(null);
-  const [creatingDocument, setCreatingDocument] = useState(
-    window.location.pathname === "/app/documents/new",
+  const [selectedObject, setSelectedObject] = useState<DashboardObjectSummary | null>(null);
+  const [creatingPage, setCreatingPage] = useState(
+    window.location.pathname === "/app/objects/new",
   );
   const [navigatorRefresh, setNavigatorRefresh] = useState(0);
   const [section, setSection] = useState<Section>(sectionFromLocation);
@@ -118,8 +118,8 @@ export function App() {
   useEffect(() => {
     const syncLocation = () => {
       setSelected(selectionFromLocation());
-      setSelectedDocument(null);
-      setCreatingDocument(window.location.pathname === "/app/documents/new");
+      setSelectedObject(null);
+      setCreatingPage(window.location.pathname === "/app/objects/new");
       setSection(sectionFromLocation());
       setMobileSidebarOpen(false);
     };
@@ -127,21 +127,21 @@ export function App() {
     return () => window.removeEventListener("popstate", syncLocation);
   }, []);
   useEffect(() => {
-    if (!session || selected?.kind !== "document") {
-      setSelectedDocument(null);
+    if (!session || selected?.kind !== "object") {
+      setSelectedObject(null);
       return;
     }
     const controller = new AbortController();
-    api<DashboardDocumentSummary>(`/api/dashboard/documents/${selected.id}`, {
+    api<DashboardObjectSummary>(`/api/dashboard/objects/${selected.id}`, {
       signal: controller.signal,
-    }).then((document) => {
-      setSelectedDocument(document);
-      if (!window.location.pathname.startsWith("/app/documents/")) {
-        history.replaceState({}, "", `/app/documents/${document.document_id}${window.location.hash}`);
+    }).then((object) => {
+      setSelectedObject(object);
+      if (!window.location.pathname.startsWith("/app/objects/")) {
+        history.replaceState({}, "", `/app/objects/${object.object_id}${window.location.hash}`);
       }
     }).catch((caught: unknown) => {
       if (caught instanceof DOMException && caught.name === "AbortError") return;
-      setMessage(caught instanceof Error ? caught.message : "Could not open document");
+      setMessage(caught instanceof Error ? caught.message : "Could not open object");
     });
     return () => controller.abort();
   }, [selected?.id, selected?.kind, session]);
@@ -224,7 +224,7 @@ export function App() {
     };
   }, [mobileSidebarOpen]);
 
-  const selectedAsset = selected?.kind === "document" && selectedDocument?.document_kind === "asset"
+  const selectedAsset = selected?.kind === "object" && selectedObject?.object_kind === "asset"
     ? assets.find((asset) => asset.id === selected.id) ?? null
     : null;
 
@@ -238,63 +238,72 @@ export function App() {
   if (!session) return <main className="center-card">Verifying owner session…</main>;
   if (session.passkey_count === 0) return <main className="center-card"><h1>Owner passkey missing</h1><p>This installation must always retain at least one owner passkey.</p></main>;
 
-  const openDocument = (document: DashboardDocumentSummary, fragment = "") => {
-    setCreatingDocument(false);
-    setSelected({ kind: "document", id: document.document_id });
-    setSelectedDocument(document);
+  const openObject = (object: DashboardObjectSummary, fragment = "") => {
+    setCreatingPage(false);
+    setSelected({ kind: "object", id: object.object_id });
+    setSelectedObject(object);
     setSection("knowledge");
     setMobileSidebarOpen(false);
-    history.pushState({}, "", `/app/documents/${document.document_id}${fragment}`);
+    history.pushState({}, "", `/app/objects/${object.object_id}${fragment}`);
   };
 
-  const openDocumentId = (documentId: string, fragment = "") => {
-    setCreatingDocument(false);
-    setSelected({ kind: "document", id: documentId });
-    setSelectedDocument(null);
+  const openObjectId = (objectId: string, fragment = "") => {
+    setCreatingPage(false);
+    setSelected({ kind: "object", id: objectId });
+    setSelectedObject(null);
     setSection("knowledge");
     setMobileSidebarOpen(false);
-    history.pushState({}, "", `/app/documents/${documentId}${fragment}`);
+    history.pushState({}, "", `/app/objects/${objectId}${fragment}`);
   };
 
   const openSettings = () => {
-    setCreatingDocument(false);
+    setCreatingPage(false);
     setSection("settings");
     setMobileSidebarOpen(false);
     if (window.location.pathname !== "/app/settings") history.pushState({}, "", "/app/settings");
   };
 
   const openHistory = () => {
-    setCreatingDocument(false);
+    setCreatingPage(false);
     setSection("history");
     setMobileSidebarOpen(false);
     history.pushState({}, "", "/app/history");
   };
 
   const openAutomations = () => {
-    setCreatingDocument(false);
+    setCreatingPage(false);
     setSection("automations");
     setMobileSidebarOpen(false);
     history.pushState({}, "", "/app/automations");
   };
 
   const openKnowledge = () => {
-    setCreatingDocument(false);
+    setCreatingPage(false);
     setSection("knowledge");
     setMobileSidebarOpen(false);
-    history.pushState({}, "", selected ? `/app/documents/${selected.id}` : "/app");
+    history.pushState({}, "", selected ? `/app/objects/${selected.id}` : "/app");
   };
 
-  const followDocumentLink = (event: ReactMouseEvent<HTMLDivElement>) => {
+  const createPage = () => {
+    setSelected(null);
+    setSelectedObject(null);
+    setCreatingPage(true);
+    setSection("knowledge");
+    setMobileSidebarOpen(false);
+    history.pushState({}, "", "/app/objects/new");
+  };
+
+  const followObjectLink = (event: ReactMouseEvent<HTMLDivElement>) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     const target = event.target instanceof Element ? event.target.closest("a") : null;
     if (!(target instanceof HTMLAnchorElement) || target.target === "_blank") return;
     const url = new URL(target.href, window.location.href);
     const match = url.origin === window.location.origin
-      ? /^\/app\/(?:documents|pages|assets|records)\/([0-9a-f-]{36})$/.exec(url.pathname)
+      ? /^\/app\/(?:objects|pages|assets|records)\/([0-9a-f-]{36})$/.exec(url.pathname)
       : null;
     if (!match) return;
     event.preventDefault();
-    openDocumentId(match[1]!, url.hash);
+    openObjectId(match[1]!, url.hash);
   };
 
   const startSidebarResize = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -313,7 +322,7 @@ export function App() {
     event.preventDefault();
   };
 
-  return <div className={`shell${desktopSidebarOpen ? "" : " sidebar-collapsed"}`} style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties} onClickCapture={followDocumentLink}>
+  return <div className={`shell${desktopSidebarOpen ? "" : " sidebar-collapsed"}`} style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties} onClickCapture={followObjectLink}>
     <header className="mobile-topbar">
       <button
         ref={mobileSidebarToggleRef}
@@ -337,11 +346,12 @@ export function App() {
     <aside ref={sidebarRef} id="knowledge-sidebar" className={`sidebar${mobileSidebarOpen ? " mobile-open" : ""}`} aria-label="Knowledge browser">
       <div className="sidebar-brand"><div className="brand-mark small">cu</div><div className="sidebar-brand-copy"><strong>context-use</strong><span>Private workspace</span></div><button type="button" className="sidebar-collapse-button" aria-label="Close knowledge browser" onClick={() => setDesktopSidebarOpen(false)}><SidebarToggleIcon /></button><button ref={mobileSidebarCloseRef} type="button" className="sidebar-close-button" aria-label="Close knowledge browser" onClick={() => setMobileSidebarOpen(false)}><CloseIcon /></button></div>
       <label className="sidebar-search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5" /><path d="m12.25 12.25 4 4" /></svg><input ref={searchRef} className="search" aria-label="Search knowledge" placeholder="Search knowledge…" value={query} onChange={(event) => setQuery(event.target.value)} /><kbd>⌘K</kbd></label>
-      <DocumentNavigator
+      <ObjectNavigator
         query={query}
-        selectedId={section === "knowledge" && selected?.kind === "document" ? selected.id : null}
+        selectedId={section === "knowledge" && selected?.kind === "object" ? selected.id : null}
         refreshToken={navigatorRefresh}
-        onSelect={openDocument}
+        onCreate={createPage}
+        onSelect={openObject}
       />
       <footer>
         <nav className="sidebar-section-nav" aria-label="Workspace utilities">
@@ -365,7 +375,7 @@ export function App() {
       onKeyDown={resizeSidebarWithKeyboard}
       onDoubleClick={() => setSidebarWidth(DEFAULT_SIDEBAR_WIDTH)}
     />
-    {section === "settings" ? <Settings passkeys={session.passkeys} onPasskeysChanged={loadSession} /> : section === "automations" ? <Automations onOpenDocument={(documentId) => openDocumentId(documentId)} /> : section === "history" ? <KnowledgeHistory onOpenDocument={(documentId) => openDocumentId(documentId)} /> : creatingDocument ? <NewKnowledgeDocument onCancel={openKnowledge} onCreated={(documentId) => { setNavigatorRefresh((value) => value + 1); openDocumentId(documentId); }} /> : selected && selectedDocument?.document_kind === "knowledge" ? <Editor pageId={selected.id} onChanged={async () => { setNavigatorRefresh((value) => value + 1); }} onDeleted={async () => { setSelected(null); setSelectedDocument(null); history.pushState({}, "", "/app"); setNavigatorRefresh((value) => value + 1); setMessage("Document and retained revisions deleted. A body-free tombstone remains in Change history."); }} onOpenDocument={openDocument} /> : selected && selectedDocument?.document_kind === "record" ? <SourceRecord documentId={selected.id} /> : selectedAsset ? <AssetDetails key={selectedAsset.id} asset={selectedAsset} onChanged={async () => { await loadAssets(); setNavigatorRefresh((value) => value + 1); }} onDeleted={async () => { setSelected(null); setSelectedDocument(null); history.pushState({}, "", "/app"); await loadAssets(); setNavigatorRefresh((value) => value + 1); setMessage("Asset deleted. S3 versioning retains a recoverable noncurrent copy for the configured safety period."); }} /> : selectedDocument ? <DocumentDetails document={selectedDocument} /> : selected ? <main className="editor-empty">Loading document…</main> : <main className="editor-empty"><div className="empty-content"><span className="empty-kicker"><i />Private by default</span><h1>Your context,<br />ready when you need it.</h1><p>Search your knowledge, open a document, then follow its links and backlinks. Your content stays private until you explicitly publish an exact version.</p><div className="empty-details"><span>Search-first</span><span>Hyperlinked</span><span>Versioned history</span></div></div><div className="empty-sigil" aria-hidden="true"><span>c</span><span>u</span></div></main>}
+    {section === "settings" ? <Settings passkeys={session.passkeys} onPasskeysChanged={loadSession} /> : section === "automations" ? <Automations onOpenObject={openObjectId} /> : section === "history" ? <KnowledgeHistory onOpenObject={openObjectId} /> : creatingPage ? <NewPage onCancel={openKnowledge} onCreated={(objectId) => { setNavigatorRefresh((value) => value + 1); openObjectId(objectId); }} /> : selected && selectedObject?.object_kind === "page" ? <Editor pageId={selected.id} onChanged={async () => { setNavigatorRefresh((value) => value + 1); }} onDeleted={async () => { setSelected(null); setSelectedObject(null); history.pushState({}, "", "/app"); setNavigatorRefresh((value) => value + 1); setMessage("Page and retained revisions deleted. A body-free tombstone remains in Change history."); }} onOpenObject={openObject} /> : selected && selectedObject?.object_kind === "record" ? <SourceRecord objectId={selected.id} /> : selectedAsset ? <AssetDetails key={selectedAsset.id} asset={selectedAsset} onChanged={async () => { await loadAssets(); setNavigatorRefresh((value) => value + 1); }} onDeleted={async () => { setSelected(null); setSelectedObject(null); history.pushState({}, "", "/app"); await loadAssets(); setNavigatorRefresh((value) => value + 1); setMessage("Asset deleted. S3 versioning retains a recoverable noncurrent copy for the configured safety period."); }} /> : selectedObject ? <ObjectDetails object={selectedObject} /> : selected ? <main className="editor-empty">Loading object…</main> : <main className="editor-empty"><div className="empty-content"><span className="empty-kicker"><i />Private by default</span><h1>Your context,<br />ready when you need it.</h1><p>Search your knowledge, open an object, then follow its links and backlinks. Your content stays private until you explicitly publish an exact version.</p><div className="empty-details"><span>Search-first</span><span>Hyperlinked</span><span>Versioned history</span></div></div><div className="empty-sigil" aria-hidden="true"><span>c</span><span>u</span></div></main>}
     {message && <div className="toast">{message}</div>}
   </div>;
 }

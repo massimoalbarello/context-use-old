@@ -5,7 +5,7 @@ import {
   MANAGED_INTEGRATIONS,
 } from "../../../nango-integrations/catalog.ts";
 import {
-  MAX_MARKDOWN_DOCUMENT_BYTES,
+  MAX_MARKDOWN_BLOB_BYTES,
   type SourceRecordIdentity,
   type SourceRecordWriter,
 } from "@context-use/database";
@@ -40,8 +40,8 @@ const activeNangoPipelineRecordSchema = z.object({
   updated_at: z.iso.datetime({ offset: true }),
   participants: z.array(z.string().min(1)),
   body: z.string().min(1).refine(
-    (body) => Buffer.byteLength(body, "utf8") <= MAX_MARKDOWN_DOCUMENT_BYTES,
-    "Nango record Markdown exceeds the document size limit",
+    (body) => Buffer.byteLength(body, "utf8") <= MAX_MARKDOWN_BLOB_BYTES,
+    "Nango record Markdown exceeds the record size limit",
   ),
   _nango_metadata: recordMetadataSchema,
 }).strict();
@@ -92,7 +92,7 @@ const CONNECTION_PAGE_SIZE = 2_000;
 const DEFAULT_RECORD_LIMIT = 1;
 const MAX_RECORD_LIMIT = 100;
 const DEFAULT_RESPONSE_BYTE_BUDGET = 5_000_000;
-const MAX_UPSTREAM_RESPONSE_BYTES = MAX_MARKDOWN_DOCUMENT_BYTES + 4 * 1024 * 1024;
+const MAX_UPSTREAM_RESPONSE_BYTES = MAX_MARKDOWN_BLOB_BYTES + 4 * 1024 * 1024;
 const RESPONSE_DECODE_BUFFER_BYTES = 64 * 1024;
 const MAX_CHECKPOINT_STREAMS = 1_000;
 const RECORD_FRESHNESS_MS = 30 * 24 * 60 * 60 * 1_000;
@@ -117,7 +117,7 @@ export const PIPELINE_RECORD_SOURCES: PipelineRecordSource[] = MANAGED_FUNCTIONS
 export type NangoRecord = {
   action: "added" | "updated" | "deleted";
   markdown: string | null;
-  document_id?: string;
+  object_id?: string;
   current_revision_id?: string | null;
   reference?: string;
 };
@@ -280,9 +280,9 @@ function persistedRecord(
 }
 
 const MAX_PERSISTED_IDENTITY: SourceRecordIdentity = {
-  document_id: "00000000-0000-4000-8000-000000000000",
+  object_id: "00000000-0000-4000-8000-000000000000",
   current_revision_id: "00000000-0000-4000-8000-000000000000",
-  reference: "context-use://document/00000000-0000-4000-8000-000000000000",
+  reference: "context-use://object/00000000-0000-4000-8000-000000000000",
 };
 
 async function pause(milliseconds: number): Promise<void> {

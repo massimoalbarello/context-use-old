@@ -1,4 +1,4 @@
-import type { ObjectStorage } from "./storage.ts";
+import type { BlobStorage } from "./storage.ts";
 import { AssetNotFoundError, contentDisposition, mayRenderInline } from "./storage.ts";
 import { securityHeaders } from "./security.ts";
 
@@ -10,7 +10,7 @@ type AssetMetadata = {
 };
 
 type AssetContent = AssetMetadata & { s3_object_key: string };
-type AssetReader = Pick<ObjectStorage, "read">;
+type AssetReader = Pick<BlobStorage, "read">;
 
 type ParsedRange = { start: number; end: number } | "unsatisfiable" | undefined;
 

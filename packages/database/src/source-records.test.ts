@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { Pool } from "pg";
-import { markdownObjectMetadata, type MarkdownObjectStore } from "./documents.ts";
+import { markdownBlobMetadata, type MarkdownBlobStore } from "./markdown-blobs.ts";
 import { SourceRecordRepository } from "./source-records.ts";
 
 describe("source record lock ordering", () => {
   test("takes the connector identity lock before record row locks", async () => {
     const calls: string[] = [];
-    const store: MarkdownObjectStore = {
+    const store: MarkdownBlobStore = {
       async write(revisionId, markdown) {
-        return markdownObjectMetadata(revisionId, markdown);
+        return markdownBlobMetadata(revisionId, markdown);
       },
       async read() {
         throw new Error("not used");

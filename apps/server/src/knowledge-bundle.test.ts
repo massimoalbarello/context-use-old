@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import {
   KNOWLEDGE_BUNDLE_DATASETS,
   type KnowledgeBundleExportRecord,
-  type KnowledgeBundleObject,
+  type KnowledgeBundleBlob,
   type KnowledgeBundleRepository,
 } from "@context-use/database";
 import {
@@ -20,17 +20,17 @@ const targetId = "33333333-3333-4333-8333-333333333333";
 function fixture() {
   const objectBody = Buffer.concat([
     Buffer.alloc(70_000, 1),
-    Buffer.from(`context-use://document/${targetId}`),
+    Buffer.from(`context-use://object/${targetId}`),
   ]);
   const record: KnowledgeBundleExportRecord = {
     dataset: "hypermedia_documents",
     ordinal: 1,
     record: { id: documentId, linked_document_id: targetId },
   };
-  const object: KnowledgeBundleObject = {
+  const object: KnowledgeBundleBlob = {
     ordinal: 1,
-    object_kind: "asset",
-    object_key: `objects/${documentId}`,
+    blob_kind: "asset",
+    blob_key: `blobs/${documentId}`,
     size_bytes: objectBody.byteLength,
     content_hash: createHash("sha256").update(objectBody).digest("hex"),
     content_type: "application/octet-stream",
@@ -38,7 +38,7 @@ function fixture() {
   return { objectBody, record, object };
 }
 
-function exportRepository(record: KnowledgeBundleExportRecord, object: KnowledgeBundleObject) {
+function exportRepository(record: KnowledgeBundleExportRecord, object: KnowledgeBundleBlob) {
   return {
     exportDatasets: async () => KNOWLEDGE_BUNDLE_DATASETS.map((dataset) => ({
       dataset,
@@ -47,17 +47,17 @@ function exportRepository(record: KnowledgeBundleExportRecord, object: Knowledge
     exportRecords: async (_id: string, dataset: string, after: number) => (
       dataset === record.dataset && after === 0 ? [record] : []
     ),
-    exportObjects: async (_id: string, after: number) => after === 0 ? [object] : [],
+    exportBlobs: async (_id: string, after: number) => after === 0 ? [object] : [],
     updateExportProgress: async () => undefined,
   } as unknown as KnowledgeBundleRepository;
 }
 
 describe("full knowledge bundle", () => {
-  test("round-trips original UUID records and verifies a streamed object frame", async () => {
+  test("round-trips original UUID records and verifies a streamed byte frame", async () => {
     const { objectBody, record, object } = fixture();
     const exportStorage = {
       read: async (key: string) => {
-        expect(key).toBe(object.object_key);
+        expect(key).toBe(object.blob_key);
         return new Blob([objectBody]);
       },
     } as unknown as BrokeredStorage;
@@ -72,13 +72,13 @@ describe("full knowledge bundle", () => {
     const parts = [archive.slice(0, 31), archive.slice(31, 65_579), archive.slice(65_579)];
     const stored = new Map(parts.map((part, index) => [`imports/test/parts/${index}`, part]));
     const importedRecords: KnowledgeBundleExportRecord[] = [];
-    const importedObjects: KnowledgeBundleObject[] = [];
+    const importedObjects: KnowledgeBundleBlob[] = [];
     let completed: { recordsTotal: number; objectsTotal: number; objectBytes: number } | null = null;
     const importRepository = {
       insertImportRecords: async (_id: string, records: KnowledgeBundleExportRecord[]) => {
         importedRecords.push(...records);
       },
-      insertImportObject: async (_id: string, value: KnowledgeBundleObject) => {
+      insertImportBlob: async (_id: string, value: KnowledgeBundleBlob) => {
         importedObjects.push(value);
       },
       updateImportProgress: async () => undefined,
@@ -118,7 +118,7 @@ describe("full knowledge bundle", () => {
       parts: [{ object_key: "imports/test/parts/0" }],
       repository: {
         insertImportRecords: async () => undefined,
-        insertImportObject: async () => undefined,
+        insertImportBlob: async () => undefined,
         updateImportProgress: async () => undefined,
         finishImportValidation: async () => undefined,
       } as unknown as KnowledgeBundleRepository,

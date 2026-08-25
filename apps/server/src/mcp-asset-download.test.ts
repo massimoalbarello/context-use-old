@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import type { DocumentAssetRepository } from "@context-use/database";
+import type { AssetRepository } from "@context-use/database";
 import { createAssetCapability, verifyAssetCapability } from "./mcp-asset-capability.ts";
 import { createMcpAssetDownloadHandler } from "./mcp-asset-download.ts";
-import type { ByteRange, ObjectStorage } from "./storage.ts";
+import type { ByteRange, BlobStorage } from "./storage.ts";
 
 const assetId = "11111111-1111-4111-8111-111111111111";
 const bytes = new TextEncoder().encode("private asset bytes");
@@ -10,25 +10,25 @@ const principal = { clientId: "mcp-client", sessionId: "mcp-session" };
 
 function fixture() {
   const asset = {
-    document_id: assetId,
+    object_id: assetId,
     filename: "private.pdf",
     content_type: "application/pdf",
     size_bytes: bytes.byteLength,
     content_hash: "a".repeat(64),
-    object_key: `objects/${assetId}`,
+    blob_key: `blobs/${assetId}`,
   };
   const assets = {
     async getForStorage(id: string) {
       return id === assetId ? asset : null;
     },
-  } as unknown as DocumentAssetRepository;
-  const reads: Array<{ objectKey: string; range?: ByteRange }> = [];
+  } as unknown as AssetRepository;
+  const reads: Array<{ blobKey: string; range?: ByteRange }> = [];
   const storage = {
-    async read(objectKey: string, range?: ByteRange) {
-      reads.push({ objectKey, ...(range ? { range } : {}) });
+    async read(blobKey: string, range?: ByteRange) {
+      reads.push({ blobKey, ...(range ? { range } : {}) });
       return new Blob([range ? bytes.slice(range.start, range.end + 1) : bytes]);
     },
-  } as unknown as ObjectStorage;
+  } as unknown as BlobStorage;
   const handler = createMcpAssetDownloadHandler(assets, storage, async () => true);
   return { handler, reads };
 }
@@ -61,7 +61,7 @@ describe("MCP asset download capabilities", () => {
     expect(response.status).toBe(206);
     expect(await response.text()).toBe("private");
     expect(response.headers.get("content-disposition")).toBe('attachment; filename="private.pdf"');
-    expect(reads).toEqual([{ objectKey: `objects/${assetId}`, range: { start: 0, end: 6 } }]);
+    expect(reads).toEqual([{ blobKey: `blobs/${assetId}`, range: { start: 0, end: 6 } }]);
   });
 
   test("rejects another asset and an upload capability", async () => {
@@ -89,7 +89,7 @@ describe("MCP asset download capabilities", () => {
 
   test("rejects a signed capability after its MCP lineage is revoked", async () => {
     const capability = createAssetCapability("download", assetId, principal);
-    const revoked = createMcpAssetDownloadHandler({} as DocumentAssetRepository, {} as ObjectStorage, async () => false);
+    const revoked = createMcpAssetDownloadHandler({} as AssetRepository, {} as BlobStorage, async () => false);
 
     expect((await revoked(downloadRequest(capability.token), assetId)).status).toBe(401);
   });

@@ -2,11 +2,11 @@ import { describe, expect, test } from "bun:test";
 import {
   defaultHypermediaBootstrapTemplate,
   type HypermediaBootstrapAllocation,
-  type HypermediaBootstrapDocument,
+  type HypermediaBootstrapPage,
 } from "@context-use/database";
 import {
   applyHypermediaBootstrap,
-  hypermediaBootstrapDocuments,
+  hypermediaBootstrapPages,
   synchronizeGlobalGuide,
 } from "./hypermedia-bootstrap-command.ts";
 
@@ -28,18 +28,24 @@ function allocations(): HypermediaBootstrapAllocation[] {
 
 describe("hypermedia bootstrap command", () => {
   test("maps the embedded contract to five stable semantic allocations", async () => {
-    const documents = hypermediaBootstrapDocuments(defaultHypermediaBootstrapTemplate, allocations());
+    const documents = hypermediaBootstrapPages(defaultHypermediaBootstrapTemplate, allocations());
 
     expect(documents.map(({ document_kind }) => document_kind)).toEqual([...kinds]);
     expect(documents[0]?.input.title).toBe("AGENTS.md");
     expect(documents[0]?.input.body_markdown).toContain("# Hypermedia maintenance guide");
+    expect(documents[0]?.input.body_markdown).toContain("Every object is a\npage, record or asset");
+    expect(documents[0]?.input.body_markdown).toContain("context-use://object/<uuid>");
+    expect(documents[0]?.input.body_markdown).not.toContain("context-use://document/");
     expect(documents[1]?.input.title).toBe("Activity distiller");
+    expect(documents[1]?.input.body_markdown).toContain("stable object reference");
     expect(documents[4]?.input.title).toBe("Diary composer state");
+    expect(documents[3]?.input.body_markdown).toContain("`object_id`");
+    expect(documents[3]?.input.body_markdown).toContain("`PAGE_DELTA_UNAVAILABLE`");
   });
 
   test("writes documents before atomically wiring operational identities and finalizing", async () => {
     const events: string[] = [];
-    const written: HypermediaBootstrapDocument[] = [];
+    const written: HypermediaBootstrapPage[] = [];
     const registrations: Array<Record<string, unknown>> = [];
     const completedAt = new Date("2026-08-24T12:00:00.000Z");
     const result = await applyHypermediaBootstrap({
@@ -47,7 +53,7 @@ describe("hypermedia bootstrap command", () => {
       allocations: allocations(),
       repositories: {
         bootstrap: {
-          async ensureDocument(document) {
+          async ensurePage(document) {
             events.push(`document:${document.document_kind}`);
             written.push(document);
           },
@@ -92,16 +98,16 @@ describe("hypermedia bootstrap command", () => {
   });
 
   test("rejects incomplete or extra allocation sets", async () => {
-    expect(() => hypermediaBootstrapDocuments(defaultHypermediaBootstrapTemplate, allocations().slice(0, 4)))
+    expect(() => hypermediaBootstrapPages(defaultHypermediaBootstrapTemplate, allocations().slice(0, 4)))
       .toThrow("diary_composer_state");
-    expect(() => hypermediaBootstrapDocuments(defaultHypermediaBootstrapTemplate, [
+    expect(() => hypermediaBootstrapPages(defaultHypermediaBootstrapTemplate, [
       ...allocations(),
       { ...allocations()[0]!, document_kind: "unexpected" as never },
     ])).toThrow("unexpected allocation");
   });
 
   test("leaves an existing configured guide unchanged when it matches the embedded template", async () => {
-    const guide = defaultHypermediaBootstrapTemplate.documents.global_guide;
+    const guide = defaultHypermediaBootstrapTemplate.pages.global_guide;
     const documentId = crypto.randomUUID();
     const revisionId = crypto.randomUUID();
     let updates = 0;
@@ -124,10 +130,10 @@ describe("hypermedia bootstrap command", () => {
             };
           },
         },
-        documents: {
+        pages: {
           async get() {
             return {
-              document_id: documentId,
+              object_id: documentId,
               current_revision_id: revisionId,
               public_id: null,
               revision_number: 4,
@@ -149,12 +155,12 @@ describe("hypermedia bootstrap command", () => {
       },
     });
 
-    expect(result).toEqual({ document_id: documentId, revision_number: 4, updated: false });
+    expect(result).toEqual({ object_id: documentId, revision_number: 4, updated: false });
     expect(updates).toBe(0);
   });
 
   test("replaces a customized configured guide with a new managed revision", async () => {
-    const guide = defaultHypermediaBootstrapTemplate.documents.global_guide;
+    const guide = defaultHypermediaBootstrapTemplate.pages.global_guide;
     const documentId = crypto.randomUUID();
     const revisionId = crypto.randomUUID();
     const updates: Array<Record<string, unknown>> = [];
@@ -177,10 +183,10 @@ describe("hypermedia bootstrap command", () => {
             };
           },
         },
-        documents: {
+        pages: {
           async get() {
             return {
-              document_id: documentId,
+              object_id: documentId,
               current_revision_id: revisionId,
               public_id: null,
               revision_number: 7,
@@ -197,7 +203,7 @@ describe("hypermedia bootstrap command", () => {
           async update(id, update, actor) {
             updates.push({ id, update, actor });
             return {
-              document_id: documentId,
+              object_id: documentId,
               current_revision_id: crypto.randomUUID(),
               public_id: null,
               revision_number: 8,
@@ -215,7 +221,7 @@ describe("hypermedia bootstrap command", () => {
       },
     });
 
-    expect(result).toEqual({ document_id: documentId, revision_number: 8, updated: true });
+    expect(result).toEqual({ object_id: documentId, revision_number: 8, updated: true });
     expect(updates).toEqual([{
       id: documentId,
       update: {

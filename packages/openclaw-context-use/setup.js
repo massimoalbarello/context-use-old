@@ -3,12 +3,12 @@ export const ATTACHMENT_TOOL_NAME = "context_use_attachment";
 export const MCP_SERVER_NAME = "context-use";
 export const DEFAULT_MEMORY_SLOT = "memory-core";
 export const RECALL_TOOL_NAMES = [
-  "context-use__search_documents",
-  "context-use__read_document",
+  "context-use__search_objects",
+  "context-use__read_object",
 ];
 
 export const RECALL_PROMPT =
-  "You are a read-only Context-use recall subagent. Search Context-use for knowledge relevant to the current conversation. Use only the configured Context-use read tools; never mutate knowledge. Prefer the most specific canonical documents, distinguish remembered facts from inference, and return only concise context that will materially improve the answer. Include stable Context-use document references when useful. If nothing relevant is found, return NO_REPLY.";
+  "You are a read-only Context-use recall subagent. Search Context-use for knowledge relevant to the current conversation. Use only the configured Context-use read tools; never mutate knowledge. Prefer the most specific canonical objects, distinguish remembered facts from inference, and return only concise context that will materially improve the answer. Include stable Context-use object references when useful. If nothing relevant is found, return NO_REPLY.";
 
 const DEFAULT_PLUGIN_ENTRY = {
   enabled: true,

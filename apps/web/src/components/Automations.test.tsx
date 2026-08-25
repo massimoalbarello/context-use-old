@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import type { DashboardDocumentSummary } from "@context-use/shared";
+import type { DashboardObjectSummary } from "@context-use/shared";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AutomationList, type DashboardAutomation } from "./Automations.tsx";
 
-const document: DashboardDocumentSummary = {
-  document_id: "11111111-1111-4111-8111-111111111111",
-  document_kind: "knowledge",
+const document: DashboardObjectSummary = {
+  object_id: "11111111-1111-4111-8111-111111111111",
+  object_kind: "page",
   authority: "knowledge",
   representation: "markdown",
   lifecycle: "active",
@@ -30,7 +30,7 @@ describe("automation registry dashboard", () => {
     }];
     const html = renderToStaticMarkup(createElement(AutomationList, {
       automations,
-      onOpenDocument: () => undefined,
+      onOpenObject: () => undefined,
     }));
 
     expect(html).toContain("Activity distiller");
@@ -45,7 +45,7 @@ describe("automation registry dashboard", () => {
         name: "Paused workflow",
         instructions: null,
       }],
-      onOpenDocument: () => undefined,
+      onOpenObject: () => undefined,
     }));
 
     expect(html).toContain("Paused workflow");

@@ -2,14 +2,14 @@ import { afterAll, describe, expect, spyOn, test } from "bun:test";
 import { makeSignature } from "better-auth/crypto";
 import { Client, Pool } from "pg";
 import {
-  DocumentAssetRepository,
+  AssetRepository,
   StoragePublicationRepository,
 } from "@context-use/database";
 import { disposableDatabaseUrl } from "@context-use/database/disposable-database";
 import { config } from "./config.ts";
 import { csrfToken } from "./security.ts";
 import { createStorageBrokerApp } from "./storage-app.ts";
-import { MemoryObjectStorage } from "./test-object-storage.ts";
+import { MemoryBlobStorage } from "./test-object-storage.ts";
 
 const databaseUrl = await disposableDatabaseUrl();
 const requireDatabase = (): string => {
@@ -23,11 +23,11 @@ const requireDatabase = (): string => {
 const enabled = process.env.TEST_APP_DATABASE_URL === "1"
   && process.env.TEST_AUTH_BOUNDARY_ISOLATED === "1";
 const testStoragePool = enabled ? new Pool({ connectionString: config.STORAGE_DATABASE_URL }) : null;
-const testStorage = enabled ? new MemoryObjectStorage() : null;
+const testStorage = enabled ? new MemoryBlobStorage() : null;
 if (enabled) {
   const storageBroker = createStorageBrokerApp({
     storage: testStorage!,
-    privateAssets: new DocumentAssetRepository(testStoragePool!),
+    privateAssets: new AssetRepository(testStoragePool!),
     publications: new StoragePublicationRepository(testStoragePool!),
     tokens: {
       dashboard: config.STORAGE_DASHBOARD_TOKEN,
@@ -72,7 +72,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       ["/api/dashboard/publication-entrypoint", "GET"],
       ["/api/dashboard/publication-entrypoint/candidates", "GET"],
       ["/api/dashboard/publication-entrypoint", "PUT"],
-      ["/api/dashboard/knowledge-documents/11111111-1111-4111-8111-111111111111/publication-preview", "GET"],
+      ["/api/dashboard/pages/11111111-1111-4111-8111-111111111111/publication-preview", "GET"],
     ] as const) {
       const canonical = await application!.handle(new Request(`http://localhost:3000${path}`, {
         method,
@@ -105,7 +105,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
 
   test("bearer credentials cannot create or confirm permanent page deletions", async () => {
     const intent = await application!.handle(new Request(
-      "http://localhost:3000/api/dashboard/knowledge-documents/11111111-1111-4111-8111-111111111111/deletion-intents",
+      "http://localhost:3000/api/dashboard/pages/11111111-1111-4111-8111-111111111111/deletion-intents",
       {
         method: "POST",
         headers: { authorization: "Bearer forged", "content-type": "application/json" },
@@ -186,7 +186,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           method: "GET",
-          pathname: "/api/dashboard/documents",
+          pathname: "/api/dashboard/objects",
           kind: "read",
           headers: {},
         }),
@@ -259,12 +259,12 @@ describeApplication("HTTP credential and OAuth boundary", () => {
 
   test("private asset access requires a dashboard session on the dashboard origin", async () => {
     for (const path of [
-      "/api/dashboard/documents",
-      "/api/dashboard/documents/11111111-1111-4111-8111-111111111111",
-      "/api/dashboard/documents/11111111-1111-4111-8111-111111111111/neighborhood",
+      "/api/dashboard/objects",
+      "/api/dashboard/objects/11111111-1111-4111-8111-111111111111",
+      "/api/dashboard/objects/11111111-1111-4111-8111-111111111111/neighborhood",
       "/api/dashboard/source-records/11111111-1111-4111-8111-111111111111",
-      "/api/dashboard/knowledge-documents/11111111-1111-4111-8111-111111111111",
-      "/api/dashboard/knowledge-documents/11111111-1111-4111-8111-111111111111/history",
+      "/api/dashboard/pages/11111111-1111-4111-8111-111111111111",
+      "/api/dashboard/pages/11111111-1111-4111-8111-111111111111/history",
     ]) {
       const dashboard = await application!.handle(new Request(`http://localhost:3000${path}`));
       expect(dashboard.status).toBe(401);
@@ -312,7 +312,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       "SHA-256",
       new TextEncoder().encode(body),
     )).toString("hex");
-    const objectKey = `documents/public/${artifactId}.md`;
+    const blobKey = `documents/public/${artifactId}.md`;
     const retainedAlias = `/p/retained-${publicId.slice(0, 8)}`;
     let previousEntrypoint: { entrypoint_public_id: string | null; updated_at: Date | null } | undefined;
     await client.connect();
@@ -348,7 +348,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
         `INSERT INTO public_artifact_id_reservations(
            artifact_id,body_object_key,allocation_kind,allocation_id
          ) VALUES ($1,$2,'retained_publication',$3)`,
-        [artifactId, objectKey, retainedSourceId],
+        [artifactId, blobKey, retainedSourceId],
       );
       await client.query(
         `INSERT INTO public_representation_token_reservations(
@@ -377,7 +377,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
           revisionId,
           Buffer.byteLength(body),
           bodyHash,
-          objectKey,
+          blobKey,
           "c".repeat(64),
           retainedSourceId,
           crypto.randomUUID(),
@@ -401,7 +401,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       await client.query("COMMIT");
       await testStorage!.write({
         id: artifactId,
-        objectKey,
+        blobKey,
         filename: `${artifactId}.md`,
         contentType: "text/markdown; charset=utf-8",
         sizeBytes: Buffer.byteLength(body),
@@ -414,7 +414,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       const htmlText = await html.text();
       expect(htmlText).toContain("PUBLIC-PAGE-CANARY");
       expect(htmlText).not.toContain(representationToken);
-      expect(htmlText).not.toContain(objectKey);
+      expect(htmlText).not.toContain(blobKey);
       expect(markdown.status).toBe(200);
       expect(await markdown.text()).toContain("A page identified only by its stable UUID.");
       expect(markdown.headers.get("link")).toBe(
@@ -463,7 +463,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       await client.query("DELETE FROM knowledge_pages WHERE id=$1", [pageId]).catch(() => undefined);
       await client.query("COMMIT").catch(() => undefined);
       await client.end().catch(() => undefined);
-      await testStorage!.delete(objectKey).catch(() => undefined);
+      await testStorage!.delete(blobKey).catch(() => undefined);
     }
   }, 15_000);
 

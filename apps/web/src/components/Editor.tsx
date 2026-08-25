@@ -1,17 +1,17 @@
 import { useEffect, useState } from "react";
-import type { DashboardDocumentSummary } from "@context-use/shared";
+import type { DashboardObjectSummary } from "@context-use/shared";
 import { api } from "../api.ts";
 import { confirmPageDeletion } from "../page-deletion-auth.ts";
 import { confirmPublicationChange } from "../publication-auth.ts";
 import { isPublishedPageOutdated } from "../publication-status.ts";
 import type {
-  KnowledgeDocumentHistory,
-  KnowledgeDocumentPage,
+  KnowledgePageHistory,
+  KnowledgePage,
   PageVersionDiff,
   Version,
 } from "../types.ts";
 import { ActionDialog } from "./ActionDialog.tsx";
-import { DocumentNeighborhood } from "./DocumentNeighborhood.tsx";
+import { ObjectNeighborhood } from "./ObjectNeighborhood.tsx";
 import { PublicationDialog } from "./PublicationDialog.tsx";
 
 const diffFieldLabels = {
@@ -117,7 +117,7 @@ function VersionComparison({
     setError("");
     try {
       const from = previousVersionNumber === null ? "" : `?from=${previousVersionNumber}`;
-      setDiff(await api<PageVersionDiff>(`/api/dashboard/knowledge-documents/${pageId}/versions/${versionNumber}/diff${from}`));
+      setDiff(await api<PageVersionDiff>(`/api/dashboard/pages/${pageId}/versions/${versionNumber}/diff${from}`));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Comparison failed");
     } finally {
@@ -142,14 +142,14 @@ export function Editor({
   pageId,
   onChanged,
   onDeleted,
-  onOpenDocument,
+  onOpenObject,
 }: {
   pageId: string;
   onChanged: () => Promise<void> | void;
   onDeleted: () => Promise<void> | void;
-  onOpenDocument: (document: DashboardDocumentSummary) => void;
+  onOpenObject: (object: DashboardObjectSummary) => void;
 }) {
-  const [page, setPage] = useState<KnowledgeDocumentPage | null>(null);
+  const [page, setPage] = useState<KnowledgePage | null>(null);
   const [history, setHistory] = useState<Version[]>([]);
   const [historyHasMore, setHistoryHasMore] = useState(false);
   const [draft, setDraft] = useState({ title: "", summary: "", body_markdown: "" });
@@ -169,8 +169,8 @@ export function Editor({
 
   const load = async (preserveDraft = false) => {
     const [next, historyPage] = await Promise.all([
-      api<KnowledgeDocumentPage>(`/api/dashboard/knowledge-documents/${pageId}`),
-      api<KnowledgeDocumentHistory>(`/api/dashboard/knowledge-documents/${pageId}/history`),
+      api<KnowledgePage>(`/api/dashboard/pages/${pageId}`),
+      api<KnowledgePageHistory>(`/api/dashboard/pages/${pageId}/history`),
     ]);
     setPage(next);
     if (!preserveDraft) setDraft({ title: next.title, summary: next.summary, body_markdown: next.body_markdown });
@@ -232,7 +232,7 @@ export function Editor({
   const save = async () => {
     setMessage("");
     try {
-      const saved = await api<KnowledgeDocumentPage>(`/api/dashboard/knowledge-documents/${page.id}`, {
+      const saved = await api<KnowledgePage>(`/api/dashboard/pages/${page.id}`, {
         method: "PUT",
         body: JSON.stringify({ ...draft, commit_message: commit, expected_revision_number: page.version_number }),
       });
@@ -251,7 +251,7 @@ export function Editor({
     setArchiveWorking(true);
     setArchiveError("");
     try {
-      await api(`/api/dashboard/knowledge-documents/${page.id}/archive`, {
+      await api(`/api/dashboard/pages/${page.id}/archive`, {
         method: "POST",
         body: JSON.stringify({ commit_message: archiveCommit.trim(), expected_revision_number: page.version_number }),
       });
@@ -308,7 +308,7 @@ export function Editor({
 
   return <main className="editor">
     <header className="editor-header">
-      <div><span className="document-kicker">Knowledge document</span><h1>{page.title}</h1><p className="knowledge-summary">{page.summary}</p><time className="page-last-edited" dateTime={new Date(lastEditedAt).toISOString()}>Last edited {new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(lastEditedAt))}</time></div>
+      <div><span className="object-kicker">Knowledge page</span><h1>{page.title}</h1><p className="knowledge-summary">{page.summary}</p><time className="page-last-edited" dateTime={new Date(lastEditedAt).toISOString()}>Last edited {new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(lastEditedAt))}</time></div>
       <div className="button-row">
         <PagePublicationStatus
           archivedAt={page.archived_at}
@@ -351,7 +351,7 @@ export function Editor({
     {!isEditing && tab === "preview" && <>
       <article className="rendered" dangerouslySetInnerHTML={{ __html: page.rendered_html ?? "" }} />
     </>}
-    {!isEditing && tab === "links" && <DocumentNeighborhood documentId={page.id} onOpen={onOpenDocument} />}
+    {!isEditing && tab === "links" && <ObjectNeighborhood objectId={page.id} onOpen={onOpenObject} />}
     {!isEditing && tab === "history" && <section className="history-list">
       <header><h2>Version history</h2><p>The latest editable version and the published version are independent. Publishing points the public URL at one exact snapshot.</p></header>
       {historyHasMore && <p className="version-diff-status">Showing the latest 100 retained versions.</p>}

@@ -2,20 +2,20 @@ import {
   AutomationRegistryRepository,
   defaultHypermediaBootstrapTemplate,
   HypermediaBootstrapRepository,
-  KnowledgeDocumentRepository,
+  KnowledgePageRepository,
   KnowledgeSettingsRepository,
   createPool,
   type HypermediaBootstrapAllocation,
-  type HypermediaBootstrapDocument,
-  type HypermediaBootstrapDocumentKind,
+  type HypermediaBootstrapPage,
+  type HypermediaBootstrapPageKind,
   type HypermediaBootstrapTemplate,
 } from "@context-use/database";
-import { BrokeredMarkdownObjectStore } from "./markdown-object-store.ts";
+import { BrokeredMarkdownBlobStore } from "./markdown-blob-store.ts";
 import { BrokeredStorage } from "./storage-client.ts";
 
 type BootstrapRepositories = {
   bootstrap: Pick<HypermediaBootstrapRepository,
-    "ensureDocument" | "complete"
+    "ensurePage" | "complete"
   >;
   settings: Pick<KnowledgeSettingsRepository, "updateGlobalGuide">;
   registry: Pick<AutomationRegistryRepository, "register">;
@@ -23,11 +23,11 @@ type BootstrapRepositories = {
 
 type GuideSynchronizationRepositories = {
   settings: Pick<KnowledgeSettingsRepository, "globalGuide">;
-  documents: Pick<KnowledgeDocumentRepository, "get" | "update">;
+  pages: Pick<KnowledgePageRepository, "get" | "update">;
 };
 
 export type GlobalGuideSynchronization = {
-  document_id: string;
+  object_id: string;
   revision_number: number;
   updated: boolean;
 };
@@ -37,39 +37,39 @@ const MANAGED_GUIDE_ACTOR = {
   subject: "context-use-managed-global-guide/v1",
 };
 
-function documentInput(
-  document: HypermediaBootstrapTemplate["documents"][HypermediaBootstrapDocumentKind],
+function pageInput(
+  page: HypermediaBootstrapTemplate["pages"][HypermediaBootstrapPageKind],
   templateName: string,
 ) {
   return {
-    title: document.title,
-    summary: document.summary,
-    body_markdown: document.body_markdown,
+    title: page.title,
+    summary: page.summary,
+    body_markdown: page.body_markdown,
     commit_message: `Install ${templateName} hypermedia bootstrap`,
   };
 }
 
-export function hypermediaBootstrapDocuments(
+export function hypermediaBootstrapPages(
   template: HypermediaBootstrapTemplate,
   allocations: HypermediaBootstrapAllocation[],
-): HypermediaBootstrapDocument[] {
+): HypermediaBootstrapPage[] {
   const allocationByKind = new Map(allocations.map((allocation) => [
     allocation.document_kind,
     allocation,
   ]));
-  const documents: HypermediaBootstrapDocument[] = [];
-  for (const kind of Object.keys(template.documents) as HypermediaBootstrapDocumentKind[]) {
+  const pages: HypermediaBootstrapPage[] = [];
+  for (const kind of Object.keys(template.pages) as HypermediaBootstrapPageKind[]) {
     const allocation = allocationByKind.get(kind);
-    const document = template.documents[kind];
-    if (!allocation || !document) {
+    const page = template.pages[kind];
+    if (!allocation || !page) {
       throw new Error(`Hypermedia bootstrap contract is incomplete: ${kind}`);
     }
-    documents.push({ ...allocation, input: documentInput(document, template.name) });
+    pages.push({ ...allocation, input: pageInput(page, template.name) });
   }
-  if (allocationByKind.size !== documents.length) {
+  if (allocationByKind.size !== pages.length) {
     throw new Error("Hypermedia bootstrap returned an unexpected allocation");
   }
-  return documents;
+  return pages;
 }
 
 export async function applyHypermediaBootstrap(input: {
@@ -77,11 +77,11 @@ export async function applyHypermediaBootstrap(input: {
   template: HypermediaBootstrapTemplate;
   allocations: HypermediaBootstrapAllocation[];
 }): Promise<Date | string> {
-  const documents = hypermediaBootstrapDocuments(input.template, input.allocations);
-  for (const document of documents) {
-    await input.repositories.bootstrap.ensureDocument(document);
+  const pages = hypermediaBootstrapPages(input.template, input.allocations);
+  for (const page of pages) {
+    await input.repositories.bootstrap.ensurePage(page);
   }
-  const byKind = new Map(documents.map((document) => [document.document_kind, document]));
+  const byKind = new Map(pages.map((page) => [page.document_kind, page]));
   await input.repositories.settings.updateGlobalGuide(
     byKind.get("global_guide")!.document_id,
   );
@@ -103,16 +103,16 @@ export async function applyHypermediaBootstrap(input: {
 
 export async function synchronizeGlobalGuide(input: {
   repositories: GuideSynchronizationRepositories;
-  guide: HypermediaBootstrapTemplate["documents"]["global_guide"];
+  guide: HypermediaBootstrapTemplate["pages"]["global_guide"];
   templateName: string;
 }): Promise<GlobalGuideSynchronization> {
   const configured = await input.repositories.settings.globalGuide();
   if (!configured) {
     throw new Error("The configured global guide is unavailable after hypermedia bootstrap");
   }
-  const current = await input.repositories.documents.get(configured.document_id);
+  const current = await input.repositories.pages.get(configured.document_id);
   if (!current || current.archived_at) {
-    throw new Error("The configured global guide document could not be loaded");
+    throw new Error("The configured global guide page could not be loaded");
   }
   if (current.current_revision_id !== configured.current_revision_id) {
     throw new Error("The configured global guide changed during synchronization");
@@ -121,12 +121,12 @@ export async function synchronizeGlobalGuide(input: {
       && current.summary === input.guide.summary
       && current.body_markdown === input.guide.body_markdown) {
     return {
-      document_id: current.document_id,
+      object_id: current.object_id,
       revision_number: current.revision_number,
       updated: false,
     };
   }
-  const updated = await input.repositories.documents.update(current.document_id, {
+  const updated = await input.repositories.pages.update(current.object_id, {
     title: input.guide.title,
     summary: input.guide.summary,
     body_markdown: input.guide.body_markdown,
@@ -135,7 +135,7 @@ export async function synchronizeGlobalGuide(input: {
   }, MANAGED_GUIDE_ACTOR);
   if (!updated) throw new Error("The configured global guide disappeared during synchronization");
   return {
-    document_id: updated.document_id,
+    object_id: updated.object_id,
     revision_number: updated.revision_number,
     updated: true,
   };
@@ -162,22 +162,22 @@ export async function runHypermediaBootstrapCommand(): Promise<void> {
       throw new Error("Hypermedia bootstrap requires the dashboard storage capability");
     }
     const storage = new BrokeredStorage({ socketPath, token });
-    const bodies = new BrokeredMarkdownObjectStore(storage);
+    const bodies = new BrokeredMarkdownBlobStore(storage);
     const bootstrap = new HypermediaBootstrapRepository(pool, bodies);
     const settings = new KnowledgeSettingsRepository(pool);
-    const knowledgeDocuments = new KnowledgeDocumentRepository(pool, bodies);
+    const pages = new KnowledgePageRepository(pool, bodies);
     const allocations = await bootstrap.begin();
     if (!allocations.length) {
       const synchronization = await synchronizeGlobalGuide({
-        repositories: { settings, documents: knowledgeDocuments },
-        guide: defaultHypermediaBootstrapTemplate.documents.global_guide,
+        repositories: { settings, pages },
+        guide: defaultHypermediaBootstrapTemplate.pages.global_guide,
         templateName: defaultHypermediaBootstrapTemplate.name,
       });
       console.log(JSON.stringify({
         event: synchronization.updated
           ? "managed_global_guide_updated"
           : "managed_global_guide_current",
-        document_id: synchronization.document_id,
+        object_id: synchronization.object_id,
         revision_number: synchronization.revision_number,
       }));
       return;
@@ -194,7 +194,7 @@ export async function runHypermediaBootstrapCommand(): Promise<void> {
     console.log(JSON.stringify({
       event: "hypermedia_bootstrap_completed",
       finalized_at: completedAt,
-      documents: allocations.length,
+      pages: allocations.length,
     }));
   } finally {
     await pool.end();

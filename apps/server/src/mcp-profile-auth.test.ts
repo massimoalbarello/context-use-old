@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import type {
-  DocumentLinkRepository,
+  ObjectLinkRepository,
   KnowledgeSettingsRepository,
 } from "@context-use/database";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { config } from "./config.ts";
 import { createMcpRequestHandler } from "./mcp.ts";
-import type { McpDocumentRepositories } from "./mcp-server.ts";
+import type { McpObjectRepositories } from "./mcp-server.ts";
 
 const originalFetch = globalThis.fetch;
 
@@ -63,8 +63,8 @@ describe("MCP audience binding", () => {
       undefined,
       undefined,
       {} as KnowledgeSettingsRepository,
-      {} as DocumentLinkRepository,
-      {} as McpDocumentRepositories,
+      {} as ObjectLinkRepository,
+      {} as McpObjectRepositories,
     );
     const knowledgeToken = await accessToken(config.MCP_RESOURCE, privateKey);
     const wrongAudienceToken = await accessToken(`${config.MCP_RESOURCE}/retired`, privateKey);
@@ -75,7 +75,7 @@ describe("MCP audience binding", () => {
     const knowledgeTools = ((await knowledgeResponse.json()) as {
       result: { tools: Array<{ name: string }> };
     }).result.tools.map(({ name }) => name);
-    expect(knowledgeTools).toContain("create_document");
+    expect(knowledgeTools).toContain("create_page");
     expect(knowledgeTools.some((name) => name.includes("automation"))).toBe(false);
 
     expect((await knowledge(toolListRequest(config.MCP_RESOURCE, wrongAudienceToken))).status).toBe(401);
@@ -100,8 +100,8 @@ describe("MCP audience binding", () => {
       undefined,
       undefined,
       {} as KnowledgeSettingsRepository,
-      {} as DocumentLinkRepository,
-      {} as McpDocumentRepositories,
+      {} as ObjectLinkRepository,
+      {} as McpObjectRepositories,
     );
     const token = await accessToken(config.MCP_RESOURCE, privateKey);
     expect((await knowledge(toolListRequest(config.MCP_RESOURCE, token))).status).toBe(401);

@@ -3,12 +3,12 @@ import { config } from "./config.ts";
 import { publicationWarnings, renderMarkdown, type MarkdownResolvers } from "./markdown.ts";
 
 const unavailableResolvers: MarkdownResolvers = {
-  document: async () => ({ available: false }),
+  object: async () => ({ available: false }),
 };
 
 function assetResolvers(contentType = "image/png"): MarkdownResolvers {
   return {
-    document: async (id) => ({
+    object: async (id) => ({
       available: true,
       representation: "asset",
       href: `/api/dashboard/assets/${id}/content`,
@@ -29,13 +29,13 @@ describe("safe Markdown rendering", () => {
     expect(html).toContain('<h2 id="a-useful-section-2">A Useful Section</h2>');
   });
 
-  test("scans public metadata and canonical document references", () => {
+  test("scans public metadata and canonical object references", () => {
     const id = "11111111-1111-4111-8111-111111111111";
     expect(publicationWarnings("Safe body", ["Safe title", "secret = summary-canary"]))
       .toContain("Possible secret material detected; review the page carefully");
     expect(publicationWarnings("Safe body", ["https://example.com", "Safe summary"]))
       .toContain("1 external URL(s) will become public");
-    expect(publicationWarnings(`[Related](context-use://document/${id})`))
+    expect(publicationWarnings(`[Related](context-use://object/${id})`))
       .toContain("1 context-use reference(s) have independent visibility");
     expect(publicationWarnings(`[Old](context-use://page/${id})`))
       .not.toContain("1 context-use reference(s) have independent visibility");
@@ -54,17 +54,17 @@ describe("safe Markdown rendering", () => {
     expect(html).not.toContain("attacker.example");
   });
 
-  test("renders canonical document identities according to their representation", async () => {
+  test("renders canonical object identities according to their representation", async () => {
     const page = "11111111-1111-4111-8111-111111111111";
     const record = "22222222-2222-4222-8222-222222222222";
     const asset = "33333333-3333-4333-8333-333333333333";
     const html = await renderMarkdown([
-      `[Page](context-use://document/${page}#details)`,
-      `[Record](context-use://document/${record})`,
-      `![Photo](context-use://document/${asset})`,
-      `[Download](context-use://document/${asset})`,
+      `[Page](context-use://object/${page}#details)`,
+      `[Record](context-use://object/${record})`,
+      `![Photo](context-use://object/${asset})`,
+      `[Download](context-use://object/${asset})`,
     ].join("\n\n"), {
-      document: async (id) => {
+      object: async (id) => {
         if (id === asset) {
           return {
             available: true,
@@ -77,15 +77,15 @@ describe("safe Markdown rendering", () => {
           return {
             available: true,
             representation: id === page ? "page" : "record",
-            href: `/app/documents/${id}`,
+            href: `/app/objects/${id}`,
           };
         }
         return { available: false };
       },
     });
 
-    expect(html).toContain(`<a href="/app/documents/${page}#details">Page</a>`);
-    expect(html).toContain(`<a href="/app/documents/${record}">Record</a>`);
+    expect(html).toContain(`<a href="/app/objects/${page}#details">Page</a>`);
+    expect(html).toContain(`<a href="/app/objects/${record}">Record</a>`);
     expect(html).toContain(`<img src="/api/dashboard/assets/${asset}/content" alt="Photo" loading="lazy"`);
     expect(html).toContain(`<a href="/api/dashboard/assets/${asset}/content" target="_blank" rel="noopener noreferrer">Download</a>`);
     expect(html).not.toContain("context-use://");
@@ -97,11 +97,11 @@ describe("safe Markdown rendering", () => {
     const pdf = "33333333-3333-4333-8333-333333333333";
     const types = new Map([[image, "image/png"], [video, "video/mp4"], [pdf, "application/pdf"]]);
     const html = await renderMarkdown([
-      `![A photo](context-use://document/${image})`,
-      `![A demo](context-use://document/${video})`,
-      `![](context-use://document/${pdf})`,
+      `![A photo](context-use://object/${image})`,
+      `![A demo](context-use://object/${video})`,
+      `![](context-use://object/${pdf})`,
     ].join("\n\n"), {
-      document: async (id) => ({
+      object: async (id) => ({
         available: true,
         representation: "asset",
         href: `/api/dashboard/assets/${id}/content`,
@@ -117,11 +117,11 @@ describe("safe Markdown rendering", () => {
   test("renders supported media formatting without admitting authored styles", async () => {
     const asset = "11111111-1111-4111-8111-111111111111";
     const valid = await renderMarkdown(
-      `![Portrait](context-use://document/${asset}){size=small align=right shape=square layout=half}`,
+      `![Portrait](context-use://object/${asset}){size=small align=right shape=square layout=half}`,
       assetResolvers("image/jpeg"),
     );
     const invalid = await renderMarkdown(
-      `![Typo](context-use://document/${asset}){algin=center style=display:none}`,
+      `![Typo](context-use://object/${asset}){algin=center style=display:none}`,
       assetResolvers(),
     );
 
@@ -135,7 +135,7 @@ describe("safe Markdown rendering", () => {
     const first = "11111111-1111-4111-8111-111111111111";
     const second = "22222222-2222-4222-8222-222222222222";
     const html = await renderMarkdown(
-      `![First](context-use://document/${first}){layout=half}\n![Second](context-use://document/${second}){layout=half}`,
+      `![First](context-use://object/${first}){layout=half}\n![Second](context-use://object/${second}){layout=half}`,
       assetResolvers("image/webp"),
     );
 
@@ -159,15 +159,15 @@ describe("safe Markdown rendering", () => {
     expect(html).not.toContain("context-use://");
   });
 
-  test("keeps unavailable and non-asset embedded documents inert", async () => {
+  test("keeps unavailable and non-asset embedded objects inert", async () => {
     const page = "11111111-1111-4111-8111-111111111111";
     const missing = "22222222-2222-4222-8222-222222222222";
     const html = await renderMarkdown([
-      `![Not media](context-use://document/${page})`,
-      `[Private record](context-use://document/${missing}#secret)`,
+      `![Not media](context-use://object/${page})`,
+      `[Private record](context-use://object/${missing}#secret)`,
     ].join("\n\n"), {
-      document: async (id) => id === page
-        ? { available: true, representation: "page", href: `/app/documents/${page}` }
+      object: async (id) => id === page
+        ? { available: true, representation: "page", href: `/app/objects/${page}` }
         : { available: false },
     });
 
@@ -188,7 +188,7 @@ describe("safe Markdown rendering", () => {
       `[Dashboard](/app/pages/${id})`,
       "[[about/intro|Wiki path]]",
     ].join("\n\n"), {
-      document: async () => {
+      object: async () => {
         lookups += 1;
         return { available: false };
       },

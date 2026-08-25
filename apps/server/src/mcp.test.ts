@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type {
-  DocumentAssetRepository,
-  DocumentLinkRepository,
+  AssetRepository,
+  ObjectLinkRepository,
   KnowledgeSettingsRepository,
-  KnowledgeDocumentRepository,
-  PrivateDocumentCatalogRepository,
+  KnowledgePageRepository,
+  PrivateObjectCatalogRepository,
 } from "@context-use/database";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createKnowledgeGuideReceipt } from "./mcp-guidance-receipt.ts";
-import { createMcpServer, type McpDocumentRepositories } from "./mcp-server.ts";
+import { createMcpServer, type McpObjectRepositories } from "./mcp-server.ts";
 import { createStatelessMcpTransport } from "./mcp-transport.ts";
 import type { SourceRecordReader } from "./nango-records.ts";
 
@@ -51,12 +51,12 @@ async function mcpRequest(serverOrPromise: McpServer | Promise<McpServer>, body:
 const DEFAULT_MCP_CONTEXT = { clientId: "mcp-client", sessionId: "mcp-session" };
 
 function serverWith(
-  knowledgeDocuments = documentsWithGuidance(),
+  pages = documentsWithGuidance(),
   options: {
     context?: { clientId: string; sessionId: string };
     knowledgeSettings?: KnowledgeSettingsRepository;
-    documentLinks?: DocumentLinkRepository;
-    documents?: McpDocumentRepositories;
+    objectLinks?: ObjectLinkRepository;
+    documents?: McpObjectRepositories;
     sourceRecords?: SourceRecordReader;
   } = {},
 ) {
@@ -72,21 +72,21 @@ function serverWith(
     },
   } as KnowledgeSettingsRepository;
   const documents = options.documents ?? {
-    knowledgeDocuments,
-    documentAssets: {} as DocumentAssetRepository,
-    documentCatalog: {} as PrivateDocumentCatalogRepository,
-  } satisfies McpDocumentRepositories;
-  const documentLinks = options.documentLinks ?? {
+    pages,
+    assets: {} as AssetRepository,
+    objectCatalog: {} as PrivateObjectCatalogRepository,
+  } satisfies McpObjectRepositories;
+  const objectLinks = options.objectLinks ?? {
     async revisionIndex() { return null; },
     async backlinks() { return { backlinks: [], has_more: false }; },
     async backlinksComplete() { return false; },
-  } as unknown as DocumentLinkRepository;
+  } as unknown as ObjectLinkRepository;
   return createMcpServer(
     options.context ?? DEFAULT_MCP_CONTEXT,
     options.sourceRecords,
     undefined,
     knowledgeSettings,
-    documentLinks,
+    objectLinks,
     documents,
   );
 }
@@ -99,12 +99,12 @@ const rootGuide = {
   body_markdown: "Root guide",
 };
 
-function documentsWithGuidance(overrides: Record<string, unknown> = {}): KnowledgeDocumentRepository {
+function documentsWithGuidance(overrides: Record<string, unknown> = {}): KnowledgePageRepository {
   return {
     async revision(documentId: string, revisionNumber: number) {
       if (documentId !== rootGuide.id || revisionNumber !== rootGuide.version_number) return null;
       return {
-        document_id: rootGuide.id,
+        object_id: rootGuide.id,
         revision_id: rootGuide.current_version_id,
         revision_number: rootGuide.version_number,
         title: rootGuide.title,
@@ -113,11 +113,11 @@ function documentsWithGuidance(overrides: Record<string, unknown> = {}): Knowled
       };
     },
     ...overrides,
-  } as unknown as KnowledgeDocumentRepository;
+  } as unknown as KnowledgePageRepository;
 }
 
 const rootGuidanceReceipt = createKnowledgeGuideReceipt({
-  documentId: rootGuide.id,
+  pageId: rootGuide.id,
   revisionId: rootGuide.current_version_id,
 }, DEFAULT_MCP_CONTEXT);
 
@@ -162,11 +162,11 @@ describe("MCP knowledge tools", () => {
     });
   });
 
-  test("exposes stable-ID document discovery and mutation without path inputs", async () => {
+  test("exposes stable-ID object discovery and mutation without path inputs", async () => {
     const documentId = "77777777-7777-4777-8777-777777777777";
     const revisionId = "88888888-8888-4888-8888-888888888888";
     const document = {
-      document_id: documentId,
+      object_id: documentId,
       current_revision_id: revisionId,
       public_id: null,
       revision_number: 1,
@@ -180,8 +180,8 @@ describe("MCP knowledge tools", () => {
       body_markdown: "Stable body",
     };
     const catalogItem = {
-      document_id: documentId,
-      document_kind: "knowledge",
+      object_id: documentId,
+      object_kind: "page",
       authority: "knowledge",
       representation: "markdown",
       lifecycle: "active",
@@ -193,14 +193,14 @@ describe("MCP knowledge tools", () => {
       operational_roles: [],
       updated_at: document.updated_at,
     };
-    const knowledgeDocuments = documentsWithGuidance({
+    const pages = documentsWithGuidance({
       async get(id: string) { return id === documentId ? document : null; },
       async create() { return document; },
       async changesSince() {
         return {
           changes: [{
             cursor: "cu-page-changes-v1.1",
-            document_id: documentId,
+            object_id: documentId,
             revision_id: revisionId,
             revision_number: 1,
             previous_revision_number: null,
@@ -217,16 +217,16 @@ describe("MCP knowledge tools", () => {
       },
     });
     const documents = {
-      knowledgeDocuments,
-      documentAssets: {} as DocumentAssetRepository,
-      documentCatalog: {
+      pages,
+      assets: {} as AssetRepository,
+      objectCatalog: {
         async get(id: string) { return id === documentId ? catalogItem : null; },
         async search() {
-          return { documents: [catalogItem], next_cursor: null, has_more: false };
+          return { objects: [catalogItem], next_cursor: null, has_more: false };
         },
-      } as unknown as PrivateDocumentCatalogRepository,
-    } satisfies McpDocumentRepositories;
-    const tools = await mcpRequest(serverWith(knowledgeDocuments, { documents }), {
+      } as unknown as PrivateObjectCatalogRepository,
+    } satisfies McpObjectRepositories;
+    const tools = await mcpRequest(serverWith(pages, { documents }), {
       jsonrpc: "2.0",
       id: 1,
       method: "tools/list",
@@ -234,17 +234,17 @@ describe("MCP knowledge tools", () => {
     });
     const names = tools.result?.tools?.map(({ name }) => name) ?? [];
     expect(names).toEqual(expect.arrayContaining([
-      "search_documents",
-      "read_document",
-      "create_document",
-      "update_document",
-      "archive_document",
-      "create_document_asset_upload",
-      "archive_document_asset",
-      "list_document_changes",
-      "compare_document_revisions",
-      "list_document_revisions",
-      "read_document_revision",
+      "search_objects",
+      "read_object",
+      "create_page",
+      "update_page",
+      "archive_page",
+      "create_asset_upload",
+      "archive_asset",
+      "list_page_changes",
+      "compare_page_revisions",
+      "list_page_revisions",
+      "read_page_revision",
     ]));
     expect(names).not.toEqual(expect.arrayContaining([
       "read_directory",
@@ -267,20 +267,20 @@ describe("MCP knowledge tools", () => {
       "archive_asset",
       "prepare_change",
     ]));
-    for (const name of ["create_document", "update_document", "create_document_asset_upload"]) {
+    for (const name of ["create_page", "update_page", "create_asset_upload"]) {
       expect(tools.result?.tools?.find((tool) => tool.name === name)?.inputSchema?.properties)
         .not.toHaveProperty("path");
     }
 
-    const changes = await mcpRequest(serverWith(knowledgeDocuments, { documents }), {
+    const changes = await mcpRequest(serverWith(pages, { documents }), {
       jsonrpc: "2.0",
       id: 2,
       method: "tools/call",
-      params: { name: "list_document_changes", arguments: {} },
+      params: { name: "list_page_changes", arguments: {} },
     });
     expect(changes.result?.structuredContent).toMatchObject({
       changes: [{
-        document_id: documentId,
+        object_id: documentId,
         revision_id: revisionId,
         revision_number: 1,
         previous_revision_number: null,
@@ -288,25 +288,25 @@ describe("MCP knowledge tools", () => {
     });
     expect(changes.result?.content?.[0]?.text).not.toContain("path");
 
-    const searched = await mcpRequest(serverWith(knowledgeDocuments, { documents }), {
+    const searched = await mcpRequest(serverWith(pages, { documents }), {
       jsonrpc: "2.0",
       id: 3,
       method: "tools/call",
-      params: { name: "search_documents", arguments: { query: "stable" } },
+      params: { name: "search_objects", arguments: { query: "stable" } },
     });
     const searchResult = JSON.parse(searched.result?.content?.[0]?.text ?? "null");
-    expect(searchResult.documents[0]).toMatchObject({
-      document_id: documentId,
-      reference: `context-use://document/${documentId}`,
+    expect(searchResult.objects[0]).toMatchObject({
+      object_id: documentId,
+      reference: `context-use://object/${documentId}`,
       title: "Stable document",
       summary: "An identity-based knowledge document.",
     });
-    const created = await mcpRequest(serverWith(knowledgeDocuments, { documents }), {
+    const created = await mcpRequest(serverWith(pages, { documents }), {
       jsonrpc: "2.0",
       id: 4,
       method: "tools/call",
       params: {
-        name: "create_document",
+        name: "create_page",
         arguments: {
           title: document.title,
           summary: document.summary,
@@ -317,9 +317,9 @@ describe("MCP knowledge tools", () => {
       },
     });
     expect(JSON.parse(created.result?.content?.[0]?.text ?? "null")).toMatchObject({
-      document_id: documentId,
+      object_id: documentId,
       current_revision_id: revisionId,
-      reference: `context-use://document/${documentId}`,
+      reference: `context-use://object/${documentId}`,
     });
   });
 
@@ -331,7 +331,7 @@ describe("MCP knowledge tools", () => {
         return {
           changes: [{
             cursor: "cu-page-changes-v1.9",
-            document_id: "11111111-1111-4111-8111-111111111111",
+            object_id: "11111111-1111-4111-8111-111111111111",
             revision_id: "22222222-2222-4222-8222-222222222222",
             revision_number: 4,
             previous_revision_number: 2,
@@ -353,7 +353,7 @@ describe("MCP knowledge tools", () => {
       id: 15,
       method: "tools/call",
       params: {
-        name: "list_document_changes",
+        name: "list_page_changes",
         arguments: { cursor: "cu-page-changes-v1.5", limit: 25 },
       },
     });
@@ -361,7 +361,7 @@ describe("MCP knowledge tools", () => {
     expect(calls).toEqual([{ cursor: "cu-page-changes-v1.5", limit: 25 }]);
     expect(response.result?.structuredContent).toMatchObject({
       changes: [{
-        document_id: "11111111-1111-4111-8111-111111111111",
+        object_id: "11111111-1111-4111-8111-111111111111",
         revision_number: 4,
         previous_revision_number: 2,
       }],
@@ -418,9 +418,9 @@ describe("MCP knowledge tools", () => {
       id: 16,
       method: "tools/call",
       params: {
-        name: "compare_document_revisions",
+        name: "compare_page_revisions",
         arguments: {
-          document_id: "11111111-1111-4111-8111-111111111111",
+          object_id: "11111111-1111-4111-8111-111111111111",
           previous_revision_number: 2,
           revision_number: 4,
         },
@@ -432,7 +432,7 @@ describe("MCP knowledge tools", () => {
       { pageId: "11111111-1111-4111-8111-111111111111", versionNumber: 4 },
     ]);
     const expectedDelta = {
-      document_id: "11111111-1111-4111-8111-111111111111",
+      object_id: "11111111-1111-4111-8111-111111111111",
       comparison: {
         requested_from_revision: 2,
         actual_from_revision: 2,
@@ -485,9 +485,9 @@ describe("MCP knowledge tools", () => {
       id: 17,
       method: "tools/call",
       params: {
-        name: "compare_document_revisions",
+        name: "compare_page_revisions",
         arguments: {
-          document_id: "11111111-1111-4111-8111-111111111111",
+          object_id: "11111111-1111-4111-8111-111111111111",
           previous_revision_number: 3,
           revision_number: 8,
         },
@@ -500,7 +500,7 @@ describe("MCP knowledge tools", () => {
       throughVersionNumber: 8,
     }]);
     expect(response.result?.structuredContent).toEqual({
-      document_id: "11111111-1111-4111-8111-111111111111",
+      object_id: "11111111-1111-4111-8111-111111111111",
       comparison: {
         requested_from_revision: 3,
         actual_from_revision: 4,
@@ -526,9 +526,9 @@ describe("MCP knowledge tools", () => {
       id: 18,
       method: "tools/call",
       params: {
-        name: "compare_document_revisions",
+        name: "compare_page_revisions",
         arguments: {
-          document_id: "11111111-1111-4111-8111-111111111111",
+          object_id: "11111111-1111-4111-8111-111111111111",
           previous_revision_number: 3,
           revision_number: 8,
         },
@@ -538,8 +538,8 @@ describe("MCP knowledge tools", () => {
     expect(response.result?.isError).toBe(true);
     expect(response.result?.structuredContent).toBeUndefined();
     expect(response.result?.content?.[0]?.text).toBe([
-      "DOCUMENT_DELTA_UNAVAILABLE",
-      "Document 11111111-1111-4111-8111-111111111111 revision 8 is not retained; no safe comparison was produced.",
+      "PAGE_DELTA_UNAVAILABLE",
+      "Page 11111111-1111-4111-8111-111111111111 revision 8 is not retained; no safe comparison was produced.",
     ].join("\n\n"));
   });
 

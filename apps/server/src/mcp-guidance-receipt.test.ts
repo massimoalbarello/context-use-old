@@ -7,7 +7,7 @@ import {
 } from "./mcp-guidance-receipt.ts";
 
 const guide: KnowledgeGuideRevision = {
-  documentId: "11111111-1111-4111-8111-111111111111",
+  pageId: "11111111-1111-4111-8111-111111111111",
   revisionId: "22222222-2222-4222-8222-222222222222",
 };
 
@@ -22,7 +22,7 @@ test("knowledge guide receipts bind one guide revision to one MCP session", () =
 
   expect(receipt).toStartWith("cu-knowledge-guide-v1.");
   expect(JSON.parse(Buffer.from(encodedManifest!, "base64url").toString("utf8"))).toEqual([
-    guide.documentId,
+    guide.pageId,
     guide.revisionId,
     context.clientId,
     context.sessionId,
@@ -34,7 +34,7 @@ test("knowledge guide receipts bind one guide revision to one MCP session", () =
   }, context)).toBe(false);
   expect(verifyKnowledgeGuideReceipt(receipt, {
     ...guide,
-    documentId: "44444444-4444-4444-8444-444444444444",
+    pageId: "44444444-4444-4444-8444-444444444444",
   }, context)).toBe(false);
   expect(verifyKnowledgeGuideReceipt(receipt, guide, {
     ...context,
@@ -62,8 +62,8 @@ test("rejects a tampered knowledge guide receipt", () => {
 test("rejects invalid guide or context inputs", () => {
   expect(() => createKnowledgeGuideReceipt({
     ...guide,
-    documentId: "not-a-document-id",
-  }, context)).toThrow("Knowledge guide document and revision IDs must be UUIDs");
+    pageId: "not-a-page-id",
+  }, context)).toThrow("Knowledge guide object and revision IDs must be UUIDs");
   expect(() => createKnowledgeGuideReceipt(guide, {
     ...context,
     sessionId: "",

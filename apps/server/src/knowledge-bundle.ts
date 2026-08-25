@@ -4,7 +4,7 @@ import {
   KNOWLEDGE_BUNDLE_DATASETS,
   KNOWLEDGE_BUNDLE_VERSION,
   type KnowledgeBundleExportRecord,
-  type KnowledgeBundleObject,
+  type KnowledgeBundleBlob,
   type KnowledgeBundleRepository,
 } from "@context-use/database";
 import type { BrokeredStorage } from "./storage-client.ts";
@@ -20,7 +20,7 @@ type BundleFrameHeader = {
   sha256: string;
   dataset?: string;
   ordinal?: number;
-  object_kind?: KnowledgeBundleObject["object_kind"];
+  object_kind?: KnowledgeBundleBlob["blob_kind"];
   object_key?: string;
   content_type?: string;
 };
@@ -102,22 +102,22 @@ async function* bundleBytes(input: {
 
   let afterObject = 0;
   while (true) {
-    const objects = await repository.exportObjects(intentId, afterObject);
-    if (!objects.length) break;
-    for (const object of objects) {
-      const sizeBytes = Number(object.size_bytes);
+    const blobs = await repository.exportBlobs(intentId, afterObject);
+    if (!blobs.length) break;
+    for (const blob of blobs) {
+      const sizeBytes = Number(blob.size_bytes);
       const header: BundleFrameHeader = {
         type: "object",
         length: sizeBytes,
-        sha256: object.content_hash,
-        ordinal: Number(object.ordinal),
-        object_kind: object.object_kind,
-        object_key: object.object_key,
-        content_type: object.content_type,
+        sha256: blob.content_hash,
+        ordinal: Number(blob.ordinal),
+        object_kind: blob.blob_kind,
+        object_key: blob.blob_key,
+        content_type: blob.content_type,
       };
       yield headerBytes(header);
-      const body = new Response(await storage.read(object.object_key)).body;
-      if (!body) throw new Error(`Knowledge object ${object.object_key} is unavailable`);
+      const body = new Response(await storage.read(blob.blob_key)).body;
+      if (!body) throw new Error(`Knowledge blob ${blob.blob_key} is unavailable`);
       const observedHash = createHash("sha256");
       let observedSize = 0;
       const reader = body.getReader();
@@ -125,14 +125,14 @@ async function* bundleBytes(input: {
         const chunk = await reader.read();
         if (chunk.done) break;
         observedSize += chunk.value.byteLength;
-        if (observedSize > sizeBytes) throw new Error(`Knowledge object ${object.object_key} changed size`);
+        if (observedSize > sizeBytes) throw new Error(`Knowledge blob ${blob.blob_key} changed size`);
         observedHash.update(chunk.value);
         yield chunk.value;
       }
-      if (observedSize !== sizeBytes || observedHash.digest("hex") !== object.content_hash) {
-        throw new Error(`Knowledge object ${object.object_key} failed integrity verification`);
+      if (observedSize !== sizeBytes || observedHash.digest("hex") !== blob.content_hash) {
+        throw new Error(`Knowledge blob ${blob.blob_key} failed integrity verification`);
       }
-      afterObject = Number(object.ordinal);
+      afterObject = Number(blob.ordinal);
       objectsCompleted += 1;
       bytesCompleted += observedSize;
       await repository.updateExportProgress(intentId, {
@@ -240,10 +240,11 @@ type ObjectFrameHeader = BundleFrameHeader & Required<Pick<BundleFrameHeader,
 function validObjectHeader(header: BundleFrameHeader): header is ObjectFrameHeader {
   if (!header.object_kind || !header.object_key || !header.content_type) return false;
   const uuid = "[a-f0-9-]{36}";
+  const neutralBlob = new RegExp(`^blobs/${uuid}$`).test(header.object_key);
   const keyMatches = header.object_kind === "private_revision"
-    ? new RegExp(`^documents/private/${uuid}\\.md$`).test(header.object_key)
+    ? neutralBlob || new RegExp(`^documents/private/${uuid}\\.md$`).test(header.object_key)
     : header.object_kind === "asset"
-      ? new RegExp(`^objects/${uuid}$`).test(header.object_key)
+      ? neutralBlob || new RegExp(`^objects/${uuid}$`).test(header.object_key)
       : header.object_kind === "public_asset"
         ? new RegExp(`^artifacts/public/${uuid}$`).test(header.object_key)
         : new RegExp(`^documents/public/${uuid}\\.md$`).test(header.object_key);
@@ -365,10 +366,10 @@ export async function validateFullKnowledgeBundle(input: {
         throw new Error("Invalid knowledge bundle object frame");
       }
       await discardFrame(reader, header);
-      await input.repository.insertImportObject(input.importId, {
+      await input.repository.insertImportBlob(input.importId, {
         ordinal: header.ordinal,
-        object_kind: header.object_kind,
-        object_key: header.object_key,
+        blob_kind: header.object_kind,
+        blob_key: header.object_key,
         size_bytes: header.length,
         content_hash: header.sha256,
         content_type: header.content_type,
@@ -422,10 +423,10 @@ export async function materializeFullKnowledgeBundle(input: {
       }
       const frame = verifiedFrameStream(reader, header);
       await Promise.all([
-        input.storage.writeImportedObject({
+        input.storage.writeImportedBlob({
           importId: input.importId,
-          object: {
-            object_key: header.object_key,
+          blob: {
+            blob_key: header.object_key,
             size_bytes: header.length,
             content_hash: header.sha256,
             content_type: header.content_type,
@@ -434,7 +435,7 @@ export async function materializeFullKnowledgeBundle(input: {
         }),
         frame.verified,
       ]);
-      await input.repository.markImportObjectMaterialized(input.importId, header.ordinal);
+      await input.repository.markImportBlobMaterialized(input.importId, header.ordinal);
       objects += 1;
       bytes += header.length;
       await input.repository.updateImportProgress(input.importId, {

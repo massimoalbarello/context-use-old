@@ -9,7 +9,7 @@ import diaryComposerInstructions from "../templates/default/_pages/diary-compose
 // @ts-expect-error Bun imports Markdown source as text; TypeScript has no text-loader type.
 import diaryComposerState from "../templates/default/_pages/diary-composer/state.md" with { type: "text" };
 
-export type HypermediaBootstrapTemplateDocument = {
+export type HypermediaBootstrapTemplatePage = {
   title: string;
   summary: string;
   body_markdown: string;
@@ -17,12 +17,12 @@ export type HypermediaBootstrapTemplateDocument = {
 
 export type HypermediaBootstrapTemplate = {
   name: "default";
-  documents: {
-    global_guide: HypermediaBootstrapTemplateDocument;
-    activity_distiller_instructions: HypermediaBootstrapTemplateDocument;
-    activity_distiller_state: HypermediaBootstrapTemplateDocument;
-    diary_composer_instructions: HypermediaBootstrapTemplateDocument;
-    diary_composer_state: HypermediaBootstrapTemplateDocument;
+  pages: {
+    global_guide: HypermediaBootstrapTemplatePage;
+    activity_distiller_instructions: HypermediaBootstrapTemplatePage;
+    activity_distiller_state: HypermediaBootstrapTemplatePage;
+    diary_composer_instructions: HypermediaBootstrapTemplatePage;
+    diary_composer_state: HypermediaBootstrapTemplatePage;
   };
   automations: readonly [{
     key: "activity-distiller";
@@ -41,10 +41,10 @@ function markdown(source: string): string {
   return source.trimEnd() + "\n";
 }
 
-/** The installation template is a compile-time hypermedia document set. */
+/** The installation template is a compile-time hypermedia page set. */
 export const defaultHypermediaBootstrapTemplate: HypermediaBootstrapTemplate = {
   name: "default",
-  documents: {
+  pages: {
     global_guide: {
       title: "AGENTS.md",
       summary: "The global instructions for maintaining this knowledge base.",

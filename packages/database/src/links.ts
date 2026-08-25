@@ -1,11 +1,11 @@
 const UUID_PATTERN = "([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})";
 const FRAGMENT_PATTERN = "(#[a-z0-9][a-z0-9_-]*)?";
-const DOCUMENT_LINK = new RegExp(`(!?)\\[[^\\]\\n]*\\]\\(context-use:\\/\\/document\\/${UUID_PATTERN}${FRAGMENT_PATTERN}\\)`, "gi");
+const OBJECT_LINK = new RegExp(`(!?)\\[[^\\]\\n]*\\]\\(context-use:\\/\\/object\\/${UUID_PATTERN}${FRAGMENT_PATTERN}\\)`, "gi");
 
 // Keep the application-side guard aligned with replace_document_links. Raw
 // source persistence must not fail merely because its derived graph exceeds
 // this bounded indexing contract.
-export const MAX_DOCUMENT_LINKS_PER_REVISION = 100_000;
+export const MAX_OBJECT_LINKS_PER_REVISION = 100_000;
 
 function escapedAt(value: string, index: number): boolean {
   let backslashes = 0;
@@ -357,8 +357,8 @@ function mapMarkdownOutsideCode(
   return output + transform(value.slice(plainStart));
 }
 
-export function extractDocumentLinks(markdown: string): string[] {
-  return extractOutsideCode(markdown, DOCUMENT_LINK, 2);
+export function extractObjectLinks(markdown: string): string[] {
+  return extractOutsideCode(markdown, OBJECT_LINK, 2);
 }
 
 function extractOutsideCode(markdown: string, pattern: RegExp, capture: number): string[] {

@@ -13,9 +13,9 @@ import {
   UploadPartCommand,
 } from "@aws-sdk/client-s3";
 
-export type StoredAsset = {
+export type StoredBlob = {
   id: string;
-  objectKey: string;
+  blobKey: string;
   filename: string;
   contentType: string;
   sizeBytes: number;
@@ -24,27 +24,27 @@ export type StoredAsset = {
 
 export type ByteRange = { start: number; end: number };
 
-export type GeneratedObjectMetadata = {
+export type GeneratedBlobMetadata = {
   sizeBytes: number;
   contentHash: string;
 };
 
-export interface ObjectStorage {
-  write(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void>;
-  delete(objectKey: string): Promise<void>;
-  read(objectKey: string, range?: ByteRange): Promise<BodyInit>;
-  verify(objectKey: string, sizeBytes: number, contentHash: string): Promise<boolean>;
+export interface BlobStorage {
+  write(asset: StoredBlob, body: ReadableStream<Uint8Array> | null): Promise<void>;
+  delete(blobKey: string): Promise<void>;
+  read(blobKey: string, range?: ByteRange): Promise<BodyInit>;
+  verify(blobKey: string, sizeBytes: number, contentHash: string): Promise<boolean>;
 }
 
-export interface ObjectStorageBackend extends ObjectStorage {
-  exists(objectKey: string): Promise<boolean>;
-  writeOnce(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void>;
-  writeBundle(objectKey: string, body: ReadableStream<Uint8Array> | null): Promise<GeneratedObjectMetadata>;
-  inspectBundle(objectKey: string): Promise<GeneratedObjectMetadata | null>;
-  deleteBundle(objectKey: string): Promise<void>;
-  writeImportPart(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void>;
-  inspectImportPart(objectKey: string): Promise<GeneratedObjectMetadata | null>;
-  deleteImportPart(objectKey: string): Promise<void>;
+export interface BlobStorageBackend extends BlobStorage {
+  exists(blobKey: string): Promise<boolean>;
+  writeOnce(asset: StoredBlob, body: ReadableStream<Uint8Array> | null): Promise<void>;
+  writeBundle(blobKey: string, body: ReadableStream<Uint8Array> | null): Promise<GeneratedBlobMetadata>;
+  inspectBundle(blobKey: string): Promise<GeneratedBlobMetadata | null>;
+  deleteBundle(blobKey: string): Promise<void>;
+  writeImportPart(asset: StoredBlob, body: ReadableStream<Uint8Array> | null): Promise<void>;
+  inspectImportPart(blobKey: string): Promise<GeneratedBlobMetadata | null>;
+  deleteImportPart(blobKey: string): Promise<void>;
 }
 
 export type S3StorageConfig = {
@@ -98,21 +98,21 @@ export class AssetNotFoundError extends Error {
   }
 }
 
-export class ObjectAlreadyExistsError extends Error {
+export class BlobAlreadyExistsError extends Error {
   constructor(message = "Immutable object already exists") {
     super(message);
-    this.name = "ObjectAlreadyExistsError";
+    this.name = "BlobAlreadyExistsError";
   }
 }
 
 const S3_MULTIPART_PART_SIZE = 8 * 1024 * 1024;
 const MAX_GENERATED_OBJECT_BYTES = 64 * 1024 ** 3;
 
-function generatedManifestKey(objectKey: string): string {
-  return `${objectKey}.json`;
+function generatedManifestKey(blobKey: string): string {
+  return `${blobKey}.json`;
 }
 
-function parseGeneratedManifest(input: string): GeneratedObjectMetadata | null {
+function parseGeneratedManifest(input: string): GeneratedBlobMetadata | null {
   try {
     const value = JSON.parse(input) as Record<string, unknown>;
     if (!Number.isSafeInteger(value.size_bytes) || Number(value.size_bytes) <= 0) return null;
@@ -123,7 +123,7 @@ function parseGeneratedManifest(input: string): GeneratedObjectMetadata | null {
   }
 }
 
-function generatedManifest(metadata: GeneratedObjectMetadata): string {
+function generatedManifest(metadata: GeneratedBlobMetadata): string {
   return JSON.stringify({ size_bytes: metadata.sizeBytes, content_hash: metadata.contentHash });
 }
 
@@ -160,7 +160,7 @@ class ChunkAccumulator {
 }
 
 async function consumeVerifiedBody(
-  asset: StoredAsset,
+  asset: StoredBlob,
   body: ReadableStream<Uint8Array> | null,
   consume: (chunk: Uint8Array) => Promise<void> | void,
 ): Promise<void> {
@@ -201,7 +201,7 @@ export function mayRenderInline(contentType: string): boolean {
   return INLINE_TYPES.test(contentType.toLowerCase());
 }
 
-export class S3Storage implements ObjectStorageBackend {
+export class S3Storage implements BlobStorageBackend {
   constructor(
     private readonly client = new S3Client({
       region: process.env.AWS_REGION ?? "eu-west-2",
@@ -227,16 +227,16 @@ export class S3Storage implements ObjectStorageBackend {
       : {};
   }
 
-  async write(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void> {
+  async write(asset: StoredBlob, body: ReadableStream<Uint8Array> | null): Promise<void> {
     return this.writeVerified(asset, body, false);
   }
 
-  async writeOnce(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void> {
+  async writeOnce(asset: StoredBlob, body: ReadableStream<Uint8Array> | null): Promise<void> {
     return this.writeVerified(asset, body, true);
   }
 
   private async writeVerified(
-    asset: StoredAsset,
+    asset: StoredBlob,
     body: ReadableStream<Uint8Array> | null,
     createOnly: boolean,
   ): Promise<void> {
@@ -247,7 +247,7 @@ export class S3Storage implements ObjectStorageBackend {
         await consumeVerifiedBody(asset, body, (chunk) => buffered.push(chunk));
         await this.client.send(new PutObjectCommand({
           Bucket: this.options.bucket,
-          Key: asset.objectKey,
+          Key: asset.blobKey,
           Body: buffered.take(),
           ContentType: asset.contentType,
           ContentLength: asset.sizeBytes,
@@ -261,7 +261,7 @@ export class S3Storage implements ObjectStorageBackend {
 
       const created = await this.client.send(new CreateMultipartUploadCommand({
         Bucket: this.options.bucket,
-        Key: asset.objectKey,
+        Key: asset.blobKey,
         ContentType: asset.contentType,
         ChecksumAlgorithm: "SHA256",
         Metadata: { sha256: asset.contentHash },
@@ -277,7 +277,7 @@ export class S3Storage implements ObjectStorageBackend {
         const partChecksum = createHash("sha256").update(bytes).digest("base64");
         const uploaded = await this.client.send(new UploadPartCommand({
           Bucket: this.options.bucket,
-          Key: asset.objectKey,
+          Key: asset.blobKey,
           UploadId: uploadId,
           PartNumber: partNumber,
           Body: bytes,
@@ -297,7 +297,7 @@ export class S3Storage implements ObjectStorageBackend {
         if (buffered.byteLength) await uploadPart(buffered.take());
         await this.client.send(new CompleteMultipartUploadCommand({
           Bucket: this.options.bucket,
-          Key: asset.objectKey,
+          Key: asset.blobKey,
           UploadId: uploadId,
           MultipartUpload: { Parts: parts },
           ...(createOnly ? { IfNoneMatch: "*" } : {}),
@@ -307,7 +307,7 @@ export class S3Storage implements ObjectStorageBackend {
         if (!completed) {
           await this.client.send(new AbortMultipartUploadCommand({
             Bucket: this.options.bucket,
-            Key: asset.objectKey,
+            Key: asset.blobKey,
             UploadId: uploadId,
           })).catch(() => undefined);
         }
@@ -318,7 +318,7 @@ export class S3Storage implements ObjectStorageBackend {
       if (createOnly && error instanceof Error
           && (["PreconditionFailed", "ConditionalRequestConflict"].includes(error.name)
             || status === 409 || status === 412)) {
-        throw new ObjectAlreadyExistsError();
+        throw new BlobAlreadyExistsError();
       }
       if (error instanceof Error && error.name === "BadDigest") {
         throw new AssetIntegrityError("Asset checksum mismatch");
@@ -328,20 +328,20 @@ export class S3Storage implements ObjectStorageBackend {
   }
 
   async writeBundle(
-    objectKey: string,
+    blobKey: string,
     body: ReadableStream<Uint8Array> | null,
-  ): Promise<GeneratedObjectMetadata> {
-    return this.writeBundleObject(objectKey, body);
+  ): Promise<GeneratedBlobMetadata> {
+    return this.writeBundleObject(blobKey, body);
   }
 
   private async writeBundleObject(
-    objectKey: string,
+    blobKey: string,
     body: ReadableStream<Uint8Array> | null,
-  ): Promise<GeneratedObjectMetadata> {
+  ): Promise<GeneratedBlobMetadata> {
     if (!body) throw new Error("Knowledge bundle body is missing");
     const created = await this.client.send(new CreateMultipartUploadCommand({
       Bucket: this.options.bucket,
-      Key: objectKey,
+      Key: blobKey,
       ContentType: "application/vnd.context-use.knowledge-bundle",
       ChecksumAlgorithm: "SHA256",
       Metadata: { generated: "knowledge-bundle" },
@@ -359,7 +359,7 @@ export class S3Storage implements ObjectStorageBackend {
       const partChecksum = createHash("sha256").update(bytes).digest("base64");
       const uploaded = await this.client.send(new UploadPartCommand({
         Bucket: this.options.bucket,
-        Key: objectKey,
+        Key: blobKey,
         UploadId: uploadId,
         PartNumber: partNumber,
         Body: bytes,
@@ -391,7 +391,7 @@ export class S3Storage implements ObjectStorageBackend {
       if (buffered.byteLength) await uploadPart(buffered.take());
       await this.client.send(new CompleteMultipartUploadCommand({
         Bucket: this.options.bucket,
-        Key: objectKey,
+        Key: blobKey,
         UploadId: uploadId,
         MultipartUpload: { Parts: parts },
       }));
@@ -400,7 +400,7 @@ export class S3Storage implements ObjectStorageBackend {
       if (!completed) {
         await this.client.send(new AbortMultipartUploadCommand({
           Bucket: this.options.bucket,
-          Key: objectKey,
+          Key: blobKey,
           UploadId: uploadId,
         })).catch(() => undefined);
       }
@@ -411,7 +411,7 @@ export class S3Storage implements ObjectStorageBackend {
     const manifestHash = createHash("sha256").update(manifest).digest("base64");
     await this.client.send(new PutObjectCommand({
       Bucket: this.options.bucket,
-      Key: generatedManifestKey(objectKey),
+      Key: generatedManifestKey(blobKey),
       Body: manifest,
       ContentType: "application/json",
       ContentLength: Buffer.byteLength(manifest),
@@ -421,16 +421,16 @@ export class S3Storage implements ObjectStorageBackend {
     return metadata;
   }
 
-  async inspectBundle(objectKey: string): Promise<GeneratedObjectMetadata | null> {
+  async inspectBundle(blobKey: string): Promise<GeneratedBlobMetadata | null> {
     try {
       const [manifestResult, objectResult] = await Promise.all([
         this.client.send(new GetObjectCommand({
           Bucket: this.options.bucket,
-          Key: generatedManifestKey(objectKey),
+          Key: generatedManifestKey(blobKey),
         })),
         this.client.send(new HeadObjectCommand({
           Bucket: this.options.bucket,
-          Key: objectKey,
+          Key: blobKey,
         })),
       ]);
       if (!manifestResult.Body) return null;
@@ -442,22 +442,22 @@ export class S3Storage implements ObjectStorageBackend {
     }
   }
 
-  async deleteBundle(objectKey: string): Promise<void> {
+  async deleteBundle(blobKey: string): Promise<void> {
     await Promise.all([
-      this.delete(objectKey),
-      this.delete(generatedManifestKey(objectKey)),
+      this.delete(blobKey),
+      this.delete(generatedManifestKey(blobKey)),
     ]);
   }
 
-  async writeImportPart(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void> {
+  async writeImportPart(asset: StoredBlob, body: ReadableStream<Uint8Array> | null): Promise<void> {
     return this.writeOnce(asset, body);
   }
 
-  async inspectImportPart(objectKey: string): Promise<GeneratedObjectMetadata | null> {
+  async inspectImportPart(blobKey: string): Promise<GeneratedBlobMetadata | null> {
     try {
       const result = await this.client.send(new HeadObjectCommand({
         Bucket: this.options.bucket,
-        Key: objectKey,
+        Key: blobKey,
         ChecksumMode: "ENABLED",
       }));
       const sizeBytes = Number(result.ContentLength);
@@ -471,17 +471,17 @@ export class S3Storage implements ObjectStorageBackend {
     }
   }
 
-  async deleteImportPart(objectKey: string): Promise<void> {
-    await this.delete(objectKey);
+  async deleteImportPart(blobKey: string): Promise<void> {
+    await this.delete(blobKey);
   }
 
-  async delete(objectKey: string): Promise<void> {
-    await this.client.send(new DeleteObjectCommand({ Bucket: this.options.bucket, Key: objectKey }));
+  async delete(blobKey: string): Promise<void> {
+    await this.client.send(new DeleteObjectCommand({ Bucket: this.options.bucket, Key: blobKey }));
   }
 
-  async exists(objectKey: string): Promise<boolean> {
+  async exists(blobKey: string): Promise<boolean> {
     try {
-      await this.client.send(new HeadObjectCommand({ Bucket: this.options.bucket, Key: objectKey }));
+      await this.client.send(new HeadObjectCommand({ Bucket: this.options.bucket, Key: blobKey }));
       return true;
     } catch (error) {
       if (error instanceof Error && ["NoSuchKey", "NotFound"].includes(error.name)) return false;
@@ -489,11 +489,11 @@ export class S3Storage implements ObjectStorageBackend {
     }
   }
 
-  async read(objectKey: string, range?: ByteRange): Promise<BodyInit> {
+  async read(blobKey: string, range?: ByteRange): Promise<BodyInit> {
     try {
       const result = await this.client.send(new GetObjectCommand({
         Bucket: this.options.bucket,
-        Key: objectKey,
+        Key: blobKey,
         ...(range ? { Range: `bytes=${range.start}-${range.end}` } : {}),
       }));
       if (!result.Body) throw new AssetNotFoundError();
@@ -507,9 +507,9 @@ export class S3Storage implements ObjectStorageBackend {
     }
   }
 
-  async verify(objectKey: string, sizeBytes: number, contentHash: string): Promise<boolean> {
+  async verify(blobKey: string, sizeBytes: number, contentHash: string): Promise<boolean> {
     try {
-      const result = await this.client.send(new HeadObjectCommand({ Bucket: this.options.bucket, Key: objectKey, ChecksumMode: "ENABLED" }));
+      const result = await this.client.send(new HeadObjectCommand({ Bucket: this.options.bucket, Key: blobKey, ChecksumMode: "ENABLED" }));
       const checksumMatches = result.ChecksumSHA256 === Buffer.from(contentHash, "hex").toString("base64")
         || result.Metadata?.sha256 === contentHash;
       return result.ContentLength === sizeBytes && checksumMatches;

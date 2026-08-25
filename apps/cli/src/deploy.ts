@@ -182,7 +182,7 @@ export async function verifyDeployment(config: DeploymentConfig, releaseVersion:
   }
   const metadata = await fetch(`${origin}/.well-known/oauth-protected-resource/mcp`);
   if (!metadata.ok) throw new Error("MCP protected-resource metadata is unavailable");
-  const bearerDashboard = await fetch(`${origin}/api/dashboard/documents`, { headers: { Authorization: "Bearer invalid" } });
+  const bearerDashboard = await fetch(`${origin}/api/dashboard/objects`, { headers: { Authorization: "Bearer invalid" } });
   if (bearerDashboard.status !== 401) throw new Error("Security check failed: dashboard did not reject bearer authentication");
   const cookieMcp = await fetch(`${origin}/mcp`, { method: "POST", headers: { Cookie: "better-auth.session_token=invalid", "Content-Type": "application/json" }, body: "{}" });
   if (cookieMcp.status !== 401) throw new Error("Security check failed: MCP did not reject browser cookies");

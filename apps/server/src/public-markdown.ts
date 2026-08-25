@@ -13,7 +13,7 @@ function routable(target: PublicationProjectionTarget | undefined) {
 }
 
 /**
- * Project generic private document links into canonical UUID public routes.
+ * Project private object links into canonical UUID public routes.
  * Every non-public target and every otherwise-visible UUID is redacted.
  */
 export function projectPublicMarkdown(
@@ -21,7 +21,7 @@ export function projectPublicMarkdown(
   projection: PublicationProjectionTarget[],
 ): { bodyMarkdown: string; observedPublicIds: string[] } {
   const targets = new Map(projection.map((target) => [
-    target.target_document_id.toLowerCase(),
+    target.target_object_id.toLowerCase(),
     target,
   ]));
   const placeholders: string[] = [];
@@ -42,9 +42,9 @@ export function projectPublicMarkdown(
     .replace(/<[a-z!?/][^>]*(?:>|$)/gis, "");
 
   projected = projected.replace(
-    new RegExp(`!\\[([^\\]]*)\\]\\(context-use://document/(${UUID_SOURCE})(?:#[a-z0-9][a-z0-9_-]*)?\\)(\\{[^}\\r\\n]*\\})?`, "gi"),
-    (_whole, label: string, documentId: string, attributes: string | undefined) => {
-      const target = routable(targets.get(documentId.toLowerCase()));
+    new RegExp(`!\\[([^\\]]*)\\]\\(context-use://object/(${UUID_SOURCE})(?:#[a-z0-9][a-z0-9_-]*)?\\)(\\{[^}\\r\\n]*\\})?`, "gi"),
+    (_whole, label: string, objectId: string, attributes: string | undefined) => {
+      const target = routable(targets.get(objectId.toLowerCase()));
       if (!target || target.kind !== "asset") return label;
       const route = routePlaceholder(`/a/${target.publicId}`, target.publicId);
       return `![${label}](${route})${attributes ?? ""}`;
@@ -52,9 +52,9 @@ export function projectPublicMarkdown(
   );
 
   projected = projected.replace(
-    new RegExp(`(?<!!)\\[([^\\]]*)\\]\\(context-use://document/(${UUID_SOURCE})(#[a-z0-9][a-z0-9_-]*)?\\)`, "gi"),
-    (_whole, label: string, documentId: string, fragment: string | undefined) => {
-      const target = routable(targets.get(documentId.toLowerCase()));
+    new RegExp(`(?<!!)\\[([^\\]]*)\\]\\(context-use://object/(${UUID_SOURCE})(#[a-z0-9][a-z0-9_-]*)?\\)`, "gi"),
+    (_whole, label: string, objectId: string, fragment: string | undefined) => {
+      const target = routable(targets.get(objectId.toLowerCase()));
       if (!target) return label;
       const route = target.kind === "page"
         ? `/p/${target.publicId}${fragment ?? ""}`

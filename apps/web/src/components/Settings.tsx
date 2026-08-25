@@ -30,8 +30,8 @@ type FullBundleStatus = {
   phase: string;
   records_completed: number;
   records_total: number;
-  objects_completed: number;
-  objects_total: number;
+  blobs_completed: number;
+  blobs_total: number;
   bytes_completed: number;
   bytes_total: number;
   download_url?: string;
@@ -49,8 +49,8 @@ type KnowledgeImportStatus = {
   uploaded_parts: number[];
   records_completed: number;
   records_total: number;
-  objects_completed: number;
-  objects_total: number;
+  blobs_completed: number;
+  blobs_total: number;
   bytes_completed: number;
   bytes_total: number;
   authentication_options?: Parameters<typeof startAuthentication>[0]["optionsJSON"];
@@ -190,8 +190,8 @@ export function Settings({
         uploaded_parts: [],
         records_completed: 0,
         records_total: 0,
-        objects_completed: 0,
-        objects_total: 0,
+        blobs_completed: 0,
+        blobs_total: 0,
         bytes_completed: 0,
         bytes_total: Number(saved.size_bytes),
       };
@@ -456,8 +456,8 @@ export function Settings({
         phase: "snapshot",
         records_completed: 0,
         records_total: 0,
-        objects_completed: 0,
-        objects_total: 0,
+        blobs_completed: 0,
+        blobs_total: 0,
         bytes_completed: 0,
         bytes_total: bundleIntent.summary.estimated_bytes,
       });
@@ -506,8 +506,8 @@ export function Settings({
           uploaded_parts: [],
           records_completed: 0,
           records_total: 0,
-          objects_completed: 0,
-          objects_total: 0,
+          blobs_completed: 0,
+          blobs_total: 0,
           bytes_completed: 0,
           bytes_total: importFile.size,
         };
@@ -553,7 +553,7 @@ export function Settings({
         body: JSON.stringify({ intent_id: importJob.import_id, response }),
       });
       setImportJob({ ...importJob, status: "restoring", phase: "objects", bytes_completed: 0,
-        objects_completed: 0, records_completed: 0 });
+        blobs_completed: 0, records_completed: 0 });
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "Knowledge import authorization failed");
     } finally {
@@ -569,15 +569,15 @@ export function Settings({
   const importProgress = importJob
     ? importJob.status === "uploading"
       ? importJob.bytes_total > 0 ? importJob.bytes_completed / importJob.bytes_total : null
-      : importJob.objects_total > 0
-        ? importJob.objects_completed / importJob.objects_total
+      : importJob.blobs_total > 0
+        ? importJob.blobs_completed / importJob.blobs_total
         : null
     : null;
   return <main className="content-page settings-page"><header><div><span className="eyebrow">Owner-only controls</span><h1>Settings</h1></div><RunningRelease /></header>
     {message && <p>{message}</p>}
     <IntrinsicServices />
     <section><h2>Public entry point</h2>
-      <p>Choose which already-published document opens at the public home page. Publishing and editing remain separate decisions; this pointer never publishes private content.</p>
+      <p>Choose which already-published page opens at the public home page. Publishing and editing remain separate decisions; this pointer never publishes private content.</p>
       {publicEntrypointError && <p className="error" role="alert">{publicEntrypointError}</p>}
       {publicEntrypoint && <div className="public-entrypoint-setting">
         <label>Entry page<select value={publicEntrypointId} onChange={(event) => setPublicEntrypointId(event.target.value)}>
@@ -606,7 +606,7 @@ export function Settings({
       </div>
     </section>
     <section><h2>Full backup and migration</h2>
-      <p>Export every page, retained revision, source record, asset, internal link, and publication record in a versioned Context Use bundle. Original UUIDs are retained, so <code>context-use://document/&lt;uuid&gt;</code> links remain valid after import.</p>
+      <p>Export every page, retained revision, source record, asset, internal link, and publication record in a versioned Context Use bundle. Original UUIDs are retained, so <code>context-use://object/&lt;uuid&gt;</code> links remain valid after import.</p>
       <p>The bundle is an unencrypted logical backup, independent of the current SQL schema. Keep it somewhere private.</p>
       {bundleError && <p className="error" role="alert">{bundleError}</p>}
       {!bundleStatus && !bundleIntent && <button className="primary export-start-button" disabled={bundleWorking} onClick={() => void prepareFullBundle()}>{bundleWorking ? "Preparing…" : "Export full bundle with passkey"}</button>}
@@ -635,7 +635,7 @@ export function Settings({
           <button className="primary" disabled={!importFile || importWorking} onClick={() => void uploadFullBundle()}>{importWorking ? "Uploading…" : importJob?.status === "uploading" ? "Resume upload" : "Upload and validate"}</button>
         </div>}
         {importJob && !["awaiting_confirmation", "complete", "failed"].includes(importJob.status)
-          && <ProgressBar value={importProgress} label={importJob.status === "uploading" ? "Uploading bundle" : importJob.status === "validating" ? "Validating every record and object" : importJob.phase === "database" ? "Restoring database relationships" : "Restoring assets and content"} />}
+          && <ProgressBar value={importProgress} label={importJob.status === "uploading" ? "Uploading bundle" : importJob.status === "validating" ? "Validating every record and blob" : importJob.phase === "database" ? "Restoring database relationships" : "Restoring assets and content"} />}
         {importJob?.status === "awaiting_confirmation" && <div className="archive-upload"><div className="archive-upload-copy"><strong>Bundle verified</strong><small>Every frame passed structural and integrity validation. Owner authorization is required before restoring it.</small></div><button className="primary" disabled={importWorking} onClick={() => void authorizeImport()}>{importWorking ? "Waiting for passkey…" : "Import with passkey"}</button></div>}
         {importJob?.status === "complete" && <div className="archive-upload"><div className="archive-upload-copy"><strong>Knowledge import complete</strong><small>Original UUIDs, links, history, assets, and publication records were restored.</small></div></div>}
         {importJob?.status === "failed" && <div><p className="error" role="alert">{importJob.message || "The knowledge bundle could not be imported."}</p><button onClick={() => { setImportJob(null); setImportFile(null); }}>Choose another bundle</button></div>}
@@ -669,7 +669,7 @@ export function Settings({
     {bundleIntent && !bundleStatus && <ActionDialog
       eyebrow="Full knowledge backup"
       title="Export the complete knowledge base?"
-      description="This unencrypted logical bundle contains every retained record and immutable content object with its original UUID. A fresh owner-passkey verification is required."
+      description="This unencrypted logical bundle contains every retained record and immutable content blob with its original UUID. A fresh owner-passkey verification is required."
       confirmLabel="Verify and build bundle"
       workingLabel="Waiting for passkey…"
       working={bundleWorking}

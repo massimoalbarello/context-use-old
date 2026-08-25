@@ -1,27 +1,27 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { Pool } from "pg";
 import {
-  DocumentLinkRepository,
-  markdownObjectMetadata,
+  ObjectLinkRepository,
+  markdownBlobMetadata,
   SourceRecordRepository,
-  type MarkdownObjectMetadata,
-  type MarkdownObjectStore,
+  type MarkdownBlobMetadata,
+  type MarkdownBlobStore,
 } from "../src/index.ts";
 import { disposableDatabaseUrl } from "../src/disposable-database.ts";
 
 const databaseUrl = await disposableDatabaseUrl();
 const describeDatabase = databaseUrl ? describe : describe.skip;
 
-class MemoryMarkdownStore implements MarkdownObjectStore {
+class MemoryMarkdownStore implements MarkdownBlobStore {
   readonly bodies = new Map<string, string>();
 
-  async write(revisionId: string, markdown: string): Promise<MarkdownObjectMetadata> {
-    const metadata = markdownObjectMetadata(revisionId, markdown);
+  async write(revisionId: string, markdown: string): Promise<MarkdownBlobMetadata> {
+    const metadata = markdownBlobMetadata(revisionId, markdown);
     this.bodies.set(metadata.body_object_key, markdown);
     return metadata;
   }
 
-  async read(metadata: MarkdownObjectMetadata): Promise<string> {
+  async read(metadata: MarkdownBlobMetadata): Promise<string> {
     const body = this.bodies.get(metadata.body_object_key);
     if (body === undefined) throw new Error("missing body");
     return body;
@@ -52,12 +52,12 @@ describeDatabase("object-backed source records", () => {
         sourceUpdatedAt: "2026-08-20T08:00:00.000Z",
         markdown: "# Issue 42\n\nOpen.\n",
       });
-      expect(added.reference).toBe(`context-use://document/${added.document_id}`);
+      expect(added.reference).toBe(`context-use://object/${added.object_id}`);
       expect(added.current_revision_id).not.toBeNull();
       const initialSearchChunks = await pool.query<{ ctid: string }>(
         `SELECT ctid::text AS ctid FROM source_record_search_chunks
          WHERE document_id=$1 ORDER BY chunk_number`,
-        [added.document_id],
+        [added.object_id],
       );
       expect(initialSearchChunks.rowCount).toBeGreaterThan(0);
 
@@ -71,7 +71,7 @@ describeDatabase("object-backed source records", () => {
       expect((await pool.query<{ ctid: string }>(
         `SELECT ctid::text AS ctid FROM source_record_search_chunks
          WHERE document_id=$1 ORDER BY chunk_number`,
-        [added.document_id],
+        [added.object_id],
       )).rows).toEqual(initialSearchChunks.rows);
 
       // A pre-chunk upgrade row may have only the legacy base vector. An
@@ -81,11 +81,11 @@ describeDatabase("object-backed source records", () => {
         `UPDATE source_records
          SET search_vector=to_tsvector('english','legacyupgradevector')
          WHERE document_id=$1`,
-        [added.document_id],
+        [added.object_id],
       );
       await pool.query(
         "DELETE FROM source_record_search_chunks WHERE document_id=$1",
-        [added.document_id],
+        [added.object_id],
       );
       await records.write({
         ...base,
@@ -97,11 +97,11 @@ describeDatabase("object-backed source records", () => {
         `SELECT 1 FROM source_records
          WHERE document_id=$1
            AND search_vector @@ plainto_tsquery('english','legacyupgradevector')`,
-        [added.document_id],
+        [added.object_id],
       )).rowCount).toBe(1);
       expect((await pool.query(
         "SELECT 1 FROM source_record_search_chunks WHERE document_id=$1",
-        [added.document_id],
+        [added.object_id],
       )).rowCount).toBe(0);
 
       const changed = await records.write({
@@ -110,7 +110,7 @@ describeDatabase("object-backed source records", () => {
         sourceUpdatedAt: "2026-08-20T10:00:00.000Z",
         markdown: "# Issue 42\n\nClosed.\n",
       });
-      expect(changed.document_id).toBe(added.document_id);
+      expect(changed.object_id).toBe(added.object_id);
       expect(changed.current_revision_id).not.toBe(added.current_revision_id);
       expect(changed.reference).toBe(added.reference);
 
@@ -151,7 +151,7 @@ describeDatabase("object-backed source records", () => {
         markdown: null,
       });
       expect(deleted).toEqual(changed);
-      expect(await records.get(deleted.document_id)).toMatchObject({
+      expect(await records.get(deleted.object_id)).toMatchObject({
         ...deleted,
         authority: "source",
         revision_number: 2,
@@ -170,7 +170,7 @@ describeDatabase("object-backed source records", () => {
           deleted_at: new Date("2026-08-20T11:00:00.000Z"),
         }),
       ]);
-      expect(await records.metadata(deleted.document_id)).toMatchObject({
+      expect(await records.metadata(deleted.object_id)).toMatchObject({
         ...deleted,
         authority: "source",
         deleted_at: new Date("2026-08-20T11:00:00.000Z"),
@@ -207,7 +207,7 @@ describeDatabase("object-backed source records", () => {
       });
       expect(unknownDeletion.current_revision_id).toBeNull();
       expect(unknownDeletion.reference).toBe(
-        `context-use://document/${unknownDeletion.document_id}`,
+        `context-use://object/${unknownDeletion.object_id}`,
       );
       const tombstone = await pool.query<{ document_id: string; current_revision_id: string | null }>(
         `SELECT document_id,current_revision_id FROM source_records
@@ -219,7 +219,7 @@ describeDatabase("object-backed source records", () => {
         "SELECT 1 FROM hypermedia_document_revisions WHERE document_id=$1",
         [tombstone.rows[0]!.document_id],
       )).rowCount).toBe(0);
-      expect(await records.get(unknownDeletion.document_id)).toMatchObject({
+      expect(await records.get(unknownDeletion.object_id)).toMatchObject({
         ...unknownDeletion,
         authority: "source",
         source_record_id: "unknown-deletion",
@@ -278,14 +278,14 @@ describeDatabase("object-backed source records", () => {
         markdown: "# Reused issue\n\nRe-created connection.\n",
       });
 
-      expect(reconnected.document_id).not.toBe(original.document_id);
-      expect(original.document_id).not.toBe(legacyDocumentId);
-      expect(reconnected.document_id).not.toBe(legacyDocumentId);
-      expect(await records.metadata(original.document_id)).toMatchObject({
+      expect(reconnected.object_id).not.toBe(original.object_id);
+      expect(original.object_id).not.toBe(legacyDocumentId);
+      expect(reconnected.object_id).not.toBe(legacyDocumentId);
+      expect(await records.metadata(original.object_id)).toMatchObject({
         connection_instance_id: 701,
         connection_id: connectionId,
       });
-      expect(await records.metadata(reconnected.document_id)).toMatchObject({
+      expect(await records.metadata(reconnected.object_id)).toMatchObject({
         connection_instance_id: 702,
         connection_id: connectionId,
       });
@@ -311,8 +311,8 @@ describeDatabase("object-backed source records", () => {
       );
       expect(streams.rows).toEqual([
         { document_id: legacyDocumentId, connection_instance_id: null, deleted: false },
-        { document_id: original.document_id, connection_instance_id: "701", deleted: false },
-        { document_id: reconnected.document_id, connection_instance_id: "702", deleted: true },
+        { document_id: original.object_id, connection_instance_id: "701", deleted: false },
+        { document_id: reconnected.object_id, connection_instance_id: "702", deleted: true },
       ]);
     } finally {
       await pool.query(
@@ -360,13 +360,13 @@ describeDatabase("object-backed source records", () => {
       expect(await records.searchMetadata(
         `boundaryfirstneedle ${crossingTerm} finalsearchneedle`,
       ))
-        .toEqual([expect.objectContaining({ document_id: written.document_id })]);
+        .toEqual([expect.objectContaining({ object_id: written.object_id })]);
       expect((await pool.query<{ count: number }>(
         `SELECT count(*)::int AS count
          FROM source_record_search_chunks WHERE document_id=$1`,
-        [written.document_id],
+        [written.object_id],
       )).rows[0]!.count).toBeGreaterThan(1);
-      expect((await records.get(written.document_id))?.body_markdown).toBe(markdown);
+      expect((await records.get(written.object_id))?.body_markdown).toBe(markdown);
     } finally {
       await pool.query(
         `DELETE FROM hypermedia_documents
@@ -380,7 +380,7 @@ describeDatabase("object-backed source records", () => {
     const connectionId = `inert-link-connection-${crypto.randomUUID()}`;
     const store = new MemoryMarkdownStore();
     const records = new SourceRecordRepository(pool, store);
-    const links = new DocumentLinkRepository(pool);
+    const links = new ObjectLinkRepository(pool);
     try {
       const target = await records.write({
         integration: "agent-conversations",
@@ -393,7 +393,7 @@ describeDatabase("object-backed source records", () => {
         sourceUpdatedAt: "2026-08-20T09:00:00.000Z",
         markdown: "# Evidence target\n",
       });
-      const markdown = `[Incidental raw URI](context-use://document/${target.document_id})`;
+      const markdown = `[Incidental raw URI](context-use://object/${target.object_id})`;
       const written = await records.write({
         integration: "agent-conversations",
         connectionInstanceId: 303,
@@ -406,13 +406,13 @@ describeDatabase("object-backed source records", () => {
         markdown,
       });
 
-      expect((await records.get(written.document_id))?.body_markdown).toBe(markdown);
+      expect((await records.get(written.object_id))?.body_markdown).toBe(markdown);
       expect(await links.revisionIndex(written.current_revision_id!)).toMatchObject({
         source_revision_id: written.current_revision_id,
         links_indexed_at: expect.anything(),
         target_document_ids: [],
       });
-      expect(await links.backlinks(target.document_id)).toEqual({
+      expect(await links.backlinks(target.object_id)).toEqual({
         backlinks: [],
         has_more: false,
       });

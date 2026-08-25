@@ -281,7 +281,7 @@ fi
 # maintenance response for these hostnames before Nango is touched at all.
 #
 # Storage is the only knowledge service running while a fresh installation
-# writes its required hypermedia documents or an existing installation
+# writes its required operational pages or an existing installation
 # synchronizes its configured global guide with this release.
 docker compose --env-file "${secrets}/runtime.env" up -d --wait storage
 docker compose --env-file "${secrets}/runtime.env" up \

@@ -2,29 +2,29 @@ import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type {
   Actor,
-  ArchiveKnowledgeDocumentInput,
-  CreateKnowledgeDocumentInput,
-  UpdateKnowledgeDocumentInput,
+  ArchivePageInput,
+  CreatePageInput,
+  UpdatePageInput,
 } from "@context-use/shared";
 import {
-  assertMarkdownObject,
+  assertMarkdownBlob,
   mapConcurrently,
   MAX_KNOWLEDGE_PAGE_BYTES,
-  type MarkdownObjectMetadata,
-  type MarkdownObjectStore,
-} from "./documents.ts";
-import { genericDocumentTargets } from "./document-link-contract.ts";
+  type MarkdownBlobMetadata,
+  type MarkdownBlobStore,
+} from "./markdown-blobs.ts";
+import { genericObjectTargets } from "./object-link-contract.ts";
 
 export class VersionConflictError extends Error {
   constructor(readonly currentVersion: number) {
-    super(`Document changed; current revision is ${currentVersion}`);
+    super(`Page changed; current revision is ${currentVersion}`);
     this.name = "VersionConflictError";
   }
 }
 
 export class PublicationStateError extends Error {
   constructor() {
-    super("Published documents must be explicitly unpublished before they can be archived");
+    super("Published pages must be explicitly unpublished before they can be archived");
     this.name = "PublicationStateError";
   }
 }
@@ -33,8 +33,8 @@ export type KnowledgeRevisionContractProvenance =
   | "authored"
   | "imported";
 
-export type KnowledgeDocumentMetadata = {
-  document_id: string;
+export type PageMetadata = {
+  object_id: string;
   current_revision_id: string;
   public_id: string | null;
   revision_number: number;
@@ -47,12 +47,12 @@ export type KnowledgeDocumentMetadata = {
   updated_at: Date | string;
 };
 
-export type KnowledgeDocument = KnowledgeDocumentMetadata & {
+export type KnowledgePage = PageMetadata & {
   body_markdown: string;
 };
 
-export type KnowledgeDocumentRevision = {
-  document_id: string;
+export type PageRevision = {
+  object_id: string;
   revision_id: string;
   revision_number: number;
   title: string;
@@ -63,19 +63,19 @@ export type KnowledgeDocumentRevision = {
   created_at: Date | string;
   link_contract: "generic_document_v1" | null;
   contract_provenance: KnowledgeRevisionContractProvenance | null;
-  target_document_ids: string[] | null;
+  target_object_ids: string[] | null;
   body_markdown: string;
 };
 
-export type KnowledgeDocumentChangeKind = "created" | "updated" | "archived" | "deleted";
+export type PageChangeKind = "created" | "updated" | "archived" | "deleted";
 
-export type KnowledgeDocumentChange = {
+export type PageChange = {
   cursor: string;
-  document_id: string;
+  object_id: string;
   revision_id: string;
   revision_number: number;
   previous_revision_number: number | null;
-  change_kind: KnowledgeDocumentChangeKind;
+  change_kind: PageChangeKind;
   title: string;
   commit_message: string;
   actor_kind: Actor["kind"] | null;
@@ -83,16 +83,16 @@ export type KnowledgeDocumentChange = {
   changed_at: Date | string;
 };
 
-export type KnowledgeDocumentChangeBatch = {
-  changes: KnowledgeDocumentChange[];
+export type PageChangeBatch = {
+  changes: PageChange[];
   next_cursor: string;
   next_page_token?: string;
   has_more: boolean;
 };
 
-type StoredKnowledgeDocumentRow = KnowledgeDocumentMetadata & MarkdownObjectMetadata;
-type StoredKnowledgeRevisionRow = Omit<KnowledgeDocumentRevision, "body_markdown"> & MarkdownObjectMetadata;
-type KnowledgeDocumentChangeRow = Omit<KnowledgeDocumentChange, "cursor"> & {
+type StoredKnowledgePageRow = PageMetadata & MarkdownBlobMetadata;
+type StoredKnowledgeRevisionRow = Omit<PageRevision, "body_markdown"> & MarkdownBlobMetadata;
+type PageChangeRow = Omit<PageChange, "cursor"> & {
   change_sequence: string;
 };
 
@@ -101,11 +101,11 @@ const CHANGE_PAGE_TOKEN_PREFIX = "cu-page-scan-v1.";
 const MAX_BIGINT = 9_223_372_036_854_775_807n;
 
 function parseBase36(value: string): bigint {
-  if (!/^[0-9a-z]+$/.test(value)) throw new Error("Invalid knowledge document change cursor");
+  if (!/^[0-9a-z]+$/.test(value)) throw new Error("Invalid page change cursor");
   let result = 0n;
   for (const character of value) {
     result = result * 36n + BigInt(parseInt(character, 36));
-    if (result > MAX_BIGINT) throw new Error("Invalid knowledge document change cursor");
+    if (result > MAX_BIGINT) throw new Error("Invalid page change cursor");
   }
   return result;
 }
@@ -117,7 +117,7 @@ function changeCursor(sequence: string | bigint): string {
 function parseChangeCursor(cursor?: string): bigint {
   if (!cursor) return 0n;
   if (!cursor.startsWith(CHANGE_CURSOR_PREFIX)) {
-    throw new Error("Invalid knowledge document change cursor");
+    throw new Error("Invalid page change cursor");
   }
   return parseBase36(cursor.slice(CHANGE_CURSOR_PREFIX.length));
 }
@@ -128,15 +128,15 @@ function pageToken(after: bigint, through: bigint, position: bigint): string {
 
 function parsePageToken(token: string): { after: bigint; through: bigint; position: bigint } {
   if (!token.startsWith(CHANGE_PAGE_TOKEN_PREFIX)) {
-    throw new Error("Invalid knowledge document change page token");
+    throw new Error("Invalid page change page token");
   }
   const parts = token.slice(CHANGE_PAGE_TOKEN_PREFIX.length).split(".");
-  if (parts.length !== 3) throw new Error("Invalid knowledge document change page token");
+  if (parts.length !== 3) throw new Error("Invalid page change page token");
   const after = parseBase36(parts[0]!);
   const through = parseBase36(parts[1]!);
   const position = parseBase36(parts[2]!);
   if (after > position || position > through) {
-    throw new Error("Invalid knowledge document change page token");
+    throw new Error("Invalid page change page token");
   }
   return { after, through, position };
 }
@@ -176,7 +176,7 @@ function activePublicationBlocked(error: unknown): boolean {
 }
 
 const CURRENT_DOCUMENT_SELECT = `
-  SELECT page.id AS document_id,page.current_version_id AS current_revision_id,
+  SELECT page.id AS object_id,page.current_version_id AS current_revision_id,
     resource.public_id,
     version.version_number AS revision_number,version.title,version.summary,
     page.archived_at,
@@ -215,31 +215,31 @@ async function transaction<T>(pool: Pool, work: (client: PoolClient) => Promise<
   }
 }
 
-export class KnowledgeDocumentRepository {
+export class KnowledgePageRepository {
   constructor(
     private readonly pool: Pool,
-    private readonly bodies: MarkdownObjectStore,
+    private readonly bodies: MarkdownBlobStore,
   ) {}
 
-  private async storedBody(revisionId: string, markdown: string): Promise<MarkdownObjectMetadata> {
+  private async storedBody(revisionId: string, markdown: string): Promise<MarkdownBlobMetadata> {
     if (Buffer.byteLength(markdown, "utf8") > MAX_KNOWLEDGE_PAGE_BYTES) {
       throw new Error("Knowledge document Markdown exceeds the page size limit");
     }
     return this.bodies.write(revisionId, markdown);
   }
 
-  private async hydrate(row: StoredKnowledgeDocumentRow | undefined): Promise<KnowledgeDocument | null> {
+  private async hydrate(row: StoredKnowledgePageRow | undefined): Promise<KnowledgePage | null> {
     if (!row) return null;
     const { body_object_key, body_size_bytes, body_content_hash, ...metadata } = row;
-    const body_markdown = assertMarkdownObject(
+    const body_markdown = assertMarkdownBlob(
       await this.bodies.read({ body_object_key, body_size_bytes, body_content_hash }),
       { body_object_key, body_size_bytes, body_content_hash },
     );
     return { ...metadata, body_markdown };
   }
 
-  private async getWith(client: Pool | PoolClient, documentId: string): Promise<KnowledgeDocument | null> {
-    const result = await client.query<StoredKnowledgeDocumentRow>(
+  private async getWith(client: Pool | PoolClient, documentId: string): Promise<KnowledgePage | null> {
+    const result = await client.query<StoredKnowledgePageRow>(
       `${CURRENT_DOCUMENT_SELECT} WHERE page.id=$1`,
       [documentId],
     );
@@ -249,8 +249,8 @@ export class KnowledgeDocumentRepository {
   private async getMetadataWith(
     client: Pool | PoolClient,
     documentId: string,
-  ): Promise<KnowledgeDocumentMetadata | null> {
-    const result = await client.query<StoredKnowledgeDocumentRow>(
+  ): Promise<PageMetadata | null> {
+    const result = await client.query<StoredKnowledgePageRow>(
       `${CURRENT_DOCUMENT_SELECT} WHERE page.id=$1`,
       [documentId],
     );
@@ -265,10 +265,10 @@ export class KnowledgeDocumentRepository {
     return metadata;
   }
 
-  async create(input: CreateKnowledgeDocumentInput, actor: Actor): Promise<KnowledgeDocument> {
+  async create(input: CreatePageInput, actor: Actor): Promise<KnowledgePage> {
     const documentId = randomUUID();
     const revisionId = randomUUID();
-    const targets = genericDocumentTargets(input.body_markdown);
+    const targets = genericObjectTargets(input.body_markdown);
     const stored = await this.storedBody(revisionId, input.body_markdown);
     return transaction(this.pool, async (client) => {
       await client.query(
@@ -305,16 +305,16 @@ export class KnowledgeDocumentRepository {
 
   async update(
     documentId: string,
-    input: UpdateKnowledgeDocumentInput,
+    input: UpdatePageInput,
     actor: Actor,
-  ): Promise<KnowledgeDocument | null> {
+  ): Promise<KnowledgePage | null> {
     const preflight = await this.getMetadataWith(this.pool, documentId);
     if (!preflight || preflight.archived_at) return null;
     if (preflight.revision_number !== input.expected_revision_number) {
       throw new VersionConflictError(preflight.revision_number);
     }
     const revisionId = randomUUID();
-    const targets = genericDocumentTargets(input.body_markdown);
+    const targets = genericObjectTargets(input.body_markdown);
     const stored = await this.storedBody(revisionId, input.body_markdown);
     return transaction(this.pool, async (client) => {
       await client.query("SELECT lock_operational_document($1)", [documentId]);
@@ -370,9 +370,9 @@ export class KnowledgeDocumentRepository {
 
   async archive(
     documentId: string,
-    input: ArchiveKnowledgeDocumentInput,
+    input: ArchivePageInput,
     actor: Actor,
-  ): Promise<KnowledgeDocument | null> {
+  ): Promise<KnowledgePage | null> {
     const preflight = await this.getMetadataWith(this.pool, documentId);
     if (!preflight) return null;
     if (preflight.archived_at) return this.get(documentId);
@@ -381,7 +381,7 @@ export class KnowledgeDocumentRepository {
     }
     const source = (await this.get(documentId))!;
     const revisionId = randomUUID();
-    const targets = genericDocumentTargets(source.body_markdown);
+    const targets = genericObjectTargets(source.body_markdown);
     const stored = await this.storedBody(revisionId, source.body_markdown);
     return transaction(this.pool, async (client) => {
       await client.query("SELECT lock_operational_document($1)", [documentId]);
@@ -446,23 +446,23 @@ export class KnowledgeDocumentRepository {
     });
   }
 
-  async get(documentId: string): Promise<KnowledgeDocument | null> {
+  async get(documentId: string): Promise<KnowledgePage | null> {
     return this.getWith(this.pool, documentId);
   }
 
   async history(
     documentId: string,
     options: { before_revision_number?: number; limit?: number } = {},
-  ): Promise<{ revisions: KnowledgeDocumentRevision[]; has_more: boolean }> {
+  ): Promise<{ revisions: PageRevision[]; has_more: boolean }> {
     const limit = boundedLimit(options.limit, 50, 100);
     const result = await this.pool.query<StoredKnowledgeRevisionRow>(
-      `SELECT version.page_id AS document_id,version.id AS revision_id,
+      `SELECT version.page_id AS object_id,version.id AS revision_id,
          version.version_number AS revision_number,
          version.title,version.summary,version.commit_message,
          version.actor_kind,version.actor_subject,version.created_at,
          contract.link_contract::text AS link_contract,
          contract.provenance::text AS contract_provenance,
-         contract.target_document_ids,
+         contract.target_document_ids AS target_object_ids,
          revision.body_object_key,revision.body_size_bytes,revision.body_content_hash
        FROM knowledge_page_versions version
        JOIN hypermedia_document_revisions revision
@@ -477,7 +477,7 @@ export class KnowledgeDocumentRepository {
     const rows = result.rows.slice(0, limit);
     const revisions = await mapConcurrently(rows, 8, async (row) => {
       const { body_object_key, body_size_bytes, body_content_hash, ...metadata } = row;
-      const body_markdown = assertMarkdownObject(
+      const body_markdown = assertMarkdownBlob(
         await this.bodies.read({ body_object_key, body_size_bytes, body_content_hash }),
         { body_object_key, body_size_bytes, body_content_hash },
       );
@@ -489,15 +489,15 @@ export class KnowledgeDocumentRepository {
   async revision(
     documentId: string,
     revisionNumber: number,
-  ): Promise<KnowledgeDocumentRevision | null> {
+  ): Promise<PageRevision | null> {
     const result = await this.pool.query<StoredKnowledgeRevisionRow>(
-      `SELECT version.page_id AS document_id,version.id AS revision_id,
+      `SELECT version.page_id AS object_id,version.id AS revision_id,
          version.version_number AS revision_number,
          version.title,version.summary,version.commit_message,
          version.actor_kind,version.actor_subject,version.created_at,
          contract.link_contract::text AS link_contract,
          contract.provenance::text AS contract_provenance,
-         contract.target_document_ids,
+         contract.target_document_ids AS target_object_ids,
          revision.body_object_key,revision.body_size_bytes,revision.body_content_hash
        FROM knowledge_page_versions version
        JOIN hypermedia_document_revisions revision
@@ -509,7 +509,7 @@ export class KnowledgeDocumentRepository {
     const row = result.rows[0];
     if (!row) return null;
     const { body_object_key, body_size_bytes, body_content_hash, ...metadata } = row;
-    const body_markdown = assertMarkdownObject(
+    const body_markdown = assertMarkdownBlob(
       await this.bodies.read({ body_object_key, body_size_bytes, body_content_hash }),
       { body_object_key, body_size_bytes, body_content_hash },
     );
@@ -520,7 +520,7 @@ export class KnowledgeDocumentRepository {
     documentId: string,
     afterRevisionNumber: number,
     throughRevisionNumber: number,
-  ): Promise<KnowledgeDocumentRevision | null> {
+  ): Promise<PageRevision | null> {
     const result = await this.pool.query<{ revision_number: number }>(
       `SELECT version.version_number AS revision_number
        FROM knowledge_page_versions version
@@ -539,7 +539,7 @@ export class KnowledgeDocumentRepository {
     cursor?: string;
     pageToken?: string;
     limit?: number;
-  } = {}): Promise<KnowledgeDocumentChangeBatch> {
+  } = {}): Promise<PageChangeBatch> {
     if (options.cursor && options.pageToken) {
       throw new Error("Provide a cursor or page token, not both");
     }
@@ -554,7 +554,7 @@ export class KnowledgeDocumentRepository {
       through = await knowledgeChangeWindowHead(this.pool, after);
       position = after;
     }
-    const result = await this.pool.query<KnowledgeDocumentChangeRow>(
+    const result = await this.pool.query<PageChangeRow>(
       `WITH latest_per_document AS (
          SELECT DISTINCT ON (page_id)
            change_sequence,page_id,version_id,version_number,change_kind,title,
@@ -564,7 +564,7 @@ export class KnowledgeDocumentRepository {
          ORDER BY page_id,change_sequence DESC
        )
        SELECT latest.change_sequence::text AS change_sequence,
-         latest.page_id AS document_id,latest.version_id AS revision_id,
+         latest.page_id AS object_id,latest.version_id AS revision_id,
          latest.version_number AS revision_number,
          baseline.version_number AS previous_revision_number,
          latest.change_kind,latest.title,latest.commit_message,
@@ -601,17 +601,17 @@ export class KnowledgeDocumentRepository {
   async recentChanges(options: {
     before?: string;
     limit?: number;
-  } = {}): Promise<KnowledgeDocumentChangeBatch> {
+  } = {}): Promise<PageChangeBatch> {
     const limit = Math.min(Math.max(options.limit ?? 50, 1), 100);
     const before = options.before ? parseChangeCursor(options.before) : null;
-    const result = await this.pool.query<KnowledgeDocumentChangeRow>(
+    const result = await this.pool.query<PageChangeRow>(
       `WITH cursor_position AS (
          SELECT changed_at,change_sequence
          FROM knowledge_page_changes
          WHERE change_sequence=$1::bigint
        )
        SELECT changes.change_sequence::text AS change_sequence,
-         changes.page_id AS document_id,changes.version_id AS revision_id,
+         changes.page_id AS object_id,changes.version_id AS revision_id,
          changes.version_number AS revision_number,
          NULL::integer AS previous_revision_number,changes.change_kind,
          changes.title,changes.commit_message,changes.actor_kind,

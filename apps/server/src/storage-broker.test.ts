@@ -3,10 +3,10 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MAX_MARKDOWN_DOCUMENT_BYTES } from "@context-use/database";
+import { MAX_MARKDOWN_BLOB_BYTES } from "@context-use/database";
 import { createStorageBrokerApp } from "./storage-app.ts";
 import { BrokeredStorage } from "./storage-client.ts";
-import { ObjectAlreadyExistsError, type ByteRange, type GeneratedObjectMetadata, type ObjectStorageBackend, type StoredAsset } from "./storage.ts";
+import { BlobAlreadyExistsError, type ByteRange, type GeneratedBlobMetadata, type BlobStorageBackend, type StoredBlob } from "./storage.ts";
 
 const tokens = {
   dashboard: "dashboard-token-that-is-long-and-private",
@@ -14,8 +14,8 @@ const tokens = {
   public: "public-token-that-is-long-and-private",
 };
 const publishedKey = "objects/11111111-1111-4111-8111-111111111111";
-const privateKey = "objects/22222222-2222-4222-8222-222222222222";
-const newKey = "objects/33333333-3333-4333-8333-333333333333";
+const privateKey = "blobs/22222222-2222-4222-8222-222222222222";
+const newKey = "blobs/33333333-3333-4333-8333-333333333333";
 const bundleKey = "bundles/44444444-4444-4444-8444-444444444444.cuse";
 const publicDocumentKey = "documents/public/55555555-5555-4555-8555-555555555555.md";
 const publicArtifactKey = "artifacts/public/88888888-8888-4888-8888-888888888888";
@@ -31,8 +31,8 @@ function privateAssets(
       if (!row) return null;
       const bytes = Buffer.from(row.bytes);
       return {
-        document_id: id,
-        object_key: `objects/${id}`,
+        object_id: id,
+        blob_key: `blobs/${id}`,
         filename: row.filename,
         content_type: row.contentType,
         size_bytes: bytes.byteLength,
@@ -40,96 +40,96 @@ function privateAssets(
       };
     },
     getDeletedForStorage: async (id: string) => deleted.has(id)
-      ? { document_id: id, object_key: `objects/${id}` }
+      ? { object_id: id, blob_key: `blobs/${id}` }
       : null,
   };
 }
 
-class MemoryStorage implements ObjectStorageBackend {
+class MemoryStorage implements BlobStorageBackend {
   readonly objects = new Map<string, Uint8Array>([
     [publishedKey, Buffer.from("published")],
     [privateKey, Buffer.from("private")],
   ]);
-  readonly generated = new Map<string, GeneratedObjectMetadata>();
+  readonly generated = new Map<string, GeneratedBlobMetadata>();
   readonly pendingImmutableWrites = new Map<string, Promise<void>>();
   immutableCreates = 0;
 
-  async write(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void> {
-    this.objects.set(asset.objectKey, new Uint8Array(await new Response(body).arrayBuffer()));
+  async write(asset: StoredBlob, body: ReadableStream<Uint8Array> | null): Promise<void> {
+    this.objects.set(asset.blobKey, new Uint8Array(await new Response(body).arrayBuffer()));
   }
 
-  async writeOnce(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void> {
-    const pending = this.pendingImmutableWrites.get(asset.objectKey);
+  async writeOnce(asset: StoredBlob, body: ReadableStream<Uint8Array> | null): Promise<void> {
+    const pending = this.pendingImmutableWrites.get(asset.blobKey);
     if (pending) {
       await pending;
-      throw new ObjectAlreadyExistsError();
+      throw new BlobAlreadyExistsError();
     }
-    if (this.objects.has(asset.objectKey)) throw new ObjectAlreadyExistsError();
+    if (this.objects.has(asset.blobKey)) throw new BlobAlreadyExistsError();
     let release!: () => void;
     const write = new Promise<void>((resolve) => { release = resolve; });
-    this.pendingImmutableWrites.set(asset.objectKey, write);
+    this.pendingImmutableWrites.set(asset.blobKey, write);
     try {
-      this.objects.set(asset.objectKey, new Uint8Array(await new Response(body).arrayBuffer()));
+      this.objects.set(asset.blobKey, new Uint8Array(await new Response(body).arrayBuffer()));
       this.immutableCreates += 1;
     } finally {
-      this.pendingImmutableWrites.delete(asset.objectKey);
+      this.pendingImmutableWrites.delete(asset.blobKey);
       release();
     }
   }
 
-  async delete(objectKey: string): Promise<void> {
-    this.objects.delete(objectKey);
+  async delete(blobKey: string): Promise<void> {
+    this.objects.delete(blobKey);
   }
 
-  async writeBundle(objectKey: string, body: ReadableStream<Uint8Array> | null): Promise<GeneratedObjectMetadata> {
+  async writeBundle(blobKey: string, body: ReadableStream<Uint8Array> | null): Promise<GeneratedBlobMetadata> {
     const bytes = new Uint8Array(await new Response(body).arrayBuffer());
     const metadata = {
       sizeBytes: bytes.byteLength,
       contentHash: createHash("sha256").update(bytes).digest("hex"),
     };
-    this.objects.set(objectKey, bytes);
-    this.generated.set(objectKey, metadata);
+    this.objects.set(blobKey, bytes);
+    this.generated.set(blobKey, metadata);
     return metadata;
   }
 
-  async inspectBundle(objectKey: string): Promise<GeneratedObjectMetadata | null> {
-    return this.generated.get(objectKey) ?? null;
+  async inspectBundle(blobKey: string): Promise<GeneratedBlobMetadata | null> {
+    return this.generated.get(blobKey) ?? null;
   }
 
-  async deleteBundle(objectKey: string): Promise<void> {
-    this.objects.delete(objectKey);
-    this.generated.delete(objectKey);
+  async deleteBundle(blobKey: string): Promise<void> {
+    this.objects.delete(blobKey);
+    this.generated.delete(blobKey);
   }
 
-  async writeImportPart(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void> {
+  async writeImportPart(asset: StoredBlob, body: ReadableStream<Uint8Array> | null): Promise<void> {
     return this.writeOnce(asset, body);
   }
 
-  async inspectImportPart(objectKey: string): Promise<GeneratedObjectMetadata | null> {
-    const bytes = this.objects.get(objectKey);
+  async inspectImportPart(blobKey: string): Promise<GeneratedBlobMetadata | null> {
+    const bytes = this.objects.get(blobKey);
     return bytes ? {
       sizeBytes: bytes.byteLength,
       contentHash: createHash("sha256").update(bytes).digest("hex"),
     } : null;
   }
 
-  async deleteImportPart(objectKey: string): Promise<void> {
-    return this.delete(objectKey);
+  async deleteImportPart(blobKey: string): Promise<void> {
+    return this.delete(blobKey);
   }
 
-  async exists(objectKey: string): Promise<boolean> {
-    return this.objects.has(objectKey);
+  async exists(blobKey: string): Promise<boolean> {
+    return this.objects.has(blobKey);
   }
 
-  async read(objectKey: string, range?: ByteRange): Promise<BodyInit> {
-    const bytes = this.objects.get(objectKey);
+  async read(blobKey: string, range?: ByteRange): Promise<BodyInit> {
+    const bytes = this.objects.get(blobKey);
     if (!bytes) throw new Error("missing");
     const selected = range ? bytes.slice(range.start, range.end + 1) : bytes;
     return new Blob([Buffer.from(selected)]);
   }
 
-  async verify(objectKey: string, sizeBytes: number, contentHash: string): Promise<boolean> {
-    const bytes = this.objects.get(objectKey);
+  async verify(blobKey: string, sizeBytes: number, contentHash: string): Promise<boolean> {
+    const bytes = this.objects.get(blobKey);
     return Boolean(bytes && bytes.byteLength === sizeBytes
       && createHash("sha256").update(bytes!).digest("hex") === contentHash);
   }
@@ -153,7 +153,7 @@ describe("storage broker capabilities", () => {
     const linkedPublicId = "66666666-6666-4666-8666-666666666666";
     const sourceKey = `documents/private/${revisionId}.md`;
     const destinationKey = `documents/public/${artifactId}.md`;
-    const source = Buffer.from(`See [the linked page](context-use://document/${targetId}).`);
+    const source = Buffer.from(`See [the linked page](context-use://object/${targetId}).`);
     storage.objects.set(sourceKey, source);
     let finalized: { token: string; receipt: unknown } | null = null;
     const claims = {
@@ -183,7 +183,7 @@ describe("storage broker capabilities", () => {
           projected_target_public_ids: [linkedPublicId],
           projection_receipt_hash: "a".repeat(64),
           target_projection: [{
-            target_document_id: targetId,
+            target_object_id: targetId,
             outcome: "active_public" as const,
             public_id: linkedPublicId,
             public_target_kind: "page" as const,
@@ -306,7 +306,7 @@ describe("storage broker capabilities", () => {
     expect(published.status).toBe(404);
     expect((await app.handle(authorized(tokens.public, "/public/object?path=private%2Fasset"))).status).toBe(404);
     expect((await app.handle(authorized(tokens.public, `/public/object?key=${publishedKey}`))).status).toBe(404);
-    expect((await app.handle(authorized(tokens.public, `/private/object?key=${privateKey}`))).status).toBe(404);
+    expect((await app.handle(authorized(tokens.public, `/private/blob?key=${privateKey}`))).status).toBe(404);
   });
 
   test("public capability dereferences only an active exact representation token", async () => {
@@ -382,7 +382,8 @@ describe("storage broker capabilities", () => {
   test("knowledge revisions are immutable and legacy public document reads are absent", async () => {
     const storage = new MemoryStorage();
     const revisionId = "66666666-6666-4666-8666-666666666666";
-    const privateDocumentKey = `documents/private/${revisionId}.md`;
+    const privateObjectKey = `blobs/${revisionId}`;
+    const legacyPrivateBlobKey = `documents/private/${revisionId}.md`;
     const artifactId = "77777777-7777-4777-8777-777777777777";
     const publicDocumentKey = `documents/public/${artifactId}.md`;
     const publicProjection = Buffer.from("public projection");
@@ -395,67 +396,72 @@ describe("storage broker capabilities", () => {
     const markdown = Buffer.from("# Private knowledge\n");
     const headers = {
       "content-length": String(markdown.byteLength),
-      "x-document-revision-id": revisionId,
-      "x-object-key": privateDocumentKey,
+      "x-page-revision-id": revisionId,
+      "x-blob-key": privateObjectKey,
       "x-content-sha256": createHash("sha256").update(markdown).digest("hex"),
     };
 
-    expect((await app.handle(authorized(tokens.mcp, "/private/document", {
+    expect((await app.handle(authorized(tokens.mcp, "/private/markdown-blob", {
       method: "PUT", headers, body: markdown,
     }))).status).toBe(204);
     expect(await (await app.handle(authorized(
       tokens.mcp,
-      `/private/document?key=${encodeURIComponent(privateDocumentKey)}`,
+      `/private/markdown-blob?key=${encodeURIComponent(privateObjectKey)}`,
+    ))).text()).toBe(markdown.toString());
+    storage.objects.set(legacyPrivateBlobKey, markdown);
+    expect(await (await app.handle(authorized(
+      tokens.mcp,
+      `/private/markdown-blob?key=${encodeURIComponent(legacyPrivateBlobKey)}`,
     ))).text()).toBe(markdown.toString());
     expect((await app.handle(authorized(
       tokens.public,
-      `/private/document?key=${encodeURIComponent(privateDocumentKey)}`,
+      `/private/markdown-blob?key=${encodeURIComponent(privateObjectKey)}`,
     ))).status).toBe(404);
 
-    const published = await app.handle(authorized(tokens.public, "/public/document?path=public%2Fpage"));
+    const published = await app.handle(authorized(tokens.public, "/public/page?path=public%2Fpage"));
     expect(published.status).toBe(404);
     storage.objects.set(publicDocumentKey, Buffer.from("corrupt projection"));
-    expect((await app.handle(authorized(tokens.public, "/public/document?path=public%2Fpage"))).status).toBe(404);
-    expect((await app.handle(authorized(tokens.public, "/public/document?path=private%2Fpage"))).status).toBe(404);
+    expect((await app.handle(authorized(tokens.public, "/public/page?path=public%2Fpage"))).status).toBe(404);
+    expect((await app.handle(authorized(tokens.public, "/public/page?path=private%2Fpage"))).status).toBe(404);
     expect((await app.handle(authorized(
       tokens.public,
-      `/public/document?key=${encodeURIComponent(publicDocumentKey)}`,
+      `/public/page?key=${encodeURIComponent(publicDocumentKey)}`,
     ))).status).toBe(404);
   });
 
   test("stores raw Markdown records above the authored-page ceiling with a bounded document limit", async () => {
     const storage = new MemoryStorage();
     const revisionId = "67676767-6767-4676-8676-676767676767";
-    const objectKey = `documents/private/${revisionId}.md`;
+    const blobKey = `blobs/${revisionId}`;
     const markdown = Buffer.alloc(4_000_001, "r");
-    expect(markdown.byteLength).toBeLessThan(MAX_MARKDOWN_DOCUMENT_BYTES);
+    expect(markdown.byteLength).toBeLessThan(MAX_MARKDOWN_BLOB_BYTES);
     const app = createStorageBrokerApp({
       storage,
       privateAssets: privateAssets({}),
       tokens,
     });
 
-    const response = await app.handle(authorized(tokens.mcp, "/private/document", {
+    const response = await app.handle(authorized(tokens.mcp, "/private/markdown-blob", {
       method: "PUT",
       headers: {
         "content-length": String(markdown.byteLength),
-        "x-document-revision-id": revisionId,
-        "x-object-key": objectKey,
+        "x-page-revision-id": revisionId,
+        "x-blob-key": blobKey,
         "x-content-sha256": createHash("sha256").update(markdown).digest("hex"),
       },
       body: markdown,
     }));
 
     expect(response.status).toBe(204);
-    expect(storage.objects.get(objectKey)?.byteLength).toBe(markdown.byteLength);
+    expect(storage.objects.get(blobKey)?.byteLength).toBe(markdown.byteLength);
   });
 
   test("brokered document reads preserve a leading UTF-8 BOM", async () => {
     const storage = new MemoryStorage();
     const revisionId = "88888888-8888-4888-8888-888888888888";
-    const objectKey = `documents/private/${revisionId}.md`;
+    const blobKey = `documents/private/${revisionId}.md`;
     const markdown = "\uFEFF# BOM-prefixed knowledge\n";
-    storage.objects.set(objectKey, Buffer.from(markdown, "utf8"));
+    storage.objects.set(blobKey, Buffer.from(markdown, "utf8"));
     const app = createStorageBrokerApp({
       storage,
       privateAssets: privateAssets({}),
@@ -467,7 +473,7 @@ describe("storage broker capabilities", () => {
 
     try {
       const client = new BrokeredStorage({ socketPath, token: tokens.dashboard });
-      const decoded = await client.readDocument(objectKey);
+      const decoded = await client.readMarkdownBlob(blobKey);
       expect(decoded).toBe(markdown);
       expect(Buffer.from(decoded, "utf8")).toEqual(Buffer.from(markdown, "utf8"));
     } finally {
@@ -481,24 +487,24 @@ describe("storage broker capabilities", () => {
     const app = createStorageBrokerApp({
       storage,
       privateAssets: privateAssets({
-        [privateKey.slice("objects/".length)]: {
+        [privateKey.split("/").at(-1)!]: {
           filename: "private.txt", contentType: "text/plain", bytes: "private",
         },
-        [newKey.slice("objects/".length)]: {
+        [newKey.split("/").at(-1)!]: {
           filename: "new.txt", contentType: "text/plain", bytes: "new",
         },
       }),
       tokens,
     });
 
-    expect((await app.handle(authorized(tokens.mcp, `/private/object?key=${privateKey}`))).status).toBe(200);
+    expect((await app.handle(authorized(tokens.mcp, `/private/blob?key=${privateKey}`))).status).toBe(200);
     const replacement = Buffer.from("changed");
-    expect((await app.handle(authorized(tokens.mcp, "/private/object", {
+    expect((await app.handle(authorized(tokens.mcp, "/private/blob", {
       method: "PUT",
       headers: {
         "content-length": String(replacement.byteLength),
-        "x-asset-id": privateKey.slice("objects/".length),
-        "x-object-key": privateKey,
+        "x-asset-id": privateKey.split("/").at(-1)!,
+        "x-blob-key": privateKey,
         "x-filename": "private.txt",
         "x-content-type": "text/plain",
         "x-content-sha256": createHash("sha256").update(replacement).digest("hex"),
@@ -508,12 +514,12 @@ describe("storage broker capabilities", () => {
     expect(Buffer.from(storage.objects.get(privateKey)! ).toString()).toBe("private");
 
     const uploaded = Buffer.from("new");
-    expect((await app.handle(authorized(tokens.mcp, "/private/object", {
+    expect((await app.handle(authorized(tokens.mcp, "/private/blob", {
       method: "PUT",
       headers: {
         "content-length": String(uploaded.byteLength),
-        "x-asset-id": newKey.slice("objects/".length),
-        "x-object-key": newKey,
+        "x-asset-id": newKey.split("/").at(-1)!,
+        "x-blob-key": newKey,
         "x-filename": "new.txt",
         "x-content-type": "text/plain",
         "x-content-sha256": createHash("sha256").update(uploaded).digest("hex"),
@@ -521,12 +527,12 @@ describe("storage broker capabilities", () => {
       body: uploaded,
     }))).status).toBe(204);
     expect(Buffer.from(storage.objects.get(newKey)! ).toString()).toBe("new");
-    expect((await app.handle(authorized(tokens.mcp, `/private/object?key=${privateKey}`, { method: "DELETE" }))).status).toBe(404);
+    expect((await app.handle(authorized(tokens.mcp, `/private/blob?key=${privateKey}`, { method: "DELETE" }))).status).toBe(404);
     expect(storage.objects.has(privateKey)).toBe(true);
     expect((await app.handle(authorized(tokens.mcp, "/private/verify", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ object_key: privateKey, size_bytes: 7, content_hash: "a".repeat(64) }),
+      body: JSON.stringify({ blob_key: privateKey, size_bytes: 7, content_hash: "a".repeat(64) }),
     }))).status).toBe(404);
   });
 
@@ -540,7 +546,7 @@ describe("storage broker capabilities", () => {
       tokens,
     });
     const payload = {
-      object_key: publicDocumentKey,
+      blob_key: publicDocumentKey,
       size_bytes: artifact.byteLength,
       content_hash: createHash("sha256").update(artifact).digest("hex"),
     };
@@ -561,7 +567,7 @@ describe("storage broker capabilities", () => {
     }
     expect((await app.handle(authorized(
       tokens.dashboard,
-      `/private/document?key=${encodeURIComponent(publicDocumentKey)}`,
+      `/private/markdown-blob?key=${encodeURIComponent(publicDocumentKey)}`,
     ))).status).toBe(404);
   });
 
@@ -570,10 +576,10 @@ describe("storage broker capabilities", () => {
       { length: 2 * 1024 * 1024 + 97 },
       (_, index) => (index * 31 + Math.floor(index / 65_536)) % 256,
     );
-    const id = newKey.slice("objects/".length);
-    const asset: StoredAsset = {
+    const id = newKey.split("/").at(-1)!;
+    const asset: StoredBlob = {
       id,
-      objectKey: newKey,
+      blobKey: newKey,
       filename: "demo-video.mp4",
       contentType: "video/mp4",
       sizeBytes: bytes.byteLength,
@@ -607,7 +613,7 @@ describe("storage broker capabilities", () => {
 
   test("dashboard can delete bytes only after metadata authorizes the lifecycle transition", async () => {
     const storage = new MemoryStorage();
-    const privateId = privateKey.slice("objects/".length);
+    const privateId = privateKey.split("/").at(-1)!;
     const publishedId = publishedKey.slice("objects/".length);
     const app = createStorageBrokerApp({
       storage,
@@ -618,11 +624,11 @@ describe("storage broker capabilities", () => {
       tokens,
     });
 
-    expect((await app.handle(authorized(tokens.dashboard, `/private/object?key=${publishedKey}`, { method: "DELETE" }))).status).toBe(404);
+    expect((await app.handle(authorized(tokens.dashboard, `/private/blob?key=${publishedKey}`, { method: "DELETE" }))).status).toBe(404);
     expect(storage.objects.has(publishedKey)).toBe(true);
-    expect((await app.handle(authorized(tokens.dashboard, `/private/object?key=${privateKey}`, { method: "DELETE" }))).status).toBe(204);
+    expect((await app.handle(authorized(tokens.dashboard, `/private/blob?key=${privateKey}`, { method: "DELETE" }))).status).toBe(204);
     expect(storage.objects.has(privateKey)).toBe(false);
-    expect((await app.handle(authorized("invalid-token-that-is-long-enough-for-parser", `/private/object?key=${publishedKey}`))).status).toBe(404);
+    expect((await app.handle(authorized("invalid-token-that-is-long-enough-for-parser", `/private/blob?key=${publishedKey}`))).status).toBe(404);
   });
 
   test("stages full bundles and resumable import parts behind the dashboard capability", async () => {
@@ -659,7 +665,7 @@ describe("storage broker capabilities", () => {
         "content-length": String(part.byteLength),
         "x-import-id": importId,
         "x-part-number": "0",
-        "x-object-key": `imports/${importId}/parts/0`,
+        "x-blob-key": `imports/${importId}/parts/0`,
         "x-content-sha256": hash,
       },
       body: part,
@@ -674,7 +680,7 @@ describe("storage broker capabilities", () => {
     const storage = new MemoryStorage();
     const importId = "77777777-7777-4777-8777-777777777777";
     const objectId = "99999999-9999-4999-8999-999999999999";
-    const objectKey = `objects/${objectId}`;
+    const blobKey = `objects/${objectId}`;
     const body = Buffer.from("restored immutable bytes");
     const hash = createHash("sha256").update(body).digest("hex");
     const app = createStorageBrokerApp({
@@ -682,11 +688,11 @@ describe("storage broker capabilities", () => {
       privateAssets: privateAssets({}),
       tokens,
       knowledgeBundles: {
-        importObjectAuthorization: async (id, key) => id === importId && key === objectKey ? {
+        importBlobAuthorization: async (id, key) => id === importId && key === blobKey ? {
           import_id: importId,
           ordinal: 1,
-          object_kind: "asset",
-          object_key: objectKey,
+          blob_kind: "asset",
+          blob_key: blobKey,
           size_bytes: body.byteLength,
           content_hash: hash,
           content_type: "application/octet-stream",
@@ -696,19 +702,19 @@ describe("storage broker capabilities", () => {
         } : null,
       },
     });
-    const imported = await app.handle(authorized(tokens.dashboard, "/private/import-object", {
+    const imported = await app.handle(authorized(tokens.dashboard, "/private/import-blob", {
       method: "PUT",
       headers: {
         "content-length": String(body.byteLength),
         "x-import-id": importId,
-        "x-object-key": objectKey,
+        "x-blob-key": blobKey,
         "x-content-type": "application/octet-stream",
         "x-content-sha256": hash,
       },
       body,
     }));
     expect(imported.status).toBe(204);
-    expect(Buffer.from(storage.objects.get(objectKey)!)).toEqual(body);
+    expect(Buffer.from(storage.objects.get(blobKey)!)).toEqual(body);
   });
 
   test("dashboard storage client round-trips bundle metadata and resumable bytes", async () => {

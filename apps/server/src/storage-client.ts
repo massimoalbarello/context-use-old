@@ -1,4 +1,4 @@
-import type { ByteRange, GeneratedObjectMetadata, ObjectStorage, StoredAsset } from "./storage.ts";
+import type { ByteRange, GeneratedBlobMetadata, BlobStorage, StoredBlob } from "./storage.ts";
 import { AssetNotFoundError } from "./storage.ts";
 
 type StorageClientOptions = {
@@ -31,7 +31,7 @@ async function markdownResponseText(response: Response): Promise<string> {
   return new TextDecoder("utf-8", { ignoreBOM: true }).decode(await response.arrayBuffer());
 }
 
-export class BrokeredStorage implements ObjectStorage {
+export class BrokeredStorage implements BlobStorage {
   constructor(private readonly options: StorageClientOptions) {}
 
   private async request(path: string, init: Parameters<typeof socketFetch>[2] = {}): Promise<Response> {
@@ -44,15 +44,15 @@ export class BrokeredStorage implements ObjectStorage {
     });
   }
 
-  async write(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void> {
+  async write(asset: StoredBlob, body: ReadableStream<Uint8Array> | null): Promise<void> {
     if (this.options.publicOnly) throw new Error("Published storage is read-only");
-    const response = await this.request("/private/object", {
+    const response = await this.request("/private/blob", {
       method: "PUT",
       headers: {
         "content-type": "application/octet-stream",
         "content-length": String(asset.sizeBytes),
         "x-asset-id": asset.id,
-        "x-object-key": asset.objectKey,
+        "x-blob-key": asset.blobKey,
         "x-filename": encodeURIComponent(asset.filename),
         "x-content-type": asset.contentType,
         "x-content-sha256": asset.contentHash,
@@ -62,41 +62,41 @@ export class BrokeredStorage implements ObjectStorage {
     if (!response.ok) throw new Error(`Storage write failed (${response.status})`);
   }
 
-  async writeDocument(input: {
+  async writeMarkdownBlob(input: {
     revisionId: string;
-    objectKey: string;
+    blobKey: string;
     sizeBytes: number;
     contentHash: string;
     body: string;
   }): Promise<void> {
     if (this.options.publicOnly) throw new Error("Published storage is read-only");
-    const response = await this.request("/private/document", {
+    const response = await this.request("/private/markdown-blob", {
       method: "PUT",
       headers: {
         "content-type": "text/markdown; charset=utf-8",
         "content-length": String(input.sizeBytes),
-        "x-document-revision-id": input.revisionId,
-        "x-object-key": input.objectKey,
+        "x-page-revision-id": input.revisionId,
+        "x-blob-key": input.blobKey,
         "x-content-sha256": input.contentHash,
       },
       body: new Blob([input.body]).stream(),
     });
-    if (!response.ok) throw new Error(`Knowledge document write failed (${response.status})`);
+    if (!response.ok) throw new Error(`Markdown blob write failed (${response.status})`);
   }
 
-  async readDocument(objectKey: string): Promise<string> {
+  async readMarkdownBlob(blobKey: string): Promise<string> {
     if (this.options.publicOnly) throw new Error("Private knowledge is unavailable");
-    const response = await this.request(`/private/document?key=${encodeURIComponent(objectKey)}`);
+    const response = await this.request(`/private/markdown-blob?key=${encodeURIComponent(blobKey)}`);
     if (response.status === 404) throw new AssetNotFoundError();
-    if (!response.ok) throw new Error(`Knowledge document read failed (${response.status})`);
+    if (!response.ok) throw new Error(`Markdown blob read failed (${response.status})`);
     return markdownResponseText(response);
   }
 
-  async readPublishedDocument(publicPath: string): Promise<string> {
-    if (!this.options.publicOnly) throw new Error("Published document reads require a public-only client");
-    const response = await this.request(`/public/document?path=${encodeURIComponent(publicPath)}`);
+  async readPublishedPage(publicPath: string): Promise<string> {
+    if (!this.options.publicOnly) throw new Error("Published page reads require a public-only client");
+    const response = await this.request(`/public/page?path=${encodeURIComponent(publicPath)}`);
     if (response.status === 404) throw new AssetNotFoundError();
-    if (!response.ok) throw new Error(`Published document read failed (${response.status})`);
+    if (!response.ok) throw new Error(`Published page read failed (${response.status})`);
     return markdownResponseText(response);
   }
 
@@ -118,7 +118,7 @@ export class BrokeredStorage implements ObjectStorage {
     return new TextDecoder("utf-8", { ignoreBOM: true }).decode(await new Response(body).arrayBuffer());
   }
 
-  async inspectPublishedRepresentation(representationToken: string): Promise<GeneratedObjectMetadata> {
+  async inspectPublishedRepresentation(representationToken: string): Promise<GeneratedBlobMetadata> {
     if (!this.options.publicOnly) throw new Error("Published representation reads require a public-only client");
     const response = await this.request(
       `/public/representation?token=${encodeURIComponent(representationToken)}`,
@@ -134,27 +134,27 @@ export class BrokeredStorage implements ObjectStorage {
     return { sizeBytes, contentHash };
   }
 
-  async delete(objectKey: string): Promise<void> {
+  async delete(blobKey: string): Promise<void> {
     if (this.options.publicOnly) throw new Error("Published storage is read-only");
-    const response = await this.request(`/private/object?key=${encodeURIComponent(objectKey)}`, { method: "DELETE" });
+    const response = await this.request(`/private/blob?key=${encodeURIComponent(blobKey)}`, { method: "DELETE" });
     if (!response.ok) throw new Error(`Storage deletion failed (${response.status})`);
   }
 
-  async read(objectKey: string, range?: ByteRange): Promise<BodyInit> {
+  async read(blobKey: string, range?: ByteRange): Promise<BodyInit> {
     // Public callers pass an already-public knowledge path; only the broker can
-    // translate it into an object key. Private callers continue to pass the
-    // immutable object key selected by their private metadata repository.
+    // translate it into a blob key. Private callers continue to pass the
+    // immutable blob key selected by their private metadata repository.
     const query = this.options.publicOnly
-      ? `/public/object?path=${encodeURIComponent(objectKey)}`
-      : objectKey.startsWith("bundles/")
-          ? `/private/bundle?key=${encodeURIComponent(objectKey)}`
-          : objectKey.startsWith("imports/")
-            ? `/private/import-part?key=${encodeURIComponent(objectKey)}`
-            : objectKey.startsWith("documents/private/")
-              ? `/private/document?key=${encodeURIComponent(objectKey)}`
-              : objectKey.startsWith("documents/public/") || objectKey.startsWith("artifacts/public/")
-                ? `/private/bundle-source?key=${encodeURIComponent(objectKey)}`
-                : `/private/object?key=${encodeURIComponent(objectKey)}`;
+      ? `/public/object?path=${encodeURIComponent(blobKey)}`
+      : blobKey.startsWith("bundles/")
+          ? `/private/bundle?key=${encodeURIComponent(blobKey)}`
+          : blobKey.startsWith("imports/")
+            ? `/private/import-part?key=${encodeURIComponent(blobKey)}`
+            : blobKey.startsWith("documents/private/")
+              ? `/private/markdown-blob?key=${encodeURIComponent(blobKey)}`
+              : blobKey.startsWith("documents/public/") || blobKey.startsWith("artifacts/public/")
+                ? `/private/bundle-source?key=${encodeURIComponent(blobKey)}`
+                : `/private/blob?key=${encodeURIComponent(blobKey)}`;
     const response = await this.request(query, {
       headers: range ? { range: `bytes=${range.start}-${range.end}` } : {},
     });
@@ -164,11 +164,11 @@ export class BrokeredStorage implements ObjectStorage {
   }
 
   async writeBundle(
-    objectKey: string,
+    blobKey: string,
     body: ReadableStream<Uint8Array> | null,
-  ): Promise<GeneratedObjectMetadata> {
+  ): Promise<GeneratedBlobMetadata> {
     if (this.options.publicOnly) throw new Error("Published storage is read-only");
-    const response = await this.request(`/private/bundle?key=${encodeURIComponent(objectKey)}`, {
+    const response = await this.request(`/private/bundle?key=${encodeURIComponent(blobKey)}`, {
       method: "PUT",
       headers: { "content-type": "application/vnd.context-use.knowledge-bundle" },
       body,
@@ -182,8 +182,8 @@ export class BrokeredStorage implements ObjectStorage {
     return { sizeBytes: Number(result.size_bytes), contentHash: result.content_hash };
   }
 
-  async inspectBundle(objectKey: string): Promise<GeneratedObjectMetadata | null> {
-    const response = await this.request(`/private/bundle?key=${encodeURIComponent(objectKey)}`, { method: "HEAD" });
+  async inspectBundle(blobKey: string): Promise<GeneratedBlobMetadata | null> {
+    const response = await this.request(`/private/bundle?key=${encodeURIComponent(blobKey)}`, { method: "HEAD" });
     if (response.status === 404) return null;
     if (!response.ok) throw new Error(`Knowledge bundle storage inspection failed (${response.status})`);
     const sizeBytes = Number(response.headers.get("content-length"));
@@ -193,15 +193,15 @@ export class BrokeredStorage implements ObjectStorage {
       : null;
   }
 
-  async deleteBundle(objectKey: string): Promise<void> {
-    const response = await this.request(`/private/bundle?key=${encodeURIComponent(objectKey)}`, { method: "DELETE" });
+  async deleteBundle(blobKey: string): Promise<void> {
+    const response = await this.request(`/private/bundle?key=${encodeURIComponent(blobKey)}`, { method: "DELETE" });
     if (!response.ok) throw new Error(`Knowledge bundle storage deletion failed (${response.status})`);
   }
 
   async writeImportPart(input: {
     importId: string;
     partNumber: number;
-    objectKey: string;
+    blobKey: string;
     sizeBytes: number;
     contentHash: string;
     body: ReadableStream<Uint8Array> | null;
@@ -212,7 +212,7 @@ export class BrokeredStorage implements ObjectStorage {
         "content-length": String(input.sizeBytes),
         "x-import-id": input.importId,
         "x-part-number": String(input.partNumber),
-        "x-object-key": input.objectKey,
+        "x-blob-key": input.blobKey,
         "x-content-sha256": input.contentHash,
       },
       body: input.body,
@@ -220,35 +220,35 @@ export class BrokeredStorage implements ObjectStorage {
     if (!response.ok) throw new Error(`Knowledge bundle part write failed (${response.status})`);
   }
 
-  async deleteImportPart(objectKey: string): Promise<void> {
-    const response = await this.request(`/private/import-part?key=${encodeURIComponent(objectKey)}`, {
+  async deleteImportPart(blobKey: string): Promise<void> {
+    const response = await this.request(`/private/import-part?key=${encodeURIComponent(blobKey)}`, {
       method: "DELETE",
     });
     if (!response.ok) throw new Error(`Knowledge bundle part deletion failed (${response.status})`);
   }
 
-  async writeImportedObject(input: {
+  async writeImportedBlob(input: {
     importId: string;
-    object: {
-      object_key: string;
+    blob: {
+      blob_key: string;
       size_bytes: number | string;
       content_hash: string;
       content_type: string;
     };
     body: ReadableStream<Uint8Array> | null;
   }): Promise<void> {
-    const response = await this.request("/private/import-object", {
+    const response = await this.request("/private/import-blob", {
       method: "PUT",
       headers: {
-        "content-length": String(input.object.size_bytes),
+        "content-length": String(input.blob.size_bytes),
         "x-import-id": input.importId,
-        "x-object-key": input.object.object_key,
-        "x-content-type": input.object.content_type,
-        "x-content-sha256": input.object.content_hash,
+        "x-blob-key": input.blob.blob_key,
+        "x-content-type": input.blob.content_type,
+        "x-content-sha256": input.blob.content_hash,
       },
       body: input.body,
     });
-    if (!response.ok) throw new Error(`Imported knowledge object write failed (${response.status})`);
+    if (!response.ok) throw new Error(`Imported knowledge blob write failed (${response.status})`);
   }
 
   async materializePublicationArtifact(allocationId: string): Promise<void> {
@@ -262,12 +262,12 @@ export class BrokeredStorage implements ObjectStorage {
     }
   }
 
-  async verify(objectKey: string, sizeBytes: number, contentHash: string): Promise<boolean> {
+  async verify(blobKey: string, sizeBytes: number, contentHash: string): Promise<boolean> {
     if (this.options.publicOnly) return false;
     const response = await this.request("/private/verify", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: new Blob([JSON.stringify({ object_key: objectKey, size_bytes: sizeBytes, content_hash: contentHash })]).stream(),
+      body: new Blob([JSON.stringify({ blob_key: blobKey, size_bytes: sizeBytes, content_hash: contentHash })]).stream(),
     });
     if (!response.ok) return false;
     const result = await response.json() as { verified?: boolean };

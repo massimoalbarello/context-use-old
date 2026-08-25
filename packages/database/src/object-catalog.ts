@@ -1,30 +1,30 @@
 import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 
-export type PrivateDocumentKind = "knowledge" | "record" | "asset";
-export type PrivateDocumentLifecycle = "active" | "archived" | "deleted";
-export type PrivateDocumentCatalogType = PrivateDocumentKind | "public" | "archived";
-export type PrivateDocumentOperationalRole =
+export type PrivateObjectKind = "page" | "record" | "asset";
+export type PrivateObjectLifecycle = "active" | "archived" | "deleted";
+export type PrivateObjectCatalogType = PrivateObjectKind | "public" | "archived";
+export type PrivateObjectOperationalRole =
   | "global_guide"
   | "automation_instructions"
   | "automation_state";
 
-export type PrivateDocumentCatalogFilters = {
+export type PrivateObjectCatalogFilters = {
   authority?: "knowledge" | "source";
   representation?: "markdown" | "asset";
-  document_kind?: PrivateDocumentKind;
-  lifecycle?: PrivateDocumentLifecycle;
-  catalog_types?: PrivateDocumentCatalogType[];
+  object_kind?: PrivateObjectKind;
+  lifecycle?: PrivateObjectLifecycle;
+  catalog_types?: PrivateObjectCatalogType[];
   integration?: string;
-  operational_role?: PrivateDocumentOperationalRole;
+  operational_role?: PrivateObjectOperationalRole;
 };
 
-export type PrivateDocumentCatalogItem = {
-  document_id: string;
-  document_kind: PrivateDocumentKind;
+export type PrivateObjectCatalogItem = {
+  object_id: string;
+  object_kind: PrivateObjectKind;
   authority: "knowledge" | "source";
   representation: "markdown" | "asset";
-  lifecycle: PrivateDocumentLifecycle;
+  lifecycle: PrivateObjectLifecycle;
   current_revision_id: string | null;
   current_revision_number: number | null;
   title: string | null;
@@ -41,7 +41,7 @@ export type PrivateDocumentCatalogItem = {
   connection_id: string | null;
   source_model: string | null;
   source_record_id: string | null;
-  operational_roles: PrivateDocumentOperationalRole[];
+  operational_roles: PrivateObjectOperationalRole[];
   public_id: string | null;
   current_link_contract: "generic_document_v1" | null;
   links_indexed_at: string | null;
@@ -50,29 +50,29 @@ export type PrivateDocumentCatalogItem = {
   updated_at: string;
 };
 
-export type PrivateDocumentCatalogPage = {
-  documents: PrivateDocumentCatalogItem[];
+export type PrivateObjectCatalogPage = {
+  objects: PrivateObjectCatalogItem[];
   next_cursor: string | null;
   has_more: boolean;
 };
 
-export type PrivateDocumentNeighbor = {
-  target_document_id: string;
+export type PrivateObjectNeighbor = {
+  target_object_id: string;
   resolved: boolean;
-  document: PrivateDocumentCatalogItem | null;
+  object: PrivateObjectCatalogItem | null;
 };
 
-export type PrivateDocumentNeighborhood = {
-  document: PrivateDocumentCatalogItem;
+export type PrivateObjectNeighborhood = {
+  object: PrivateObjectCatalogItem;
   outbound: {
     revision_id: string | null;
-    neighbors: PrivateDocumentNeighbor[];
+    neighbors: PrivateObjectNeighbor[];
     next_cursor: string | null;
     has_more: boolean;
     index_complete: boolean;
   };
   backlinks: {
-    documents: PrivateDocumentCatalogItem[];
+    objects: PrivateObjectCatalogItem[];
     next_cursor: string | null;
     has_more: boolean;
     completeness_checked: boolean;
@@ -88,10 +88,12 @@ export type PrivateDocumentNeighborhood = {
 // independently hydrate and parse bodies under its locks.
 
 type CatalogDatabaseRow = Omit<
-  PrivateDocumentCatalogItem,
-  "size_bytes" | "duration_seconds" | "connection_instance_id"
+  PrivateObjectCatalogItem,
+  "object_id" | "object_kind" | "size_bytes" | "duration_seconds" | "connection_instance_id"
     | "links_indexed_at" | "created_at" | "updated_at"
 > & {
+  document_id: string;
+  document_kind: "knowledge" | "record" | "asset";
   size_bytes: number | string | null;
   duration_seconds: number | string | null;
   connection_instance_id: number | string | null;
@@ -105,18 +107,18 @@ type NeighborRow = CatalogDatabaseRow & {
   resolved: boolean;
 };
 
-type PrivateDocumentSearchRow = {
+type PrivateObjectSearchRow = {
   document: CatalogDatabaseRow;
   search_rank: number;
   search_updated_at_epoch_micros: string;
   search_document_id: string;
 };
 
-type PrivateDocumentListRow = CatalogDatabaseRow & {
+type PrivateObjectListRow = CatalogDatabaseRow & {
   cursor_updated_at_epoch_micros: string;
 };
 
-type PrivateDocumentSearchCursor = {
+type PrivateObjectSearchCursor = {
   version: 1;
   fingerprint: string;
   rank: number;
@@ -124,7 +126,7 @@ type PrivateDocumentSearchCursor = {
   document_id: string;
 };
 
-type PrivateDocumentListCursor = {
+type PrivateObjectListCursor = {
   version: 1;
   fingerprint: string;
   updated_at_epoch_micros: string;
@@ -135,12 +137,12 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MIN_INT64 = -(1n << 63n);
 const MAX_INT64 = (1n << 63n) - 1n;
 
-export class InvalidPrivateDocumentCursorError extends Error {
-  readonly code = "INVALID_PRIVATE_DOCUMENT_CURSOR";
+export class InvalidPrivateObjectCursorError extends Error {
+  readonly code = "INVALID_PRIVATE_OBJECT_CURSOR";
 
   constructor(surface: "catalog" | "search" | "neighborhood") {
-    super(`Private document ${surface} cursor is invalid for this query`);
-    this.name = "InvalidPrivateDocumentCursorError";
+    super(`Private object ${surface} cursor is invalid for this query`);
+    this.name = "InvalidPrivateObjectCursorError";
   }
 }
 
@@ -165,9 +167,12 @@ function timestamp(value: Date | string): string {
   return parsed.toISOString();
 }
 
-function normalizeCatalogItem(row: CatalogDatabaseRow): PrivateDocumentCatalogItem {
+function normalizeCatalogItem(row: CatalogDatabaseRow): PrivateObjectCatalogItem {
+  const { document_id, document_kind, ...metadata } = row;
   return {
-    ...row,
+    ...metadata,
+    object_id: document_id,
+    object_kind: document_kind === "knowledge" ? "page" : document_kind,
     size_bytes: row.size_bytes === null ? null : String(row.size_bytes),
     duration_seconds: row.duration_seconds === null ? null : String(row.duration_seconds),
     connection_instance_id: row.connection_instance_id === null
@@ -179,25 +184,25 @@ function normalizeCatalogItem(row: CatalogDatabaseRow): PrivateDocumentCatalogIt
   };
 }
 
-function neighbor(row: NeighborRow): PrivateDocumentNeighbor {
+function neighbor(row: NeighborRow): PrivateObjectNeighbor {
   const { target_document_id, resolved, ...catalog } = row;
   return {
-    target_document_id,
+    target_object_id: target_document_id,
     resolved,
-    document: catalog.document_id ? normalizeCatalogItem(catalog) : null,
+    object: catalog.document_id ? normalizeCatalogItem(catalog) : null,
   };
 }
 
 function searchFingerprint(
   query: string,
-  options: PrivateDocumentCatalogFilters & { include_retired?: boolean },
+  options: PrivateObjectCatalogFilters & { include_retired?: boolean },
 ): string {
   return createHash("sha256").update(JSON.stringify({
     query: query.trim(),
     include_retired: options.include_retired ?? false,
     authority: options.authority ?? null,
     representation: options.representation ?? null,
-    document_kind: options.document_kind ?? null,
+    object_kind: options.object_kind ?? null,
     lifecycle: options.lifecycle ?? null,
     catalog_types: options.catalog_types?.slice().sort() ?? null,
     integration: options.integration ?? null,
@@ -206,41 +211,53 @@ function searchFingerprint(
 }
 
 function listFingerprint(
-  options: PrivateDocumentCatalogFilters & { include_retired?: boolean },
+  options: PrivateObjectCatalogFilters & { include_retired?: boolean },
 ): string {
   return searchFingerprint("", options);
+}
+
+function databaseKind(kind: PrivateObjectKind | undefined): "knowledge" | "record" | "asset" | null {
+  return kind === "page" ? "knowledge" : kind ?? null;
+}
+
+function databaseCatalogTypes(
+  types: PrivateObjectCatalogType[] | undefined,
+): Array<"knowledge" | "record" | "asset" | "public" | "archived"> | null {
+  return types?.length
+    ? types.map((type) => type === "page" ? "knowledge" : type)
+    : null;
 }
 
 function decodeListCursor(
   cursor: string | undefined,
   fingerprint: string,
-): PrivateDocumentListCursor | null {
+): PrivateObjectListCursor | null {
   if (!cursor) return null;
   try {
     const value = JSON.parse(
       Buffer.from(cursor, "base64url").toString("utf8"),
-    ) as Partial<PrivateDocumentListCursor>;
+    ) as Partial<PrivateObjectListCursor>;
     if (value.version !== 1 || value.fingerprint !== fingerprint
         || typeof value.updated_at_epoch_micros !== "string"
         || !validEpochMicros(value.updated_at_epoch_micros)
         || typeof value.document_id !== "string" || !UUID.test(value.document_id)) {
       throw new Error();
     }
-    return value as PrivateDocumentListCursor;
+    return value as PrivateObjectListCursor;
   } catch {
-    throw new InvalidPrivateDocumentCursorError("catalog");
+    throw new InvalidPrivateObjectCursorError("catalog");
   }
 }
 
 function decodeSearchCursor(
   cursor: string | undefined,
   fingerprint: string,
-): PrivateDocumentSearchCursor | null {
+): PrivateObjectSearchCursor | null {
   if (!cursor) return null;
   try {
     const value = JSON.parse(
       Buffer.from(cursor, "base64url").toString("utf8"),
-    ) as Partial<PrivateDocumentSearchCursor>;
+    ) as Partial<PrivateObjectSearchCursor>;
     if (value.version !== 1 || value.fingerprint !== fingerprint
         || typeof value.rank !== "number" || value.rank < 0
         || !Number.isFinite(value.rank) || !Number.isFinite(Math.fround(value.rank))
@@ -249,17 +266,17 @@ function decodeSearchCursor(
         || typeof value.document_id !== "string" || !UUID.test(value.document_id)) {
       throw new Error();
     }
-    return value as PrivateDocumentSearchCursor;
+    return value as PrivateObjectSearchCursor;
   } catch {
-    throw new InvalidPrivateDocumentCursorError("search");
+    throw new InvalidPrivateObjectCursorError("search");
   }
 }
 
 function encodeSearchCursor(
-  row: PrivateDocumentSearchRow,
+  row: PrivateObjectSearchRow,
   fingerprint: string,
 ): string {
-  const value: PrivateDocumentSearchCursor = {
+  const value: PrivateObjectSearchCursor = {
     version: 1,
     fingerprint,
     rank: row.search_rank,
@@ -270,10 +287,10 @@ function encodeSearchCursor(
 }
 
 function encodeListCursor(
-  row: PrivateDocumentListRow,
+  row: PrivateObjectListRow,
   fingerprint: string,
 ): string {
-  const value: PrivateDocumentListCursor = {
+  const value: PrivateObjectListCursor = {
     version: 1,
     fingerprint,
     updated_at_epoch_micros: row.cursor_updated_at_epoch_micros,
@@ -297,33 +314,33 @@ async function repeatableRead<T>(pool: Pool, work: (client: PoolClient) => Promi
   }
 }
 
-export class PrivateDocumentCatalogRepository {
+export class PrivateObjectCatalogRepository {
   constructor(private readonly pool: Pool) {}
 
-  async get(documentId: string): Promise<PrivateDocumentCatalogItem | null> {
-    return this.getWith(this.pool, documentId);
+  async get(objectId: string): Promise<PrivateObjectCatalogItem | null> {
+    return this.getWith(this.pool, objectId);
   }
 
   private async getWith(
     client: Pool | PoolClient,
-    documentId: string,
-  ): Promise<PrivateDocumentCatalogItem | null> {
+    objectId: string,
+  ): Promise<PrivateObjectCatalogItem | null> {
     const result = await client.query<CatalogDatabaseRow>(
       "SELECT * FROM private_document_catalog WHERE document_id=$1",
-      [documentId],
+      [objectId],
     );
     return result.rows[0] ? normalizeCatalogItem(result.rows[0]) : null;
   }
 
-  async list(options: PrivateDocumentCatalogFilters & {
+  async list(options: PrivateObjectCatalogFilters & {
     cursor?: string;
     limit?: number;
     include_retired?: boolean;
-  } = {}): Promise<PrivateDocumentCatalogPage> {
+  } = {}): Promise<PrivateObjectCatalogPage> {
     const limit = boundedLimit(options.limit, 50, 200);
     const fingerprint = listFingerprint(options);
     const cursor = decodeListCursor(options.cursor, fingerprint);
-    const result = await this.pool.query<PrivateDocumentListRow>(
+    const result = await this.pool.query<PrivateObjectListRow>(
       `SELECT catalog.*,
          (extract(epoch FROM updated_at)*1000000)::bigint::text
            AS cursor_updated_at_epoch_micros
@@ -365,16 +382,16 @@ export class PrivateDocumentCatalogRepository {
       [cursor?.updated_at_epoch_micros ?? null, cursor?.document_id ?? null,
         options.include_retired ?? false,
         options.authority ?? null, options.representation ?? null,
-        options.document_kind ?? null, options.lifecycle ?? null,
+        databaseKind(options.object_kind), options.lifecycle ?? null,
         options.integration ?? null, options.operational_role ?? null,
-        options.catalog_types?.length ? options.catalog_types : null, limit + 1],
+        databaseCatalogTypes(options.catalog_types), limit + 1],
     );
     const rows = result.rows.slice(0, limit);
-    const documents = rows.map(({ cursor_updated_at_epoch_micros: _cursor, ...document }) => (
-      normalizeCatalogItem(document)
+    const objects = rows.map(({ cursor_updated_at_epoch_micros: _cursor, ...object }) => (
+      normalizeCatalogItem(object)
     ));
     return {
-      documents,
+      objects,
       next_cursor: result.rows.length > limit
         ? encodeListCursor(rows.at(-1)!, fingerprint)
         : null,
@@ -382,30 +399,30 @@ export class PrivateDocumentCatalogRepository {
     };
   }
 
-  async search(query: string, options: PrivateDocumentCatalogFilters & {
+  async search(query: string, options: PrivateObjectCatalogFilters & {
     cursor?: string;
     limit?: number;
     include_retired?: boolean;
-  } = {}): Promise<PrivateDocumentCatalogPage> {
-    if (!query.trim()) return { documents: [], next_cursor: null, has_more: false };
+  } = {}): Promise<PrivateObjectCatalogPage> {
+    if (!query.trim()) return { objects: [], next_cursor: null, has_more: false };
     const limit = boundedLimit(options.limit, 30, 100);
     const fingerprint = searchFingerprint(query, options);
     const cursor = decodeSearchCursor(options.cursor, fingerprint);
-    const result = await this.pool.query<PrivateDocumentSearchRow>(
+    const result = await this.pool.query<PrivateObjectSearchRow>(
       `SELECT * FROM search_private_document_catalog(
          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13
        )`,
       [query.trim(), cursor?.rank ?? null, cursor?.updated_at_epoch_micros ?? null,
         cursor?.document_id ?? null, options.include_retired ?? false, limit + 1,
         options.authority ?? null, options.representation ?? null,
-        options.document_kind ?? null, options.lifecycle ?? null,
+        databaseKind(options.object_kind), options.lifecycle ?? null,
         options.integration ?? null, options.operational_role ?? null,
-        options.catalog_types?.length ? options.catalog_types : null],
+        databaseCatalogTypes(options.catalog_types)],
     );
     const rows = result.rows.slice(0, limit);
-    const documents = rows.map((row) => normalizeCatalogItem(row.document));
+    const objects = rows.map((row) => normalizeCatalogItem(row.document));
     return {
-      documents,
+      objects,
       next_cursor: result.rows.length > limit
         ? encodeSearchCursor(rows.at(-1)!, fingerprint)
         : null,
@@ -414,41 +431,41 @@ export class PrivateDocumentCatalogRepository {
   }
 
   async neighborhood(
-    documentId: string,
+    objectId: string,
     options: {
       requested_revision_id?: string;
-      outbound_after_document_id?: string;
+      outbound_after_object_id?: string;
       outbound_limit?: number;
-      backlink_after_document_id?: string;
+      backlink_after_object_id?: string;
       backlink_limit?: number;
       audit_global_completeness?: boolean;
     } = {},
-  ): Promise<PrivateDocumentNeighborhood | null> {
-    if (options.outbound_after_document_id && !options.requested_revision_id) {
-      throw new InvalidPrivateDocumentCursorError("neighborhood");
+  ): Promise<PrivateObjectNeighborhood | null> {
+    if (options.outbound_after_object_id && !options.requested_revision_id) {
+      throw new InvalidPrivateObjectCursorError("neighborhood");
     }
     for (const cursor of [
       options.requested_revision_id,
-      options.outbound_after_document_id,
-      options.backlink_after_document_id,
+      options.outbound_after_object_id,
+      options.backlink_after_object_id,
     ]) {
       if (cursor !== undefined && !UUID.test(cursor)) {
-        throw new InvalidPrivateDocumentCursorError("neighborhood");
+        throw new InvalidPrivateObjectCursorError("neighborhood");
       }
     }
     return repeatableRead(this.pool, async (client) => {
-      const document = await this.getWith(client, documentId);
-      if (!document) return null;
+      const object = await this.getWith(client, objectId);
+      if (!object) return null;
       const outboundLimit = boundedLimit(options.outbound_limit, 100, 500);
       const backlinkLimit = boundedLimit(options.backlink_limit, 100, 500);
-      const revisionId = options.requested_revision_id ?? document.current_revision_id;
+      const revisionId = options.requested_revision_id ?? object.current_revision_id;
       if (options.requested_revision_id) {
         const requested = await client.query(
           `SELECT 1 FROM hypermedia_document_revisions
            WHERE id=$1 AND document_id=$2`,
-          [options.requested_revision_id, documentId],
+          [options.requested_revision_id, objectId],
         );
-        if (!requested.rowCount) throw new InvalidPrivateDocumentCursorError("neighborhood");
+        if (!requested.rowCount) throw new InvalidPrivateObjectCursorError("neighborhood");
       }
 
       const outbound = revisionId
@@ -480,7 +497,7 @@ export class PrivateDocumentCatalogRepository {
              OR receipt.target_document_id::text COLLATE "C">$2::text COLLATE "C")
            ORDER BY receipt.target_document_id::text COLLATE "C"
            LIMIT $3`,
-          [revisionId, options.outbound_after_document_id ?? null, outboundLimit + 1],
+          [revisionId, options.outbound_after_object_id ?? null, outboundLimit + 1],
         )
         : { rows: [] as NeighborRow[] };
 
@@ -507,7 +524,7 @@ export class PrivateDocumentCatalogRepository {
            OR catalog.document_id::text COLLATE "C">$2::text COLLATE "C")
          ORDER BY catalog.document_id::text COLLATE "C"
          LIMIT $3`,
-        [documentId, options.backlink_after_document_id ?? null, backlinkLimit + 1],
+        [objectId, options.backlink_after_object_id ?? null, backlinkLimit + 1],
       );
       const indexComplete = await client.query<{ complete: boolean }>(
         `SELECT CASE
@@ -552,7 +569,7 @@ export class PrivateDocumentCatalogRepository {
                ))
            )
          END AS complete`,
-        [revisionId, document.document_kind, document.lifecycle],
+        [revisionId, databaseKind(object.object_kind), object.lifecycle],
       );
       const complete = options.audit_global_completeness
         ? await client.query<{ complete: boolean }>(
@@ -610,7 +627,7 @@ export class PrivateDocumentCatalogRepository {
         : null;
 
       return {
-        document,
+        object,
         outbound: {
           revision_id: revisionId,
           neighbors: outbound.rows.slice(0, outboundLimit).map(neighbor),
@@ -621,7 +638,7 @@ export class PrivateDocumentCatalogRepository {
           index_complete: indexComplete.rows[0]?.complete === true,
         },
         backlinks: {
-          documents: backlinks.rows.slice(0, backlinkLimit).map(normalizeCatalogItem),
+          objects: backlinks.rows.slice(0, backlinkLimit).map(normalizeCatalogItem),
           next_cursor: backlinks.rows.length > backlinkLimit
             ? backlinks.rows[backlinkLimit - 1]?.document_id ?? null
             : null,

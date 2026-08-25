@@ -1,12 +1,12 @@
 import type { Pool, PoolClient } from "pg";
-import type { CreateKnowledgeDocumentInput } from "@context-use/shared";
+import type { CreatePageInput } from "@context-use/shared";
 import {
   MAX_KNOWLEDGE_PAGE_BYTES,
-  type MarkdownObjectStore,
-} from "./documents.ts";
-import { genericDocumentTargets } from "./document-link-contract.ts";
+  type MarkdownBlobStore,
+} from "./markdown-blobs.ts";
+import { genericObjectTargets } from "./object-link-contract.ts";
 
-export type HypermediaBootstrapDocumentKind =
+export type HypermediaBootstrapPageKind =
   | "global_guide"
   | "activity_distiller_instructions"
   | "activity_distiller_state"
@@ -14,13 +14,13 @@ export type HypermediaBootstrapDocumentKind =
   | "diary_composer_state";
 
 export type HypermediaBootstrapAllocation = {
-  document_kind: HypermediaBootstrapDocumentKind;
+  document_kind: HypermediaBootstrapPageKind;
   document_id: string;
   revision_id: string;
 };
 
-export type HypermediaBootstrapDocument = HypermediaBootstrapAllocation & {
-  input: CreateKnowledgeDocumentInput;
+export type HypermediaBootstrapPage = HypermediaBootstrapAllocation & {
+  input: CreatePageInput;
 };
 
 const BOOTSTRAP_ACTOR = "context-use-hypermedia-bootstrap/v1";
@@ -44,7 +44,7 @@ async function transaction<T>(pool: Pool, work: (client: PoolClient) => Promise<
 export class HypermediaBootstrapRepository {
   constructor(
     private readonly pool: Pool,
-    private readonly bodies: MarkdownObjectStore,
+    private readonly bodies: MarkdownBlobStore,
   ) {}
 
   async begin(): Promise<HypermediaBootstrapAllocation[]> {
@@ -55,17 +55,17 @@ export class HypermediaBootstrapRepository {
     return result.rows;
   }
 
-  async ensureDocument(document: HypermediaBootstrapDocument): Promise<void> {
-    if (Buffer.byteLength(document.input.body_markdown, "utf8") > MAX_KNOWLEDGE_PAGE_BYTES) {
-      throw new Error("Hypermedia bootstrap document exceeds the page size limit");
+  async ensurePage(page: HypermediaBootstrapPage): Promise<void> {
+    if (Buffer.byteLength(page.input.body_markdown, "utf8") > MAX_KNOWLEDGE_PAGE_BYTES) {
+      throw new Error("Hypermedia bootstrap page exceeds the page size limit");
     }
-    const stored = await this.bodies.write(document.revision_id, document.input.body_markdown);
-    const targets = genericDocumentTargets(document.input.body_markdown);
+    const stored = await this.bodies.write(page.revision_id, page.input.body_markdown);
+    const targets = genericObjectTargets(page.input.body_markdown);
     await transaction(this.pool, async (client) => {
       const allocation = await client.query(
         `SELECT 1 FROM hypermedia_bootstrap_allocations
          WHERE document_kind=$1 AND document_id=$2 AND revision_id=$3`,
-        [document.document_kind, document.document_id, document.revision_id],
+        [page.document_kind, page.document_id, page.revision_id],
       );
       if (!allocation.rowCount) throw new Error("Hypermedia bootstrap allocation changed");
 
@@ -104,55 +104,55 @@ export class HypermediaBootstrapRepository {
          WHERE hypermedia.id=$1 AND hypermedia.authority='knowledge'
            AND hypermedia.representation='markdown' AND page.archived_at IS NULL
          FOR UPDATE OF page`,
-        [document.document_id],
+        [page.document_id],
       );
       const row = existing.rows[0];
       if (row) {
-        const exact = row.current_version_id === document.revision_id
+        const exact = row.current_version_id === page.revision_id
           && row.version_number === 1
-          && row.title === document.input.title
-          && row.summary === document.input.summary
-          && row.commit_message === document.input.commit_message
+          && row.title === page.input.title
+          && row.summary === page.input.summary
+          && row.commit_message === page.input.commit_message
           && row.actor_kind === "dashboard"
           && row.actor_subject === BOOTSTRAP_ACTOR
           && row.body_object_key === stored.body_object_key
           && Number(row.body_size_bytes) === stored.body_size_bytes
           && row.body_content_hash === stored.body_content_hash
-          && row.contract_revision_id === document.revision_id
-          && row.search_revision_id === document.revision_id;
-        if (!exact) throw new Error(`Hypermedia bootstrap document conflicts: ${document.document_kind}`);
+          && row.contract_revision_id === page.revision_id
+          && row.search_revision_id === page.revision_id;
+        if (!exact) throw new Error(`Hypermedia bootstrap page conflicts: ${page.document_kind}`);
         return;
       }
 
       await client.query(
         `INSERT INTO hypermedia_documents(id,authority,representation)
          VALUES ($1,'knowledge','markdown')`,
-        [document.document_id],
+        [page.document_id],
       );
       await client.query(
         `INSERT INTO hypermedia_document_revisions(
            id,document_id,revision_number,body_object_key,body_size_bytes,body_content_hash
          ) VALUES ($1,$2,1,$3,$4,$5)`,
-        [document.revision_id, document.document_id, stored.body_object_key,
+        [page.revision_id, page.document_id, stored.body_object_key,
           stored.body_size_bytes, stored.body_content_hash],
       );
       await client.query(
         `INSERT INTO knowledge_pages(id,current_version_id,search_vector)
          VALUES ($1,$2,''::tsvector)`,
-        [document.document_id, document.revision_id],
+        [page.document_id, page.revision_id],
       );
       await client.query(
         `INSERT INTO knowledge_page_versions(
            id,page_id,version_number,title,summary,commit_message,
            actor_kind,actor_subject
          ) VALUES ($1,$2,1,$3,$4,$5,'dashboard',$6)`,
-        [document.revision_id, document.document_id,
-          document.input.title, document.input.summary,
-          document.input.commit_message, BOOTSTRAP_ACTOR],
+        [page.revision_id, page.document_id,
+          page.input.title, page.input.summary,
+          page.input.commit_message, BOOTSTRAP_ACTOR],
       );
       await client.query(
         "SELECT register_generic_knowledge_revision($1,$2,$3::uuid[])",
-        [document.revision_id, document.input.body_markdown, targets],
+        [page.revision_id, page.input.body_markdown, targets],
       );
     });
   }

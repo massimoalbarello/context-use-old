@@ -8,7 +8,7 @@ import {
   HypermediaBootstrapRepository,
   KnowledgeSettingsRepository,
   type HypermediaBootstrapAllocation,
-  type HypermediaBootstrapDocumentKind,
+  type HypermediaBootstrapPageKind,
 } from "../src/index.ts";
 import { disposableDatabaseUrl } from "../src/disposable-database.ts";
 import { developmentResetSql } from "../src/reset-development.ts";
@@ -99,10 +99,10 @@ describeDatabase("retained bootstrap allocation normalization", () => {
     const bootstrap = new HypermediaBootstrapRepository(corpus, bodies);
     const allocations = await bootstrap.begin();
     const byKind = new Map(allocations.map((allocation) => [allocation.document_kind, allocation]));
-    for (const [document_kind, input] of Object.entries(defaultHypermediaBootstrapTemplate.documents)) {
-      const allocation = byKind.get(document_kind as HypermediaBootstrapDocumentKind);
+    for (const [document_kind, input] of Object.entries(defaultHypermediaBootstrapTemplate.pages)) {
+      const allocation = byKind.get(document_kind as HypermediaBootstrapPageKind);
       if (!allocation) throw new Error(`Missing bootstrap allocation: ${document_kind}`);
-      await bootstrap.ensureDocument({
+      await bootstrap.ensurePage({
         ...allocation,
         input: {
           ...input,

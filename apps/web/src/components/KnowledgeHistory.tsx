@@ -73,10 +73,10 @@ function dayHeading(date: Date, today: Date): { label: string; detail: string } 
 
 export function KnowledgeChangeRow({
   change,
-  onOpenDocument,
+  onOpenObject,
 }: {
   change: KnowledgePageChange;
-  onOpenDocument: (documentId: string) => void;
+  onOpenObject: (objectId: string) => void;
 }) {
   const actor = change.actor_kind
     ? `${change.actor_kind}${change.actor_subject ? ` · ${change.actor_subject}` : ""}`
@@ -87,7 +87,7 @@ export function KnowledgeChangeRow({
       <div className="knowledge-change-heading">
         {change.change_kind === "deleted"
           ? <strong>{change.title}</strong>
-          : <button type="button" onClick={() => onOpenDocument(change.document_id)}>{change.title}</button>}
+          : <button type="button" onClick={() => onOpenObject(change.object_id)}>{change.title}</button>}
         <span>v{change.revision_number}</span>
       </div>
       <p>{change.commit_message}</p>
@@ -101,11 +101,11 @@ export function KnowledgeChangeRow({
 
 export function KnowledgeChangeDay({
   group,
-  onOpenDocument,
+  onOpenObject,
   today = new Date(),
 }: {
   group: KnowledgeChangeDayGroup;
-  onOpenDocument: (documentId: string) => void;
+  onOpenObject: (objectId: string) => void;
   today?: Date;
 }) {
   const heading = dayHeading(group.date, today);
@@ -119,12 +119,12 @@ export function KnowledgeChangeDay({
       <span>{group.changes.length} {group.changes.length === 1 ? "change" : "changes"}</span>
     </header>
     <div className="knowledge-change-day-rows">
-      {group.changes.map((change) => <KnowledgeChangeRow key={change.cursor} change={change} onOpenDocument={onOpenDocument} />)}
+      {group.changes.map((change) => <KnowledgeChangeRow key={change.cursor} change={change} onOpenObject={onOpenObject} />)}
     </div>
   </section>;
 }
 
-export function KnowledgeHistory({ onOpenDocument }: { onOpenDocument: (documentId: string) => void }) {
+export function KnowledgeHistory({ onOpenObject }: { onOpenObject: (objectId: string) => void }) {
   const [changes, setChanges] = useState<KnowledgePageChange[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -155,11 +155,11 @@ export function KnowledgeHistory({ onOpenDocument }: { onOpenDocument: (document
       <div><span className="eyebrow">Knowledge ledger</span><h1>Change history</h1></div>
     </header>
     <section className="knowledge-history-intro">
-      <p>A chronological record of document changes and commit metadata. Page bodies and diffs are never stored here.</p>
+      <p>A chronological record of page changes and commit metadata. Page bodies and diffs are never stored here.</p>
     </section>
     <section className="knowledge-change-list" aria-live="polite">
-      {!loading && !error && changes.length === 0 && <p className="knowledge-history-empty">No document changes have been recorded yet.</p>}
-      {groupedChanges.map((group) => <KnowledgeChangeDay key={group.key} group={group} onOpenDocument={onOpenDocument} />)}
+      {!loading && !error && changes.length === 0 && <p className="knowledge-history-empty">No page changes have been recorded yet.</p>}
+      {groupedChanges.map((group) => <KnowledgeChangeDay key={group.key} group={group} onOpenObject={onOpenObject} />)}
     </section>
     {error && <div className="inline-error" role="alert">{error}</div>}
     {nextCursor && <button className="knowledge-history-more" disabled={loading} onClick={() => void load(nextCursor)}>

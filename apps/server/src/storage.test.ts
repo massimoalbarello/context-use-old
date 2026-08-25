@@ -14,8 +14,8 @@ import {
   UploadPartCommand,
 } from "@aws-sdk/client-s3";
 import { afterEach, describe, expect, test } from "bun:test";
-import { AssetIntegrityError, credentialsFromFile, mayRenderInline, ObjectAlreadyExistsError, S3Storage, type StoredAsset } from "./storage.ts";
-import { MemoryObjectStorage } from "./test-object-storage.ts";
+import { AssetIntegrityError, credentialsFromFile, mayRenderInline, BlobAlreadyExistsError, S3Storage, type StoredBlob } from "./storage.ts";
+import { MemoryBlobStorage } from "./test-object-storage.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -24,19 +24,19 @@ afterEach(async () => {
 });
 
 async function fixture(bytes: Uint8Array) {
-  const asset: StoredAsset = {
+  const asset: StoredBlob = {
     id: "11111111-1111-4111-8111-111111111111",
-    objectKey: "objects/11111111-1111-4111-8111-111111111111",
+    blobKey: "objects/11111111-1111-4111-8111-111111111111",
     filename: "document.pdf",
     contentType: "application/pdf",
     sizeBytes: bytes.byteLength,
     contentHash: createHash("sha256").update(bytes).digest("hex"),
   };
-  return { asset, storage: new MemoryObjectStorage() };
+  return { asset, storage: new MemoryBlobStorage() };
 }
 
-async function storedBytes(storage: MemoryObjectStorage, objectKey: string): Promise<Uint8Array> {
-  return new Uint8Array(await new Response(await storage.read(objectKey)).arrayBuffer());
+async function storedBytes(storage: MemoryBlobStorage, blobKey: string): Promise<Uint8Array> {
+  return new Uint8Array(await new Response(await storage.read(blobKey)).arrayBuffer());
 }
 
 class FakeS3Client {
@@ -172,8 +172,8 @@ describe("application-routed asset storage", () => {
 
     await storage.write(asset, new Blob([bytes]).stream());
 
-    expect(await storedBytes(storage, asset.objectKey)).toEqual(bytes);
-    expect(await storage.verify(asset.objectKey, asset.sizeBytes, asset.contentHash)).toBe(true);
+    expect(await storedBytes(storage, asset.blobKey)).toEqual(bytes);
+    expect(await storage.verify(asset.blobKey, asset.sizeBytes, asset.contentHash)).toBe(true);
   });
 
   test("rejects checksum mismatches without storing an object", async () => {
@@ -182,7 +182,7 @@ describe("application-routed asset storage", () => {
     const { asset, storage } = await fixture(expected);
 
     await expect(storage.write(asset, new Blob([supplied]).stream())).rejects.toBeInstanceOf(AssetIntegrityError);
-    expect(await storage.exists(asset.objectKey)).toBe(false);
+    expect(await storage.exists(asset.blobKey)).toBe(false);
   });
 
   test("rejects truncated uploads", async () => {
@@ -191,7 +191,7 @@ describe("application-routed asset storage", () => {
     const { asset, storage } = await fixture(expected);
 
     await expect(storage.write(asset, new Blob([supplied]).stream())).rejects.toBeInstanceOf(AssetIntegrityError);
-    expect(await storage.exists(asset.objectKey)).toBe(false);
+    expect(await storage.exists(asset.blobKey)).toBe(false);
   });
 
   test("conditionally creates an object without replacing existing bytes", async () => {
@@ -204,9 +204,9 @@ describe("application-routed asset storage", () => {
       ...asset,
       sizeBytes: second.byteLength,
       contentHash: createHash("sha256").update(second).digest("hex"),
-    }, new Blob([second]).stream())).rejects.toBeInstanceOf(ObjectAlreadyExistsError);
+    }, new Blob([second]).stream())).rejects.toBeInstanceOf(BlobAlreadyExistsError);
 
-    expect(await storedBytes(storage, asset.objectKey)).toEqual(first);
+    expect(await storedBytes(storage, asset.blobKey)).toEqual(first);
   });
 
   test("uses an S3 conditional request for single-part immutable objects", async () => {
@@ -218,7 +218,7 @@ describe("application-routed asset storage", () => {
     await storage.writeOnce(asset, new Blob([bytes]).stream());
     expect(client.conditionalPut).toBe(true);
     await expect(storage.writeOnce(asset, new Blob([bytes]).stream()))
-      .rejects.toBeInstanceOf(ObjectAlreadyExistsError);
+      .rejects.toBeInstanceOf(BlobAlreadyExistsError);
     expect(client.object).toEqual(bytes);
   });
 
@@ -277,7 +277,7 @@ describe("application-routed asset storage", () => {
     expect(client.object?.byteLength).toBe(bytes.byteLength);
     expect(createHash("sha256").update(client.object!).digest("hex")).toBe(asset.contentHash);
     expect(client.metadata?.sha256).toBe(asset.contentHash);
-    expect(await storage.verify(asset.objectKey, asset.sizeBytes, asset.contentHash)).toBe(true);
+    expect(await storage.verify(asset.blobKey, asset.sizeBytes, asset.contentHash)).toBe(true);
   });
 
   test("conditions multipart completion so a competing object cannot be replaced", async () => {
@@ -289,7 +289,7 @@ describe("application-routed asset storage", () => {
     client.object = competing;
 
     await expect(storage.writeOnce(asset, new Blob([bytes]).stream()))
-      .rejects.toBeInstanceOf(ObjectAlreadyExistsError);
+      .rejects.toBeInstanceOf(BlobAlreadyExistsError);
     expect(client.conditionalComplete).toBe(true);
     expect(client.object).toEqual(competing);
     expect(client.aborted).toBe(true);

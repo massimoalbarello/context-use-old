@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { Pool } from "pg";
-import { markdownObjectMetadata, type MarkdownObjectStore } from "./documents.ts";
-import { KnowledgeDocumentRepository } from "./knowledge-documents.ts";
+import { markdownBlobMetadata, type MarkdownBlobStore } from "./markdown-blobs.ts";
+import { KnowledgePageRepository } from "./knowledge-pages.ts";
 
-const bodies: MarkdownObjectStore = {
+const bodies: MarkdownBlobStore = {
   async write(revisionId, markdown) {
-    return markdownObjectMetadata(revisionId, markdown);
+    return markdownBlobMetadata(revisionId, markdown);
   },
   async read() {
     return "Oldest retained body";
@@ -28,7 +28,7 @@ function changeRow(sequence: string, documentId: string, previousRevisionNumber?
   };
 }
 
-describe("canonical knowledge document change cursor", () => {
+describe("canonical knowledge page change cursor", () => {
   test("keeps pagination inside one fixed window without returning paths", async () => {
     const calls: Array<{ sql: string; values: unknown[] | undefined }> = [];
     const firstDocumentId = crypto.randomUUID();
@@ -49,7 +49,7 @@ describe("canonical knowledge document change cursor", () => {
         return { query, release() {} };
       },
     } as unknown as Pool;
-    const documents = new KnowledgeDocumentRepository(pool, bodies);
+    const documents = new KnowledgePageRepository(pool, bodies);
 
     const first = await documents.changesSince({ cursor: "cu-page-changes-v1.5", limit: 1 });
     expect(first).toMatchObject({
@@ -79,14 +79,14 @@ describe("canonical knowledge document change cursor", () => {
   });
 
   test("rejects mixing a completed cursor with an in-progress page token", async () => {
-    const documents = new KnowledgeDocumentRepository({} as Pool, bodies);
+    const documents = new KnowledgePageRepository({} as Pool, bodies);
     await expect(documents.changesSince({
       cursor: "cu-page-changes-v1.1",
       pageToken: "cu-page-scan-v1.0.1.0",
     })).rejects.toThrow("Provide a cursor or page token, not both");
   });
 
-  test("returns recent changes newest-first with stable document metadata", async () => {
+  test("returns recent changes newest-first with stable object metadata", async () => {
     const documentId = crypto.randomUUID();
     const calls: Array<{ sql: string; values: unknown[] | undefined }> = [];
     const pool = {
@@ -95,7 +95,7 @@ describe("canonical knowledge document change cursor", () => {
         return { rows: [changeRow("9", documentId), changeRow("8", crypto.randomUUID())] };
       },
     } as unknown as Pool;
-    const documents = new KnowledgeDocumentRepository(pool, bodies);
+    const documents = new KnowledgePageRepository(pool, bodies);
 
     const batch = await documents.recentChanges({
       before: "cu-page-changes-v1.5",
@@ -115,7 +115,7 @@ describe("canonical retained knowledge revisions", () => {
   test("finds and reads the oldest retained revision in a comparison range", async () => {
     const documentId = crypto.randomUUID();
     const revisionId = crypto.randomUUID();
-    const metadata = markdownObjectMetadata(revisionId, "Oldest retained body");
+    const metadata = markdownBlobMetadata(revisionId, "Oldest retained body");
     const calls: Array<{ sql: string; values: unknown[] | undefined }> = [];
     const pool = {
       async query(sql: string, values?: unknown[]) {
@@ -140,7 +140,7 @@ describe("canonical retained knowledge revisions", () => {
         }] };
       },
     } as unknown as Pool;
-    const documents = new KnowledgeDocumentRepository(pool, bodies);
+    const documents = new KnowledgePageRepository(pool, bodies);
 
     expect(await documents.oldestRetainedRevisionAfter(documentId, 3, 10)).toMatchObject({
       document_id: documentId,

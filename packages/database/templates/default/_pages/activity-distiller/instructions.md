@@ -9,8 +9,8 @@ guide returned by `begin_knowledge_session` controls every knowledge mutation.
 - Before the first knowledge mutation, call `begin_knowledge_session` once, read the returned
   guide completely, and reuse its `knowledge_session_receipt` for the session. Reload it only
   after context loss, in a new session, or when a mutation reports a stale receipt.
-- Read this automation's configured state document before reading records. Under the
-  automation's control documents, mutate only that state document.
+- Read this automation's configured state page before reading records. Under the
+  automation's control pages, mutate only that state page.
 - Carry out confident writes without a preview. Leave genuinely ambiguous identity unresolved
   and report the candidates plus the smallest fact needed to decide.
 - Connector records are immutable evidence and remain usable whether or not they produce a
@@ -23,7 +23,7 @@ guide returned by `begin_knowledge_session` controls every knowledge mutation.
 
 ### 1. Initialize the run
 
-Read the state document. When its checkpoint is `_none_`, omit `checkpoint`; otherwise copy
+Read the state page. When its checkpoint is `_none_`, omit `checkpoint`; otherwise copy
 the opaque value exactly. A run retains the evidence it reads until it either saves the next
 checkpoint or reports a failure.
 
@@ -62,7 +62,7 @@ Discard a record from distillation only when the whole record is actual noise:
 
 Nothing else is discarded for being short, routine, one-sided, unremarkable or a minor
 detail. Do not extract isolated names from a discarded record. Discarding here never deletes
-or hides the source document; every retained record proceeds to step 4.
+or hides the source record; every retained record proceeds to step 4.
 
 ### 4. Extract every retained record
 
@@ -79,7 +79,7 @@ Then process retained records **one at a time, in activity order**. For the curr
   merely that somebody discussed, sent or flagged it.
 - **c.** Split lists, comparisons, paired commitments and conflicting values into
   independently checkable particulars. Retain every item and both sides of a conflict.
-- **d.** Keep the record's stable document reference available so a knowledge claim can link
+- **d.** Keep the record's stable object reference available so a knowledge claim can link
   to its evidence without copying the raw body.
 - **e.** Reconcile all knowledge from this record through step 5 before moving to the next
   record.
@@ -100,7 +100,7 @@ For the particulars extracted in step 4:
 - **c.** Reuse and revise coherent existing pages. Create a page only for an atomic,
   self-contained unit of understanding; a named subject need not receive a page merely for
   being mentioned.
-- **d.** Link claims to the source document when provenance is useful and link related
+- **d.** Link claims to the source record when provenance is useful and link related
   knowledge only where the relationship is supported and explained. Similarity alone never
   creates a link.
 - **e.** Maintain a useful hub, entrypoint, timeline or history page when the evidence affects
@@ -140,7 +140,7 @@ authorize stopping or reporting. An unsaved working set persists no progress: re
 recovery after an actual failure, not a reason to choose one.
 
 If a mutation is rejected, treat the returned error as a repair task. Re-read the exact page,
-copy its current id and version, refresh the knowledge session when requested, correct the
+copy its current object id and version, refresh the knowledge session when requested, correct the
 arguments and retry. A bad UUID, stale version or rejected receipt is not evidence that the
 tool is broken.
 
@@ -169,8 +169,8 @@ Report:
 - every incomplete record with its exact error;
 - a concise summary plus unresolved identity, evidence or consistency ambiguity; and
 - `Created`, `Updated` and `Archived` lists for every knowledge page mutation, naming its
-  stable document id, title and short description.
+  stable object id, title and short description.
 
 Include ordinary hubs and timelines when they changed. Exclude the operational state
-document. Write `None` for an empty list. Never claim success or a caught-up source while a
+page. Write `None` for an empty list. Never claim success or a caught-up source while a
 record, working set or state update remains incomplete.
