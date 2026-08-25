@@ -137,7 +137,7 @@ jobs:
           psql "${TEST_DATABASE_URL}" --set ON_ERROR_STOP=1 <<'SQL'
           DO $$
           BEGIN
-            IF (SELECT count(*) FROM schema_migrations)<>6
+            IF (SELECT count(*) FROM schema_migrations)<>7
                OR NOT EXISTS (
                  SELECT 1 FROM schema_migrations WHERE version='001_baseline.sql'
                )
@@ -160,6 +160,10 @@ jobs:
                OR NOT EXISTS (
                  SELECT 1 FROM schema_migrations
                  WHERE version='006_neutral_blob_keys.sql'
+               )
+               OR NOT EXISTS (
+                 SELECT 1 FROM schema_migrations
+                 WHERE version='007_fix_full_knowledge_bundle_boundaries.sql'
                )
                OR to_regclass('public.public_route_aliases') IS NULL THEN
               RAISE EXCEPTION 'current forward migration contract failed';
