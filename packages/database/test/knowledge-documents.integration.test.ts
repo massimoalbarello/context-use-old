@@ -290,7 +290,7 @@ describeDatabase("canonical private documents", () => {
       sourceRecordId: randomUUID(),
       action: "added",
       sourceUpdatedAt: new Date().toISOString(),
-      markdown: "remote connector body remotefulltextneedle",
+      markdown: "remote connector body remotefulltextneedle catalog-search-needle",
     });
     createdDocumentIds.add(remote.document_id);
 
@@ -332,6 +332,16 @@ describeDatabase("canonical private documents", () => {
     expect((await catalog.search("catalog-search-needle", {
       representation: "asset",
     })).documents.map(({ document_id }) => document_id)).toContain(asset.document.document_id);
+    const mixedTypes = await catalog.search("catalog-search-needle", {
+      catalog_types: ["record", "asset"],
+    });
+    expect(mixedTypes.documents.map(({ document_id }) => document_id))
+      .toContain(asset.document.document_id);
+    expect(mixedTypes.documents.map(({ document_id }) => document_id))
+      .toContain(remote.document_id);
+    expect(mixedTypes.documents.every(({ document_kind, lifecycle }) => (
+      (document_kind === "record" || document_kind === "asset") && lifecycle === "active"
+    ))).toBe(true);
     expect((await catalog.list({
       authority: "source",
       integration: "canonical-test",

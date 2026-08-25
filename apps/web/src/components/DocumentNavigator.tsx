@@ -6,7 +6,15 @@ import type {
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { api } from "../api.ts";
 
-type DocumentFilter = "all" | DashboardDocumentKind | "archived";
+export type DocumentFilter = DashboardDocumentKind | "public" | "archived";
+
+const FILTER_OPTIONS: ReadonlyArray<{ value: DocumentFilter; label: string }> = [
+  { value: "knowledge", label: "Pages" },
+  { value: "asset", label: "Assets" },
+  { value: "record", label: "Records" },
+  { value: "public", label: "Public pages" },
+  { value: "archived", label: "Archived" },
+];
 
 export function sourceModelDisplayName(model: string): string {
   return model
@@ -65,13 +73,12 @@ function DocumentIcon({ document }: { document: DashboardDocumentSummary }) {
 
 export function documentCatalogUrl(
   query: string,
-  filter: DocumentFilter,
+  filters: readonly DocumentFilter[],
   cursor?: string,
 ): string {
   const parameters = new URLSearchParams({ limit: "40" });
   if (query.trim()) parameters.set("q", query.trim());
-  if (filter === "archived") parameters.set("lifecycle", "archived");
-  else if (filter !== "all") parameters.set("kind", filter);
+  if (filters.length) parameters.set("types", filters.join(","));
   if (cursor) parameters.set("cursor", cursor);
   return `/api/dashboard/documents?${parameters}`;
 }
@@ -80,16 +87,15 @@ export function DocumentNavigator({
   query,
   selectedId,
   refreshToken,
-  onCreate,
   onSelect,
 }: {
   query: string;
   selectedId: string | null;
   refreshToken: number;
-  onCreate?: () => void;
   onSelect: (document: DashboardDocumentSummary) => void;
 }) {
-  const [filter, setFilter] = useState<DocumentFilter>("all");
+  const [filters, setFilters] = useState<DocumentFilter[]>([]);
+  const [filterOpen, setFilterOpen] = useState(false);
   const [page, setPage] = useState<DashboardDocumentCatalogPage>({
     documents: [],
     next_cursor: null,
@@ -99,18 +105,36 @@ export function DocumentNavigator({
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const filterRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const infiniteLoaderRef = useRef<HTMLDivElement>(null);
-  const queryKey = `${query.trim()}\u0000${filter}`;
+  const filterKey = filters.join(",");
+  const queryKey = `${query.trim()}\u0000${filterKey}`;
   const queryKeyRef = useRef(queryKey);
   queryKeyRef.current = queryKey;
+
+  useEffect(() => {
+    if (!filterOpen) return;
+    const closeFilter = (event: PointerEvent) => {
+      if (!filterRef.current?.contains(event.target as Node)) setFilterOpen(false);
+    };
+    const closeFilterWithKeyboard = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setFilterOpen(false);
+    };
+    document.addEventListener("pointerdown", closeFilter);
+    document.addEventListener("keydown", closeFilterWithKeyboard);
+    return () => {
+      document.removeEventListener("pointerdown", closeFilter);
+      document.removeEventListener("keydown", closeFilterWithKeyboard);
+    };
+  }, [filterOpen]);
 
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
     setError("");
     const timer = window.setTimeout(() => {
-      api<DashboardDocumentCatalogPage>(documentCatalogUrl(query, filter), {
+      api<DashboardDocumentCatalogPage>(documentCatalogUrl(query, filters), {
         signal: controller.signal,
       }).then(setPage).catch((caught: unknown) => {
         if (caught instanceof DOMException && caught.name === "AbortError") return;
@@ -123,7 +147,7 @@ export function DocumentNavigator({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [filter, query, refreshToken]);
+  }, [filterKey, query, refreshToken]);
 
   const loadMore = useCallback(async () => {
     if (!page.next_cursor || loadingMore) return;
@@ -132,7 +156,7 @@ export function DocumentNavigator({
     setError("");
     try {
       const next = await api<DashboardDocumentCatalogPage>(
-        documentCatalogUrl(query, filter, page.next_cursor),
+        documentCatalogUrl(query, filters, page.next_cursor),
       );
       if (queryKeyRef.current !== requestedQueryKey) return;
       const seen = new Set(page.documents.map((document) => document.document_id));
@@ -147,7 +171,7 @@ export function DocumentNavigator({
     } finally {
       setLoadingMore(false);
     }
-  }, [filter, loadingMore, page, query, queryKey]);
+  }, [filterKey, loadingMore, page, query, queryKey]);
 
   useEffect(() => {
     const root = listRef.current;
@@ -171,16 +195,43 @@ export function DocumentNavigator({
     itemRefs.current[next]?.focus();
   };
 
+  const toggleFilter = (value: DocumentFilter) => {
+    setFilters((current) => {
+      const next = new Set(current);
+      if (next.has(value)) next.delete(value);
+      else next.add(value);
+      return FILTER_OPTIONS.map(({ value: option }) => option).filter((option) => next.has(option));
+    });
+  };
+
+  const filterSummary = filters.length === 0
+    ? "All types"
+    : filters.length === 1
+      ? FILTER_OPTIONS.find(({ value }) => value === filters[0])!.label
+      : `${FILTER_OPTIONS.find(({ value }) => value === filters[0])!.label} +${filters.length - 1}`;
+
   return <section className="document-navigator" aria-label="Knowledge documents">
-    <div className="document-filter" aria-label="Document type filter">
-      {(["all", "knowledge", "asset", "record", "archived"] as const).map((value) => <button
+    <div ref={filterRef} className="document-filter">
+      <button
         type="button"
-        className={filter === value ? "active" : ""}
-        aria-pressed={filter === value}
-        key={value}
-        onClick={() => setFilter(value)}
-      >{value === "all" ? "All" : value === "knowledge" ? "Pages" : value === "asset" ? "Assets" : value === "record" ? "Records" : "Archived"}</button>)}
-      {onCreate && <button type="button" className="document-create" onClick={onCreate}>+ New page</button>}
+        className={`document-filter-toggle${filters.length ? " active" : ""}`}
+        aria-label={`Filter document types: ${filters.length ? filters.map((filter) => FILTER_OPTIONS.find(({ value }) => value === filter)!.label).join(", ") : "all types"}`}
+        aria-expanded={filterOpen}
+        aria-haspopup="true"
+        onClick={() => setFilterOpen((open) => !open)}
+      ><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 5h13M6 10h8M8.5 15h3" /></svg><span>Filter</span><strong>{filterSummary}</strong><i aria-hidden="true" /></button>
+      {filterOpen && <div className="document-filter-menu" aria-label="Document type filter">
+        <div className="document-filter-menu-heading"><span>Select one or more</span>{filters.length > 0 && <button type="button" onClick={() => setFilters([])}>Clear</button>}</div>
+        {FILTER_OPTIONS.map(({ value, label }) => <label key={value}>
+          <input
+            type="checkbox"
+            checked={filters.includes(value)}
+            onChange={() => toggleFilter(value)}
+          />
+          <span aria-hidden="true">✓</span>
+          <strong>{label}</strong>
+        </label>)}
+      </div>}
     </div>
     <div className="document-list-heading">
       <strong>{query.trim() ? "Search results" : "Recently updated"}</strong>
@@ -190,7 +241,7 @@ export function DocumentNavigator({
       {loading && <div className="document-list-state">Searching your knowledge…</div>}
       {!loading && error && !page.documents.length && <div className="document-list-state error">{error}</div>}
       {!loading && !error && !page.documents.length && <div className="document-list-state">
-        {query.trim() ? "No matching documents" : filter === "archived" ? "No archived documents" : filter === "record" ? "No source records yet" : "No active documents yet"}
+        {query.trim() ? "No matching documents" : filters.length ? "No documents match these filters" : "No active documents yet"}
       </div>}
       {!loading && page.documents.map((document, index) => <button
         type="button"

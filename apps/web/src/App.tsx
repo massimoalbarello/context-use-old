@@ -284,15 +284,6 @@ export function App() {
     history.pushState({}, "", selected ? `/app/documents/${selected.id}` : "/app");
   };
 
-  const createDocument = () => {
-    setSelected(null);
-    setSelectedDocument(null);
-    setCreatingDocument(true);
-    setSection("knowledge");
-    setMobileSidebarOpen(false);
-    history.pushState({}, "", "/app/documents/new");
-  };
-
   const followDocumentLink = (event: ReactMouseEvent<HTMLDivElement>) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     const target = event.target instanceof Element ? event.target.closest("a") : null;
@@ -350,7 +341,6 @@ export function App() {
         query={query}
         selectedId={section === "knowledge" && selected?.kind === "document" ? selected.id : null}
         refreshToken={navigatorRefresh}
-        onCreate={createDocument}
         onSelect={openDocument}
       />
       <footer>

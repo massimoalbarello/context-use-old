@@ -67,25 +67,21 @@ describe("search-first document navigation", () => {
       query: "",
       selectedId: null,
       refreshToken: 0,
-      onCreate: () => undefined,
       onSelect: () => undefined,
     }));
     expect(html).toContain("Recently updated");
-    expect(html).toContain("Pages");
-    expect(html).toContain("Assets");
-    expect(html).toContain("Records");
-    expect(html).toContain("Archived");
-    expect(html).toContain("New page");
+    expect(html).toContain("All types");
+    expect(html).not.toContain("New page");
     expect(html).not.toContain("folder");
   });
 
-  test("scopes search to the selected document type", () => {
-    expect(documentCatalogUrl("quarterly plan", "knowledge"))
-      .toBe("/api/dashboard/documents?limit=40&q=quarterly+plan&kind=knowledge");
-    expect(documentCatalogUrl("quarterly plan", "record"))
-      .toBe("/api/dashboard/documents?limit=40&q=quarterly+plan&kind=record");
-    expect(documentCatalogUrl("quarterly plan", "archived"))
-      .toBe("/api/dashboard/documents?limit=40&q=quarterly+plan&lifecycle=archived");
+  test("scopes search to one or more selected document types", () => {
+    expect(documentCatalogUrl("quarterly plan", ["knowledge"]))
+      .toBe("/api/dashboard/documents?limit=40&q=quarterly+plan&types=knowledge");
+    expect(documentCatalogUrl("quarterly plan", ["record", "public"]))
+      .toBe("/api/dashboard/documents?limit=40&q=quarterly+plan&types=record%2Cpublic");
+    expect(documentCatalogUrl("quarterly plan", ["public", "archived"]))
+      .toBe("/api/dashboard/documents?limit=40&q=quarterly+plan&types=public%2Carchived");
   });
 
   test("creates documents without asking for a directory or path", () => {

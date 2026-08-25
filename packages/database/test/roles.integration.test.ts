@@ -631,7 +631,7 @@ describeDatabase("PostgreSQL security roles", () => {
       )).rowCount).toBe(1);
       expect((await admin.query(
         `SELECT 1 FROM search_private_document_catalog(
-           'Authored',NULL,NULL,NULL,false,10,NULL,NULL,'knowledge',NULL,NULL,NULL
+           'Authored',NULL,NULL,NULL,false,10,NULL,NULL,'knowledge',NULL,NULL,NULL,NULL
          ) WHERE search_document_id=$1`,
         [authoredDocumentId],
       )).rowCount).toBe(1);
@@ -654,7 +654,7 @@ describeDatabase("PostgreSQL security roles", () => {
       await expectDenied("INSERT INTO knowledge_revision_contracts( revision_id,document_id,provenance,body_content_hash ) VALUES ($1,$2,'authored',$3)", [randomUUID(), authoredDocumentId, bodyHash]);
       await expectDenied(
         `SELECT * FROM search_private_document_catalog(
-           repeat('x',2049),NULL,NULL,NULL,false,10,NULL,NULL,NULL,NULL,NULL,NULL
+           repeat('x',2049),NULL,NULL,NULL,false,10,NULL,NULL,NULL,NULL,NULL,NULL,NULL
          )`,
       );
       await admin.query("RESET ROLE");
@@ -678,7 +678,7 @@ describeDatabase("PostgreSQL security roles", () => {
         for (const fn of [
           "record_generic_knowledge_revision(uuid,uuid,text,uuid[],knowledge_revision_contract_provenance)",
           "register_generic_knowledge_revision(uuid,text,uuid[])",
-          "search_private_document_catalog(text,real,bigint,uuid,boolean,integer,hypermedia_document_authority,hypermedia_document_representation,private_document_kind,private_document_lifecycle,text,private_document_operational_role)",
+          "search_private_document_catalog(text,real,bigint,uuid,boolean,integer,hypermedia_document_authority,hypermedia_document_representation,private_document_kind,private_document_lifecycle,text,private_document_operational_role,text[])",
         ]) {
           expect((await admin.query<{ allowed: boolean }>(
             "SELECT has_function_privilege($1,$2,'EXECUTE') AS allowed",

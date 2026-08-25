@@ -56,6 +56,7 @@ export {
   InvalidPrivateDocumentCursorError,
   PrivateDocumentCatalogRepository,
   type PrivateDocumentCatalogFilters,
+  type PrivateDocumentCatalogType,
   type PrivateDocumentCatalogItem,
   type PrivateDocumentCatalogPage,
   type PrivateDocumentKind,

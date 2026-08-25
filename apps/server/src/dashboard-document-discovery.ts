@@ -34,6 +34,16 @@ const OptionalBoolean = z.preprocess(
   (value) => value === "" || value === undefined ? undefined : value,
   z.enum(["true", "false"]).transform((entry) => entry === "true").optional(),
 );
+const OptionalCatalogTypes = z.preprocess(
+  (value) => typeof value === "string" && value.trim()
+    ? value.split(",").map((entry) => entry.trim())
+    : undefined,
+  z.array(z.enum(["knowledge", "record", "asset", "public", "archived"]))
+    .min(1)
+    .max(5)
+    .refine((entries) => new Set(entries).size === entries.length, "Types must be unique")
+    .optional(),
+);
 
 const catalogQuerySchema = z.object({
   q: OptionalQuery,
@@ -43,6 +53,7 @@ const catalogQuerySchema = z.object({
   authority: z.enum(["knowledge", "source"]).optional(),
   kind: z.enum(["knowledge", "record", "asset"]).optional(),
   lifecycle: z.enum(["active", "archived", "deleted"]).optional(),
+  types: OptionalCatalogTypes,
 }).strict();
 
 const neighborhoodQuerySchema = z.object({
@@ -84,6 +95,7 @@ export function parseDashboardDocumentCatalogQuery(
       ...(parsed.authority ? { authority: parsed.authority } : {}),
       ...(parsed.kind ? { document_kind: parsed.kind } : {}),
       ...(parsed.lifecycle ? { lifecycle: parsed.lifecycle } : {}),
+      ...(parsed.types ? { catalog_types: parsed.types } : {}),
     },
   };
 }
