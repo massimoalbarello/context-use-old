@@ -338,7 +338,7 @@ describeDatabase("PostgreSQL security roles", () => {
     }
   });
 
-  test("only the passkey-confirmation role can authorize or claim a knowledge export", async () => {
+  test("only the passkey-confirmation role can authorize or claim a knowledge bundle export", async () => {
     const functions = [
       "confirm_knowledge_export_intent(uuid,text,text,text,integer,integer)",
       "claim_knowledge_export_download(uuid,text,text)",

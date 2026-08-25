@@ -39,15 +39,6 @@ async function storedBytes(storage: MemoryObjectStorage, objectKey: string): Pro
   return new Uint8Array(await new Response(await storage.read(objectKey)).arrayBuffer());
 }
 
-function generatedZipBytes(sizeBytes: number): Buffer<ArrayBuffer> {
-  if (sizeBytes < 22) throw new Error("ZIP fixture is too small");
-  const bytes = Buffer.alloc(sizeBytes, 17);
-  const footer = sizeBytes - 22;
-  bytes.set([0x50, 0x4b, 0x05, 0x06], footer);
-  bytes.fill(0, footer + 4);
-  return bytes;
-}
-
 class FakeS3Client {
   readonly partLengths: number[] = [];
   readonly uploadedParts = new Map<number, Uint8Array>();
@@ -256,32 +247,21 @@ describe("application-routed asset storage", () => {
     expect(minioClient.encryption).toEqual({});
   });
 
-  test("commits generated objects only with matching metadata", async () => {
-    const bytes = generatedZipBytes(128);
+  test("commits knowledge bundles only with matching metadata", async () => {
+    const bytes = Buffer.alloc(128, 17);
     const { storage } = await fixture(bytes);
-    const key = "exports/11111111-1111-4111-8111-111111111111.zip";
+    const key = "bundles/11111111-1111-4111-8111-111111111111.cuse";
 
-    const written = await storage.writeGenerated(key, new Blob([bytes]).stream());
+    const written = await storage.writeBundle(key, new Blob([bytes]).stream());
 
     expect(written).toEqual({
       sizeBytes: bytes.byteLength,
       contentHash: createHash("sha256").update(bytes).digest("hex"),
     });
-    expect(await storage.inspectGenerated(key)).toEqual(written);
+    expect(await storage.inspectBundle(key)).toEqual(written);
     expect(await storedBytes(storage, key)).toEqual(bytes);
-    await storage.deleteGenerated(key);
-    expect(await storage.inspectGenerated(key)).toBeNull();
-  });
-
-  test("does not commit a generated object without a finalized ZIP directory", async () => {
-    const bytes = Buffer.alloc(128, 17);
-    const { storage } = await fixture(bytes);
-    const key = "exports/11111111-1111-4111-8111-111111111111.zip";
-
-    await expect(storage.writeGenerated(key, new Blob([bytes]).stream())).rejects.toThrow("not finalized");
-
-    expect(await storage.inspectGenerated(key)).toBeNull();
-    expect(await storage.exists(key)).toBe(false);
+    await storage.deleteBundle(key);
+    expect(await storage.inspectBundle(key)).toBeNull();
   });
 
   test("uploads large web request streams as bounded S3 multipart bytes", async () => {
@@ -315,19 +295,19 @@ describe("application-routed asset storage", () => {
     expect(client.aborted).toBe(true);
   });
 
-  test("writes the generated S3 manifest only after multipart completion", async () => {
-    const bytes = generatedZipBytes(8 * 1024 * 1024 + 41);
-    const key = "exports/11111111-1111-4111-8111-111111111111.zip";
+  test("writes the bundle S3 manifest only after multipart completion", async () => {
+    const bytes = Buffer.alloc(8 * 1024 * 1024 + 41, 17);
+    const key = "bundles/11111111-1111-4111-8111-111111111111.cuse";
     const client = new FakeS3Client();
     const storage = new S3Storage(client as unknown as S3Client);
 
-    const written = await storage.writeGenerated(key, new Blob([bytes]).stream());
+    const written = await storage.writeBundle(key, new Blob([bytes]).stream());
 
     expect(client.partLengths).toEqual([8 * 1024 * 1024, 41]);
-    expect(await storage.inspectGenerated(key)).toEqual(written);
+    expect(await storage.inspectBundle(key)).toEqual(written);
     expect(written.contentHash).toBe(createHash("sha256").update(bytes).digest("hex"));
-    await storage.deleteGenerated(key);
-    expect(await storage.inspectGenerated(key)).toBeNull();
+    await storage.deleteBundle(key);
+    expect(await storage.inspectBundle(key)).toBeNull();
   });
 
   test("uploads a large inbound Bun HTTP request without bridging it to a Node stream", async () => {

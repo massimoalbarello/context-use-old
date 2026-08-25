@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 export const KNOWLEDGE_BUNDLE_FORMAT = "context-use-knowledge-bundle" as const;
 export const KNOWLEDGE_BUNDLE_VERSION = 1 as const;
@@ -20,6 +20,21 @@ export const KNOWLEDGE_BUNDLE_DATASETS = [
 ] as const;
 
 export type KnowledgeBundlePrincipal = { ownerUserId: string; sessionId: string };
+
+async function transaction<T>(pool: Pool, work: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await work(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
 
 export type KnowledgeBundleExportRecord = {
   dataset: string;
@@ -96,6 +111,87 @@ export type KnowledgeBundleImportObjectAuthorization = KnowledgeBundleObject & {
 export class KnowledgeBundleRepository {
   constructor(private readonly pool: Pool) {}
 
+  async createExportIntent(principal: KnowledgeBundlePrincipal) {
+    return transaction(this.pool, async (client) => {
+      const discarded = await client.query<{ id: string }>(
+        `DELETE FROM knowledge_export_intents
+         WHERE expires_at <= now()
+            OR (owner_user_id=$1 AND session_id=$2 AND download_started_at IS NULL)
+         RETURNING id`,
+        [principal.ownerUserId, principal.sessionId],
+      );
+      const id = randomUUID();
+      const inserted = await client.query<{ expires_at: Date }>(
+        `INSERT INTO knowledge_export_intents(id,owner_user_id,session_id,expires_at)
+         VALUES ($1,$2,$3,now()+interval '5 minutes') RETURNING expires_at`,
+        [id, principal.ownerUserId, principal.sessionId],
+      );
+      const summary = await client.query<{
+        page_count: string;
+        asset_count: string;
+        estimated_bytes: string;
+      }>(
+        `SELECT
+           (SELECT count(*)::text FROM knowledge_pages WHERE archived_at IS NULL) AS page_count,
+           (SELECT count(*)::text FROM assets WHERE deleted_at IS NULL) AS asset_count,
+           (
+             coalesce((
+               SELECT sum(object.body_size_bytes)
+               FROM hypermedia_document_revisions object
+             ),0)
+             + coalesce((
+               SELECT sum(size_bytes) FROM assets WHERE deleted_at IS NULL
+             ),0)
+             + coalesce((
+               SELECT sum(body_size_bytes) FROM retained_page_artifacts
+             ),0)
+             + coalesce((
+               SELECT sum(body_size_bytes) FROM public_page_artifacts
+             ),0)
+             + coalesce((
+               SELECT sum(body_size_bytes) FROM public_asset_artifacts
+             ),0)
+           )::text AS estimated_bytes`,
+      );
+      await client.query("INSERT INTO knowledge_bundle_exports(intent_id) VALUES ($1)", [id]);
+      return {
+        id,
+        expires_at: inserted.rows[0]!.expires_at,
+        page_count: Number(summary.rows[0]!.page_count),
+        asset_count: Number(summary.rows[0]!.asset_count),
+        estimated_bytes: Number(summary.rows[0]!.estimated_bytes),
+        discarded_export_ids: discarded.rows.map(({ id: discardedId }) => discardedId),
+      };
+    });
+  }
+
+  async exportIntent(id: string) {
+    const result = await this.pool.query<{
+      id: string;
+      owner_user_id: string;
+      session_id: string;
+      expires_at: Date;
+      confirmed_at: Date | null;
+      download_started_at: Date | null;
+    }>(
+      `SELECT intent.id,intent.owner_user_id,intent.session_id,intent.expires_at,
+         intent.confirmed_at,intent.download_started_at
+       FROM knowledge_export_intents intent
+       JOIN knowledge_bundle_exports bundle ON bundle.intent_id=intent.id
+       WHERE intent.id=$1`,
+      [id],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async discardExportIntent(id: string, principal: KnowledgeBundlePrincipal): Promise<void> {
+    await this.pool.query(
+      `DELETE FROM knowledge_export_intents
+       WHERE id=$1 AND owner_user_id=$2 AND session_id=$3 AND confirmed_at IS NULL`,
+      [id, principal.ownerUserId, principal.sessionId],
+    );
+  }
+
   async acceptsFullImport(): Promise<boolean> {
     const result = await this.pool.query<{ fresh: boolean }>(
       `SELECT NOT EXISTS (SELECT 1 FROM source_records)
@@ -108,14 +204,6 @@ export class KnowledgeBundleRepository {
           ) AS fresh`,
     );
     return result.rows[0]?.fresh === true;
-  }
-
-  async createExport(intentId: string): Promise<void> {
-    await this.pool.query(
-      `INSERT INTO knowledge_bundle_exports(intent_id) VALUES ($1)
-       ON CONFLICT (intent_id) DO NOTHING`,
-      [intentId],
-    );
   }
 
   async captureExport(intentId: string, principal: KnowledgeBundlePrincipal): Promise<{

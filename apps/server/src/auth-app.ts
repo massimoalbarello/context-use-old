@@ -442,7 +442,7 @@ export const authApp = new Elysia()
     const principal = await ownerRequest(request, true);
     return forwardBrowserConfirmation("publication", await bodyJson(request), principal);
   })
-  .post("/api/dashboard/knowledge-exports/confirm", async ({ request }) => {
+  .post("/api/dashboard/knowledge-bundle-exports/confirm", async ({ request }) => {
     const principal = await ownerRequest(request, true);
     return forwardBrowserConfirmation("knowledge_export", await bodyJson(request), principal);
   })

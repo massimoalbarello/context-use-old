@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { isFinalizedZipFooter, zipFooterRange } from "./zip-footer.ts";
 import {
   AssetIntegrityError,
   AssetNotFoundError,
@@ -43,42 +42,12 @@ export class MemoryObjectStorage implements ObjectStorageBackend {
     this.objects.set(asset.objectKey, value);
   }
 
-  async writeGenerated(
-    objectKey: string,
-    body: ReadableStream<Uint8Array> | null,
-  ): Promise<GeneratedObjectMetadata> {
-    if (!body) throw new Error("Generated object body is missing");
-    const value = await collect(body);
-    if (!value.byteLength) throw new Error("Generated object is empty");
-    const footerRange = zipFooterRange(value.byteLength);
-    if (!footerRange
-        || !isFinalizedZipFooter(value.slice(footerRange.start, footerRange.end + 1))) {
-      throw new Error("Generated ZIP central directory was not finalized");
-    }
-    const metadata = {
-      sizeBytes: value.byteLength,
-      contentHash: createHash("sha256").update(value).digest("hex"),
-    };
-    this.objects.set(objectKey, value);
-    this.generated.set(objectKey, metadata);
-    return metadata;
-  }
-
-  async inspectGenerated(objectKey: string): Promise<GeneratedObjectMetadata | null> {
-    return this.objects.has(objectKey) ? this.generated.get(objectKey) ?? null : null;
-  }
-
-  async deleteGenerated(objectKey: string): Promise<void> {
-    this.generated.delete(objectKey);
-    this.objects.delete(objectKey);
-  }
-
   async writeBundle(
     objectKey: string,
     body: ReadableStream<Uint8Array> | null,
   ): Promise<GeneratedObjectMetadata> {
     const value = await collect(body);
-    if (!value.byteLength) throw new Error("Generated object is empty");
+    if (!value.byteLength) throw new Error("Knowledge bundle is empty");
     const metadata = {
       sizeBytes: value.byteLength,
       contentHash: createHash("sha256").update(value).digest("hex"),
@@ -89,11 +58,12 @@ export class MemoryObjectStorage implements ObjectStorageBackend {
   }
 
   async inspectBundle(objectKey: string): Promise<GeneratedObjectMetadata | null> {
-    return this.inspectGenerated(objectKey);
+    return this.objects.has(objectKey) ? this.generated.get(objectKey) ?? null : null;
   }
 
   async deleteBundle(objectKey: string): Promise<void> {
-    return this.deleteGenerated(objectKey);
+    this.generated.delete(objectKey);
+    this.objects.delete(objectKey);
   }
 
   async writeImportPart(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void> {

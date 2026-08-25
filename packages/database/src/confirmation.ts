@@ -70,8 +70,9 @@ export class ConfirmationRepository {
   async exportIntent(id: string) {
     const result = await this.pool.query(
       `SELECT intent.id,intent.owner_user_id,intent.session_id,ledger.challenge,
-        intent.expires_at,intent.confirmed_at,intent.download_started_at,intent.export_kind
+        intent.expires_at,intent.confirmed_at,intent.download_started_at
        FROM knowledge_export_intents intent
+       JOIN knowledge_bundle_exports bundle ON bundle.intent_id=intent.id
        LEFT JOIN confirmation_challenges ledger
          ON ledger.intent_kind='knowledge_export' AND ledger.intent_id=intent.id
        WHERE intent.id=$1`,

@@ -93,7 +93,7 @@ export const confirmationApp = new Elysia()
     const options = await optionsFor(kind, intentId);
     return options ? json(options) : problem("Register a passkey before confirming", 409, "passkey_required");
   })
-  .post("/internal/knowledge-exports/:id/claim", async ({ request, params }) => {
+  .post("/internal/knowledge-bundle-exports/:id/claim", async ({ request, params }) => {
     if (!hasInternalCapability(request, config.CONFIRMATION_DASHBOARD_TOKEN)) return problem("Not found", 404, "not_found");
     const principal = claimSchema.parse(await bodyJson(request));
     await confirmations.claimExport(z.string().uuid().parse(params.id), {
@@ -142,11 +142,11 @@ export const confirmationApp = new Elysia()
     };
     const intent = await confirmations.exportIntent(input.confirmation.intent_id);
     if (!intent || intent.owner_user_id !== principal.userId || intent.session_id !== principal.sessionId) {
-      return problem("Knowledge export intent not found", 404, "not_found");
+      return problem("Knowledge bundle export intent not found", 404, "not_found");
     }
     if (!intent.challenge || intent.confirmed_at || intent.download_started_at
         || new Date(intent.expires_at).getTime()<=Date.now()) {
-      return problem("Knowledge export intent is inactive", 409, "intent_inactive");
+      return problem("Knowledge bundle export intent is inactive", 409, "intent_inactive");
     }
     const verified = await verifiedPasskey(input.confirmation.response, intent.challenge);
     if (!verified) return problem("Passkey verification failed", 403, "passkey_invalid");
@@ -159,9 +159,7 @@ export const confirmationApp = new Elysia()
       newCounter: verified.newCounter,
     });
     return json({
-      download_url: intent.export_kind === "full"
-        ? `/api/dashboard/knowledge-bundles/${encodeURIComponent(intent.id)}/download`
-        : `/api/dashboard/knowledge-exports/${encodeURIComponent(intent.id)}/download`,
+      download_url: `/api/dashboard/knowledge-bundles/${encodeURIComponent(intent.id)}/download`,
     });
   })
   .post("/internal/browser-confirmation/knowledge_import", async ({ request }) => {

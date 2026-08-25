@@ -79,12 +79,12 @@ describe("dashboard mutation boundary", () => {
 
   test("allows an authorized download only from the same-origin dashboard", () => {
     expect(() => assertDashboardDownloadSecurity(new Request(
-      "http://localhost:3000/api/dashboard/knowledge-exports/id/download",
+      "http://localhost:3000/api/dashboard/knowledge-bundles/id/download",
       { headers: { "sec-fetch-site": "same-origin" } },
     ))).not.toThrow();
     for (const site of [null, "cross-site", "same-site", "none"]) {
       expect(() => assertDashboardDownloadSecurity(new Request(
-        "http://localhost:3000/api/dashboard/knowledge-exports/id/download",
+        "http://localhost:3000/api/dashboard/knowledge-bundles/id/download",
         site ? { headers: { "sec-fetch-site": site } } : {},
       ))).toThrow(SecurityError);
     }

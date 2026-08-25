@@ -35,8 +35,7 @@ export const dashboardEdgeApp = new Elysia({ serve: { maxRequestBodySize: 5_500_
   .all("/api/dashboard/*", ({ request, server }) => {
     const pathname = new URL(request.url).pathname;
     if (request.method === "GET"
-        && (/^\/api\/dashboard\/knowledge-exports\/[^/]+\/download$/.test(pathname)
-          || /^\/api\/dashboard\/knowledge-bundles\/[^/]+\/download$/.test(pathname))) {
+        && /^\/api\/dashboard\/knowledge-bundles\/[^/]+\/download$/.test(pathname)) {
       disableStreamingRequestIdleTimeout(server, request);
     }
     return forward(request);

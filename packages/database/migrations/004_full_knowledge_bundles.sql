@@ -2,10 +2,6 @@
 -- PostgreSQL dump: these staging tables pin the logical records and immutable
 -- object references independently of the physical schema used by later
 -- releases.
-ALTER TABLE knowledge_export_intents
-  ADD COLUMN export_kind text NOT NULL DEFAULT 'portable'
-  CHECK (export_kind IN ('portable','full'));
-
 CREATE TABLE knowledge_bundle_exports (
   intent_id uuid PRIMARY KEY REFERENCES knowledge_export_intents(id) ON DELETE CASCADE,
   status text NOT NULL DEFAULT 'pending'
@@ -136,9 +132,13 @@ BEGIN
   PERFORM pg_advisory_xact_lock_shared(
     hashtextextended('context-use:knowledge-lifecycle',0)
   );
-  SELECT id,owner_user_id,session_id,expires_at,confirmed_at,export_kind
-  INTO intent FROM knowledge_export_intents WHERE id=p_intent_id;
-  IF NOT FOUND OR intent.export_kind<>'full' THEN
+  SELECT export_intent.id,export_intent.owner_user_id,export_intent.session_id,
+    export_intent.expires_at,export_intent.confirmed_at
+  INTO intent
+  FROM knowledge_export_intents export_intent
+  JOIN knowledge_bundle_exports bundle ON bundle.intent_id=export_intent.id
+  WHERE export_intent.id=p_intent_id;
+  IF NOT FOUND THEN
     RAISE EXCEPTION 'full knowledge export intent not found' USING ERRCODE='P0002';
   END IF;
   IF intent.owner_user_id IS DISTINCT FROM p_owner_user_id
@@ -475,7 +475,6 @@ GRANT UPDATE (
   updated_at,expires_at
 ) ON knowledge_bundle_imports TO context_use_dashboard;
 GRANT UPDATE (materialized_at) ON knowledge_bundle_import_objects TO context_use_dashboard;
-GRANT INSERT (export_kind) ON knowledge_export_intents TO context_use_dashboard;
 GRANT EXECUTE ON FUNCTION capture_full_knowledge_bundle(uuid,text,text)
   TO context_use_dashboard;
 GRANT EXECUTE ON FUNCTION restore_full_knowledge_bundle(uuid,text,text)
@@ -487,7 +486,6 @@ GRANT EXECUTE ON FUNCTION confirm_knowledge_bundle_import(uuid,text,text,text,in
 GRANT SELECT,UPDATE ON knowledge_bundle_imports TO context_use_boundary_owner;
 GRANT SELECT (id,owner_user_id,session_id,status,expires_at,confirmed_at)
   ON knowledge_bundle_imports TO context_use_confirmation;
-GRANT SELECT (export_kind) ON knowledge_export_intents TO context_use_confirmation;
 GRANT SELECT (id,status,confirmed_at,expires_at) ON knowledge_bundle_imports
   TO context_use_storage;
 GRANT SELECT (import_id,object_key,size_bytes,content_hash,content_type,materialized_at)

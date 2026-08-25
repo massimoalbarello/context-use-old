@@ -107,9 +107,9 @@ resource "aws_s3_bucket_lifecycle_configuration" "backups" {
 resource "aws_s3_bucket_lifecycle_configuration" "assets" {
   bucket = aws_s3_bucket.assets.id
   rule {
-    id     = "expire-generated-knowledge-exports"
+    id     = "expire-generated-knowledge-bundles"
     status = "Enabled"
-    filter { prefix = "exports/" }
+    filter { prefix = "bundles/" }
     expiration { days = 1 }
     noncurrent_version_expiration { noncurrent_days = 1 }
     abort_incomplete_multipart_upload { days_after_initiation = 1 }

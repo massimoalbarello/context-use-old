@@ -91,15 +91,6 @@ export {
   VersionConflictError,
 } from "./knowledge-documents.ts";
 export {
-  KnowledgeExportRepository,
-  type KnowledgeExportAsset,
-  type KnowledgeExportKind,
-  type KnowledgeExportLink,
-  type KnowledgeExportPage,
-  type KnowledgeExportPrincipal,
-  type KnowledgeExportSnapshot,
-} from "./exports.ts";
-export {
   KNOWLEDGE_BUNDLE_FORMAT,
   KNOWLEDGE_BUNDLE_DATASETS,
   KNOWLEDGE_BUNDLE_PART_SIZE,

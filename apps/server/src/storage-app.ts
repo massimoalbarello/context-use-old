@@ -30,7 +30,6 @@ const objectKeySchema = z.string().regex(/^objects\/[a-f0-9-]{36}$/);
 const privateDocumentKeySchema = z.string().regex(/^documents\/private\/[a-f0-9-]{36}\.md$/);
 const publicDocumentKeySchema = z.string().regex(/^documents\/public\/[a-f0-9-]{36}\.md$/);
 const publicAssetArtifactKeySchema = z.string().regex(/^artifacts\/public\/[a-f0-9-]{36}$/);
-const generatedObjectKeySchema = z.string().regex(/^exports\/[a-f0-9-]{36}\.zip$/);
 const bundleObjectKeySchema = z.string().regex(/^bundles\/[a-f0-9-]{36}\.cuse$/);
 const importPartKeySchema = z.string().regex(/^imports\/[a-f0-9-]{36}\/parts\/[0-9]{1,6}$/);
 const importedObjectKeySchema = z.union([
@@ -137,31 +136,6 @@ async function readObject(
   } catch {
     return denied();
   }
-}
-
-async function generatedObjectResponse(
-  request: Request,
-  storage: ObjectStorageBackend,
-  objectKey: string,
-): Promise<Response> {
-  const metadata = await storage.inspectGenerated(objectKey);
-  if (!metadata) return denied();
-  const range = parseRange(request.headers.get("range"));
-  if (request.headers.has("range") && !range) return denied();
-  if (range && (range.start >= metadata.sizeBytes || range.end >= metadata.sizeBytes)) return denied();
-  const body = request.method === "HEAD" ? null : await storage.read(objectKey, range);
-  const contentLength = range ? range.end - range.start + 1 : metadata.sizeBytes;
-  return new Response(body, {
-    status: range ? 206 : 200,
-    headers: {
-      "accept-ranges": "bytes",
-      "cache-control": "no-store",
-      "content-length": String(contentLength),
-      "content-type": "application/zip",
-      "x-content-sha256": metadata.contentHash,
-      ...(range ? { "content-range": `bytes ${range.start}-${range.end}/${metadata.sizeBytes}` } : {}),
-    },
-  });
 }
 
 async function bundleObjectResponse(
@@ -420,30 +394,6 @@ export function createStorageBrokerApp(input: {
       parseRange(request.headers.get("range")),
     );
   })
-  .put("/private/export", async ({ request, query }) => {
-    if (privateCapability(request, tokens) !== "dashboard") return denied();
-    const objectKey = generatedObjectKeySchema.parse(query.key);
-    const existing = await storage.inspectGenerated(objectKey);
-    if (existing) {
-      return Response.json({
-        size_bytes: existing.sizeBytes,
-        content_hash: existing.contentHash,
-      }, { headers: { "cache-control": "no-store" } });
-    }
-    if (activeWrites.has(objectKey)) {
-      return new Response("Export already exists", { status: 409, headers: { "cache-control": "no-store" } });
-    }
-    activeWrites.add(objectKey);
-    try {
-      const metadata = await storage.writeGenerated(objectKey, request.body);
-      return Response.json({
-        size_bytes: metadata.sizeBytes,
-        content_hash: metadata.contentHash,
-      }, { status: 201, headers: { "cache-control": "no-store" } });
-    } finally {
-      activeWrites.delete(objectKey);
-    }
-  }, { parse: "none" })
   .put("/private/bundle", async ({ request, query }) => {
     if (privateCapability(request, tokens) !== "dashboard") return denied();
     const objectKey = bundleObjectKeySchema.parse(query.key);
@@ -552,10 +502,6 @@ export function createStorageBrokerApp(input: {
     });
     return new Response(null, { status: 204 });
   }, { parse: "none" })
-  .head("/private/export", async ({ request, query }) => {
-    if (privateCapability(request, tokens) !== "dashboard") return denied();
-    return generatedObjectResponse(request, storage, generatedObjectKeySchema.parse(query.key));
-  })
   .head("/private/bundle", async ({ request, query }) => {
     if (privateCapability(request, tokens) !== "dashboard") return denied();
     return bundleObjectResponse(request, storage, bundleObjectKeySchema.parse(query.key));
@@ -567,15 +513,6 @@ export function createStorageBrokerApp(input: {
   .get("/private/import-part", async ({ request, query }) => {
     if (privateCapability(request, tokens) !== "dashboard") return denied();
     return readObject(storage, importPartKeySchema.parse(query.key), parseRange(request.headers.get("range")));
-  })
-  .get("/private/export", async ({ request, query }) => {
-    if (privateCapability(request, tokens) !== "dashboard") return denied();
-    return generatedObjectResponse(request, storage, generatedObjectKeySchema.parse(query.key));
-  })
-  .delete("/private/export", async ({ request, query }) => {
-    if (privateCapability(request, tokens) !== "dashboard") return denied();
-    await storage.deleteGenerated(generatedObjectKeySchema.parse(query.key));
-    return new Response(null, { status: 204 });
   })
   .delete("/private/bundle", async ({ request, query }) => {
     if (privateCapability(request, tokens) !== "dashboard") return denied();
@@ -739,7 +676,7 @@ export async function listenStorageSocket(): Promise<void> {
     maxRequestBodySize: 5_500_000_000,
     fetch(request, server) {
       if (["GET", "PUT"].includes(request.method)
-          && ["/private/object", "/private/document", "/private/export", "/private/bundle",
+          && ["/private/object", "/private/document", "/private/bundle",
             "/private/import-part", "/private/import-object", "/private/bundle-source",
             "/private/publication-artifact"]
             .includes(new URL(request.url).pathname)) {
