@@ -15,8 +15,8 @@ type ListedMeeting = {
 };
 
 const sync = createSync({
-  description: "Sync Granola-generated meeting summaries available through Granola MCP",
-  version: "1.0.0",
+  description: "Sync Granola-generated meeting summaries and transcripts available through Granola MCP",
+  version: "1.1.0",
   endpoints: [{ method: "POST", path: "/syncs/meetings", group: "Meetings" }],
   frequency: "every hour",
   autoStart: true,
@@ -31,23 +31,40 @@ const sync = createSync({
         await mcp.callTool("get_meetings", { meeting_ids: batch.map((meeting) => meeting.id) }),
       );
       const listedById = new Map(batch.map((meeting) => [meeting.id, meeting]));
-      const records = details.flatMap((detail) => {
+      const records: PipelineRecord[] = [];
+      for (const detail of details) {
         const summary = detail.summary?.trim();
-        if (!summary || summary === "No summary") return [];
+        if (!summary || summary === "No summary") continue;
         const base = listedById.get(detail.id);
-        return [buildRecord({
+        const meeting = {
           ...base,
           ...detail,
           participants: detail.participants.length > 0 ? detail.participants : base?.participants ?? [],
           attendeeLabels: detail.attendeeLabels.length > 0 ? detail.attendeeLabels : base?.attendeeLabels ?? [],
-        }, summary)];
-      });
+        };
+        const transcript = await fetchTranscript(nango, mcp, detail.id);
+        records.push(buildRecord(meeting, summary, transcript));
+      }
       if (records.length > 0) await nango.batchSave(records, MODEL);
     }
   },
 });
 
-function buildRecord(meeting: ListedMeeting, summary: string): PipelineRecord {
+async function fetchTranscript(
+  nango: NangoSyncLocal,
+  mcp: GranolaMcpClient,
+  meetingId: string,
+): Promise<string | undefined> {
+  try {
+    return parseTranscript(await mcp.callTool("get_meeting_transcript", { meeting_id: meetingId }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await nango.log(`Granola transcript unavailable for meeting ${meetingId}: ${message}`);
+    return undefined;
+  }
+}
+
+function buildRecord(meeting: ListedMeeting, summary: string, transcript?: string): PipelineRecord {
   const timestamp = toIso(meeting.date);
   const lines = [
     `# ${meeting.title || "Untitled meeting"}`,
@@ -57,6 +74,7 @@ function buildRecord(meeting: ListedMeeting, summary: string): PipelineRecord {
   ];
   if (meeting.attendeeLabels.length > 0) lines.push(`- Attendees: ${meeting.attendeeLabels.join(", ")}`);
   lines.push("", "## Summary", "", summary);
+  if (transcript) lines.push("", "## Transcript", "", transcript);
 
   return PipelineRecordSchema.parse({
     id: meeting.id,
@@ -65,6 +83,13 @@ function buildRecord(meeting: ListedMeeting, summary: string): PipelineRecord {
     participants: unique(meeting.participants),
     body: lines.join("\n").trim(),
   });
+}
+
+function parseTranscript(raw: string): string | undefined {
+  const value = raw.trim();
+  if (!value || /^no transcript\b/i.test(value)) return undefined;
+  const wrapped = value.match(/<transcript(?:\s+[^>]*)?>([\s\S]*?)<\/transcript>/i)?.[1];
+  return decodeXml(stripCdata(wrapped ?? value)).trim() || undefined;
 }
 
 function parseMeetings(xml: string): Array<ListedMeeting & { summary?: string }> {
