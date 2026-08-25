@@ -19,6 +19,54 @@ const diffFieldLabels = {
   summary: "Summary",
 } as const;
 
+export function PagePublicationStatus({
+  archivedAt,
+  publishedVersionId,
+  publishedVersionNumber,
+  publicUrl,
+}: {
+  archivedAt: string | null;
+  publishedVersionId: string | null;
+  publishedVersionNumber: number | null | undefined;
+  publicUrl: string | null;
+}) {
+  const versionLabel = publishedVersionNumber ? ` v${publishedVersionNumber}` : "";
+  if (!archivedAt && publishedVersionId && publicUrl) return <a
+    className="status public status-link"
+    href={publicUrl}
+    target="_blank"
+    rel="noreferrer"
+    aria-label={`Open public${versionLabel} in a new tab`}
+  >
+    Public{versionLabel}
+    <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M6 3h7v7M13 3 5 11" /><path d="M11 9v4H3V5h4" /></svg>
+  </a>;
+
+  return <span className={!archivedAt && publishedVersionId ? "status public" : "status"}>
+    {archivedAt ? "Archived" : publishedVersionId ? `Public${versionLabel}` : "Private"}
+  </span>;
+}
+
+export function OutdatedPublicationNotice({
+  canPublish,
+  latestVersionNumber,
+  onPublishLatest,
+  publishedVersionNumber,
+}: {
+  canPublish: boolean;
+  latestVersionNumber: number;
+  onPublishLatest: () => void;
+  publishedVersionNumber: number | null | undefined;
+}) {
+  return <div className="publication-notice pending publication-alert" role="status">
+    <div>
+      <strong>Published page is not up to date</strong>
+      <span>v{publishedVersionNumber ?? "?"} is public, while v{latestVersionNumber} is the latest version available.</span>
+    </div>
+    {canPublish && <button className="primary" onClick={onPublishLatest}>Publish latest</button>}
+  </div>;
+}
+
 export function VersionDiffContents({ diff }: { diff: PageVersionDiff }) {
   const hasChanges = diff.metadata_changes.length > 0 || diff.markdown_changes.length > 0;
   if (!hasChanges) return <p className="version-diff-empty">No page-content changes in this version.</p>;
@@ -262,21 +310,24 @@ export function Editor({
     <header className="editor-header">
       <div><span className="document-kicker">Knowledge document</span><h1>{page.title}</h1><p className="knowledge-summary">{page.summary}</p><time className="page-last-edited" dateTime={new Date(lastEditedAt).toISOString()}>Last edited {new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(lastEditedAt))}</time></div>
       <div className="button-row">
-        <span className={page.published_version_id ? "status public" : "status"}>{page.archived_at ? "Archived" : page.published_version_id ? `Public${publishedVersionNumber ? ` v${publishedVersionNumber}` : ""}` : "Private"}</span>
+        <PagePublicationStatus
+          archivedAt={page.archived_at}
+          publishedVersionId={page.published_version_id}
+          publishedVersionNumber={publishedVersionNumber}
+          publicUrl={page.public_url}
+        />
         {!page.archived_at && !page.published_version_id && <button onClick={() => { setArchiveCommit(""); setArchiveError(""); setArchiveOpen(true); }}>Archive</button>}
         {page.archived_at && <button className="danger" onClick={() => { setDeletionError(""); setDeletionOpen(true); }}>Delete permanently</button>}
         {!page.archived_at && !page.published_version_id && <button className="primary" onClick={() => setPublishingVersion(page.version_number)}>Publish</button>}
         {!page.archived_at && page.published_version_id && <button className="danger" disabled={unpublishWorking} onClick={() => void unpublish()}>{unpublishWorking ? "Waiting for passkey…" : "Unpublish"}</button>}
-        {!page.archived_at && page.published_version_id && hasUnpublishedChanges && <button className="primary" onClick={() => setPublishingVersion(page.version_number)}>Publish latest</button>}
       </div>
     </header>
-    {page.public_url && <div className="publication-notice" role="status"><div><strong>Permanent public URL</strong><a href={page.public_url} target="_blank" rel="noreferrer">{page.public_url}</a></div></div>}
-    {hasUnpublishedChanges && <div className="publication-notice pending publication-alert" role="status">
-      <div>
-        <strong>Published page is not up to date</strong>
-        <span>v{publishedVersionNumber ?? "?"} is public, while v{page.version_number} is the latest version available.</span>
-      </div>
-    </div>}
+    {hasUnpublishedChanges && <OutdatedPublicationNotice
+      canPublish={!page.archived_at}
+      latestVersionNumber={page.version_number}
+      onPublishLatest={() => setPublishingVersion(page.version_number)}
+      publishedVersionNumber={publishedVersionNumber}
+    />}
     {!isEditing && <nav className="tabs">
       <div>{(["preview", "links", "history"] as const).map((item) => <button className={tab === item ? "active" : ""} key={item} onClick={() => setTab(item)}>{item}</button>)}</div>
       {tab === "preview" && <button className="edit-page-button" onClick={edit} aria-label="Edit page">
