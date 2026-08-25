@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { extractObjectLinks } from "@context-use/database";
+import { extractObjectLinks, normalizeLegacyObjectLinks } from "@context-use/database";
 import { marked, type Token } from "marked";
 import sanitizeHtml from "sanitize-html";
 import { config } from "./config.ts";
@@ -167,13 +167,16 @@ function renderAssetLink(label: string, target: Extract<ObjectResolution, { avai
 }
 
 export async function renderMarkdown(markdown: string, resolvers: MarkdownResolvers): Promise<string> {
+  // Immutable revisions can predate the canonical object scheme. Resolve
+  // their recognized links through the same visibility-aware object boundary.
+  const normalizedMarkdown = normalizeLegacyObjectLinks(markdown);
   const objects = new Map<string, ObjectResolution>();
   const publicAssets = new Map<string, AssetResolution>();
   const formattedAssets = new Map<string, string>();
-  await Promise.all(extractObjectLinks(markdown).map(async (id) => (
+  await Promise.all(extractObjectLinks(normalizedMarkdown).map(async (id) => (
     objects.set(id, await resolvers.object(id))
   )));
-  const publicAssetPaths = [...markdown.matchAll(
+  const publicAssetPaths = [...normalizedMarkdown.matchAll(
     /context-use:\/\/public-asset\/([a-z0-9][a-z0-9/_-]*)/gi,
   )].map((match) => match[1]!.toLowerCase());
   await Promise.all([...new Set(publicAssetPaths)].map(async (path) => publicAssets.set(
@@ -181,7 +184,7 @@ export async function renderMarkdown(markdown: string, resolvers: MarkdownResolv
     await (resolvers.publicAssetPath?.(path) ?? Promise.resolve({ available: false as const })),
   )));
 
-  let source = markdown.replace(
+  let source = normalizedMarkdown.replace(
     /!\[([^\]\n]*)\]\(context-use:\/\/object\/([0-9a-f-]{36})(?:#[a-z0-9][a-z0-9_-]*)?\)(?:\{([^}\n]+)\})?/gi,
     (_match, label: string, id: string, rawFormatting: string | undefined) => {
       const target = objects.get(id.toLowerCase());
@@ -313,7 +316,7 @@ export function publicationWarnings(markdown: string, metadata: string[] = []): 
   if (/(?:BEGIN (?:RSA |EC )?PRIVATE KEY|api[_-]?key\s*[:=]|secret\s*[:=]|bearer\s+[a-z0-9._-]{16,})/i.test(publicText)) {
     warnings.push("Possible secret material detected; review the page carefully");
   }
-  const privateReferences = extractObjectLinks(markdown).length;
+  const privateReferences = extractObjectLinks(normalizeLegacyObjectLinks(markdown)).length;
   if (privateReferences) warnings.push(`${privateReferences} context-use reference(s) have independent visibility`);
   return warnings;
 }
