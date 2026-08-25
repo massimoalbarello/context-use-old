@@ -9,7 +9,12 @@ const describeDatabase = databaseUrl ? describe : describe.skip;
 
 describeDatabase("passkey-bound full knowledge bundle exports", () => {
   const pool = new Pool({ connectionString: databaseUrl, max: 1 });
-  const bundles = new KnowledgeBundleRepository(pool);
+  const dashboardPool = new Pool({
+    connectionString: databaseUrl,
+    max: 1,
+    options: "-c role=context_use_dashboard",
+  });
+  const bundles = new KnowledgeBundleRepository(dashboardPool);
   const confirmations = new ConfirmationRepository(pool);
   const intentIds: string[] = [];
   const passkeyId = `bundle-export-${randomUUID()}`;
@@ -45,6 +50,7 @@ describeDatabase("passkey-bound full knowledge bundle exports", () => {
       await pool.query("ROLLBACK");
       throw error;
     }
+    await dashboardPool.end();
     await pool.end();
   });
 

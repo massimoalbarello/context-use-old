@@ -1,6 +1,7 @@
 import { Client } from "pg";
 
 export const DEVELOPMENT_RESET_TABLES = [
+  "knowledge_bundle_import_policy",
   "knowledge_bundle_import_objects",
   "knowledge_bundle_import_records",
   "knowledge_bundle_import_parts",
@@ -53,6 +54,8 @@ export function developmentResetSql(): string {
       singleton,entrypoint_public_id,updated_at
     ) VALUES (true,NULL,NULL);
     INSERT INTO knowledge_settings(singleton) VALUES (true);
+    INSERT INTO knowledge_bundle_import_policy(singleton,state)
+    VALUES (true,'pending');
   `;
 }
 

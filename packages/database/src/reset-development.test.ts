@@ -56,6 +56,8 @@ describe("development data reset", () => {
   test("recreates singleton settings for bootstrap", () => {
     expect(developmentResetSql()).toContain("INSERT INTO knowledge_settings(singleton)");
     expect(developmentResetSql()).toContain("INSERT INTO publication_settings(");
+    expect(developmentResetSql()).toContain("INSERT INTO knowledge_bundle_import_policy(singleton,state)");
     expect(developmentResetSql()).toContain("VALUES (true,NULL,NULL)");
+    expect(developmentResetSql()).toContain("VALUES (true,'pending')");
   });
 });

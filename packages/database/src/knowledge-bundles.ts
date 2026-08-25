@@ -132,27 +132,8 @@ export class KnowledgeBundleRepository {
         asset_count: string;
         estimated_bytes: string;
       }>(
-        `SELECT
-           (SELECT count(*)::text FROM knowledge_pages WHERE archived_at IS NULL) AS page_count,
-           (SELECT count(*)::text FROM assets WHERE deleted_at IS NULL) AS asset_count,
-           (
-             coalesce((
-               SELECT sum(object.body_size_bytes)
-               FROM hypermedia_document_revisions object
-             ),0)
-             + coalesce((
-               SELECT sum(size_bytes) FROM assets WHERE deleted_at IS NULL
-             ),0)
-             + coalesce((
-               SELECT sum(body_size_bytes) FROM retained_page_artifacts
-             ),0)
-             + coalesce((
-               SELECT sum(body_size_bytes) FROM public_page_artifacts
-             ),0)
-             + coalesce((
-               SELECT sum(body_size_bytes) FROM public_asset_artifacts
-             ),0)
-           )::text AS estimated_bytes`,
+        `SELECT page_count::text,asset_count::text,estimated_bytes::text
+         FROM full_knowledge_bundle_summary()`,
       );
       await client.query("INSERT INTO knowledge_bundle_exports(intent_id) VALUES ($1)", [id]);
       return {
@@ -195,14 +176,7 @@ export class KnowledgeBundleRepository {
 
   async acceptsFullImport(): Promise<boolean> {
     const result = await this.pool.query<{ fresh: boolean }>(
-      `SELECT NOT EXISTS (SELECT 1 FROM source_records)
-          AND NOT EXISTS (SELECT 1 FROM assets)
-          AND NOT EXISTS (SELECT 1 FROM public_resources)
-          AND NOT EXISTS (
-            SELECT 1 FROM hypermedia_documents document
-            WHERE NOT EXISTS (SELECT 1 FROM hypermedia_bootstrap_allocations allocation
-              WHERE allocation.document_id=document.id)
-          ) AS fresh`,
+      "SELECT full_knowledge_import_available() AS fresh",
     );
     return result.rows[0]?.fresh === true;
   }

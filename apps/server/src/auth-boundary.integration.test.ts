@@ -89,6 +89,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       ["/api/dashboard/knowledge-bundle-exports/confirm", "POST"],
       ["/api/dashboard/knowledge-bundles/11111111-1111-4111-8111-111111111111/status", "GET"],
       ["/api/dashboard/knowledge-bundles/11111111-1111-4111-8111-111111111111/download", "GET"],
+      ["/api/dashboard/knowledge-imports/availability", "GET"],
       ["/api/dashboard/knowledge-imports", "POST"],
       ["/api/dashboard/knowledge-imports/11111111-1111-4111-8111-111111111111/status", "GET"],
       ["/api/dashboard/knowledge-imports/confirm", "POST"],
