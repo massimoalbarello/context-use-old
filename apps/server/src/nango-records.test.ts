@@ -22,9 +22,9 @@ const AGENT_CONVERSATIONS: PipelineRecordSource = {
 const NOW = new Date("2026-08-01T12:00:00.000Z");
 const INITIAL_FRESHNESS_CUTOFF = "2026-07-02T12:00:00.000Z";
 const PERSISTED_RECORD = {
-  document_id: "11111111-1111-4111-8111-111111111111",
+  object_id: "11111111-1111-4111-8111-111111111111",
   current_revision_id: "22222222-2222-4222-8222-222222222222",
-  reference: "context-use://document/11111111-1111-4111-8111-111111111111",
+  reference: "context-use://object/11111111-1111-4111-8111-111111111111",
 } as const;
 
 function pipelineRecord(

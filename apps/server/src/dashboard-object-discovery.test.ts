@@ -1,23 +1,23 @@
 import { describe, expect, test } from "bun:test";
 import type {
-  PrivateDocumentCatalogItem,
-  PrivateDocumentNeighborhood,
+  PrivateObjectCatalogItem,
+  PrivateObjectNeighborhood,
 } from "@context-use/database";
 import {
-  dashboardDocumentCatalogPage,
-  dashboardDocumentNeighborhood,
-  dashboardDocumentSummary,
-  parseDashboardDocumentCatalogQuery,
-  parseDashboardDocumentNeighborhoodQuery,
-} from "./dashboard-document-discovery.ts";
+  dashboardObjectCatalogPage,
+  dashboardObjectNeighborhood,
+  dashboardObjectSummary,
+  parseDashboardObjectCatalogQuery,
+  parseDashboardObjectNeighborhoodQuery,
+} from "./dashboard-object-discovery.ts";
 
 const documentId = "11111111-1111-4111-8111-111111111111";
 const revisionId = "22222222-2222-4222-8222-222222222222";
 const linkedId = "33333333-3333-4333-8333-333333333333";
 
-const catalogItem: PrivateDocumentCatalogItem = {
-  document_id: documentId,
-  document_kind: "knowledge",
+const catalogItem: PrivateObjectCatalogItem = {
+  object_id: documentId,
+  object_kind: "page",
   authority: "knowledge",
   representation: "markdown",
   lifecycle: "active",
@@ -46,17 +46,17 @@ const catalogItem: PrivateDocumentCatalogItem = {
   updated_at: "2026-08-23T10:00:00.000Z",
 };
 
-describe("dashboard document discovery", () => {
+describe("dashboard object discovery", () => {
   test("parses bounded search, list and neighborhood queries", () => {
-    expect(parseDashboardDocumentCatalogQuery({
+    expect(parseDashboardObjectCatalogQuery({
       q: "  investment notes  ",
       cursor: "opaque",
       limit: "25",
       include_retired: "true",
       authority: "knowledge",
-      kind: "knowledge",
+      kind: "page",
       lifecycle: "archived",
-      types: "knowledge,public,archived",
+      types: "page,public,archived",
     })).toEqual({
       query: "investment notes",
       options: {
@@ -64,42 +64,42 @@ describe("dashboard document discovery", () => {
         limit: 25,
         include_retired: true,
         authority: "knowledge",
-        document_kind: "knowledge",
+        object_kind: "page",
         lifecycle: "archived",
-        catalog_types: ["knowledge", "public", "archived"],
+        catalog_types: ["page", "public", "archived"],
       },
     });
-    expect(parseDashboardDocumentCatalogQuery({ q: "" })).toEqual({
+    expect(parseDashboardObjectCatalogQuery({ q: "" })).toEqual({
       query: null,
       options: {},
     });
-    expect(() => parseDashboardDocumentCatalogQuery({ limit: "101" })).toThrow();
-    expect(() => parseDashboardDocumentCatalogQuery({ types: "public,public" })).toThrow();
-    expect(() => parseDashboardDocumentCatalogQuery({ types: "public,private" })).toThrow();
-    expect(() => parseDashboardDocumentCatalogQuery({ extra: "private" })).toThrow();
+    expect(() => parseDashboardObjectCatalogQuery({ limit: "101" })).toThrow();
+    expect(() => parseDashboardObjectCatalogQuery({ types: "public,public" })).toThrow();
+    expect(() => parseDashboardObjectCatalogQuery({ types: "public,private" })).toThrow();
+    expect(() => parseDashboardObjectCatalogQuery({ extra: "private" })).toThrow();
 
-    expect(parseDashboardDocumentNeighborhoodQuery({
+    expect(parseDashboardObjectNeighborhoodQuery({
       revision_id: revisionId,
       outbound_cursor: linkedId,
       backlink_cursor: documentId,
       limit: "40",
     })).toEqual({
       requested_revision_id: revisionId,
-      outbound_after_document_id: linkedId,
-      backlink_after_document_id: documentId,
+      outbound_after_object_id: linkedId,
+      backlink_after_object_id: documentId,
       outbound_limit: 40,
       backlink_limit: 40,
     });
-    expect(() => parseDashboardDocumentNeighborhoodQuery({
+    expect(() => parseDashboardObjectNeighborhoodQuery({
       outbound_cursor: "not-a-uuid",
     })).toThrow();
   });
 
   test("projects titles and summaries without private locators", () => {
-    const summary = dashboardDocumentSummary(catalogItem);
+    const summary = dashboardObjectSummary(catalogItem);
     expect(summary).toEqual({
-      document_id: documentId,
-      document_kind: "knowledge",
+      object_id: documentId,
+      object_kind: "page",
       authority: "knowledge",
       representation: "markdown",
       lifecycle: "active",
@@ -122,36 +122,36 @@ describe("dashboard document discovery", () => {
       "links_indexed_at",
     ]) expect(encoded).not.toContain(forbidden);
 
-    expect(dashboardDocumentCatalogPage({
-      documents: [catalogItem],
+    expect(dashboardObjectCatalogPage({
+      objects: [catalogItem],
       next_cursor: "next",
       has_more: true,
-    })).toEqual({ documents: [summary], next_cursor: "next", has_more: true });
+    })).toEqual({ objects: [summary], next_cursor: "next", has_more: true });
   });
 
   test("preserves graph completeness and unresolved target state without leaking evidence", () => {
-    const neighborhood: PrivateDocumentNeighborhood = {
-      document: catalogItem,
+    const neighborhood: PrivateObjectNeighborhood = {
+      object: catalogItem,
       outbound: {
         revision_id: revisionId,
-        neighbors: [{ target_document_id: linkedId, resolved: false, document: null }],
+        neighbors: [{ target_object_id: linkedId, resolved: false, object: null }],
         next_cursor: null,
         has_more: false,
         index_complete: true,
       },
       backlinks: {
-        documents: [catalogItem],
+        objects: [catalogItem],
         next_cursor: null,
         has_more: false,
         completeness_checked: false,
         complete: null,
       },
     };
-    const projected = dashboardDocumentNeighborhood(neighborhood);
+    const projected = dashboardObjectNeighborhood(neighborhood);
     expect(projected.outbound.neighbors).toEqual([{
-      target_document_id: linkedId,
+      target_object_id: linkedId,
       resolved: false,
-      document: null,
+      object: null,
     }]);
     expect(projected.backlinks.complete).toBeNull();
     expect(JSON.stringify(projected)).not.toContain("body_content_hash");

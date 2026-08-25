@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Client, Pool } from "pg";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { DocumentAssetRepository, KnowledgeDocumentRepository } from "../src/index.ts";
+import { AssetRepository, KnowledgePageRepository } from "../src/index.ts";
 import { disposableDatabaseUrl } from "../src/disposable-database.ts";
 import { MemoryMarkdownStore } from "./memory-markdown-store.ts";
 
@@ -100,7 +100,7 @@ describeDatabase("PostgreSQL security roles", () => {
     const mcpPool = new Pool({ connectionString: adminUrl, max: 1 });
     try {
       await mcpPool.query("SET ROLE context_use_mcp");
-      const documents = new KnowledgeDocumentRepository(mcpPool, new MemoryMarkdownStore());
+      const documents = new KnowledgePageRepository(mcpPool, new MemoryMarkdownStore());
       const actor = { kind: "mcp" as const, subject: "role-test" };
       const created = await documents.create({
         title: "MCP checked writer",
@@ -109,7 +109,7 @@ describeDatabase("PostgreSQL security roles", () => {
         commit_message: "Create MCP role fixture",
       }, actor);
 
-      const updated = await documents.update(created.document_id, {
+      const updated = await documents.update(created.object_id, {
         title: "MCP checked writer",
         summary: "Exercises the operational-document lock as the real MCP role.",
         body_markdown: "Updated body.",
@@ -118,7 +118,7 @@ describeDatabase("PostgreSQL security roles", () => {
       }, actor);
       expect(updated?.revision_number).toBe(2);
 
-      const archived = await documents.archive(created.document_id, {
+      const archived = await documents.archive(created.object_id, {
         commit_message: "Archive through MCP role",
         expected_revision_number: 2,
       }, actor);
@@ -1292,10 +1292,10 @@ describeDatabase("PostgreSQL security roles", () => {
         [assetId, contentHash, objectKey],
       );
       await admin.query("SET LOCAL ROLE context_use_storage");
-      const assets = new DocumentAssetRepository(admin as unknown as Pool);
+      const assets = new AssetRepository(admin as unknown as Pool);
       expect(await assets.getForStorage(assetId)).toEqual({
-        document_id: assetId,
-        object_key: objectKey,
+        object_id: assetId,
+        blob_key: objectKey,
         filename: "storage.txt",
         content_type: "text/plain",
         size_bytes: "7",

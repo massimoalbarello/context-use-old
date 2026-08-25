@@ -1,5 +1,5 @@
 import {
-  DocumentLinkRepository,
+  ObjectLinkRepository,
   KnowledgeSettingsRepository,
   SourceRecordRepository,
 } from "@context-use/database";
@@ -10,7 +10,7 @@ import { activeMcpClientId } from "./mcp-auth-client.ts";
 import {
   createMcpServer,
   type McpContext,
-  type McpDocumentRepositories,
+  type McpObjectRepositories,
 } from "./mcp-server.ts";
 import { createStatelessMcpTransport, unsupportedMcpMethodResponse } from "./mcp-transport.ts";
 import type { SourceRecordReader } from "./nango-records.ts";
@@ -46,10 +46,10 @@ function contextFromJwt(jwt: JWTPayload): McpContext | null {
 
 export function createMcpRequestHandler(
   sourceRecords: SourceRecordReader | undefined,
-  recordDocuments: SourceRecordRepository | undefined,
+  recordObjects: SourceRecordRepository | undefined,
   knowledgeSettings: KnowledgeSettingsRepository,
-  documentLinks: DocumentLinkRepository,
-  documents: McpDocumentRepositories,
+  objectLinks: ObjectLinkRepository,
+  objects: McpObjectRepositories,
 ) {
   const resource = config.MCP_RESOURCE;
   // Fetch keys over the private service network. The token issuer and audience
@@ -93,10 +93,10 @@ export function createMcpRequestHandler(
     const server = await createMcpServer(
       context,
       sourceRecords,
-      recordDocuments,
+      recordObjects,
       knowledgeSettings,
-      documentLinks,
-      documents,
+      objectLinks,
+      objects,
     );
     await server.connect(transport);
     try {

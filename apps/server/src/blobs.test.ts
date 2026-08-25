@@ -1,24 +1,24 @@
 import { describe, expect, test } from "bun:test";
 import {
-  markdownObjectMetadata,
-  type DocumentMaintenanceRepository,
-  type UnindexedDocumentRevision,
+  markdownBlobMetadata,
+  type BlobMaintenanceRepository,
+  type UnindexedObjectRevision,
 } from "@context-use/database";
 import { reconcileDocumentLinks } from "./storage-app.ts";
-import type { ObjectStorageBackend } from "./storage.ts";
-import { MemoryObjectStorage } from "./test-object-storage.ts";
+import type { BlobStorageBackend } from "./storage.ts";
+import { MemoryBlobStorage } from "./test-object-storage.ts";
 
-describe("knowledge document object reconciliation", () => {
+describe("object-link blob reconciliation", () => {
   test("indexes only canonical links in every stored revision", async () => {
-    const storage = new MemoryObjectStorage();
+    const storage = new MemoryBlobStorage();
     const revisionId = "11111111-1111-4111-8111-111111111111";
     const targetId = "22222222-2222-4222-8222-222222222222";
     const body = [
-      `[Current](context-use://document/${targetId})`,
+      `[Current](context-use://object/${targetId})`,
       `[Legacy duplicate](context-use://page/${targetId})`,
     ].join("\n\n");
-    const metadata = markdownObjectMetadata(revisionId, body);
-    const revision: UnindexedDocumentRevision = {
+    const metadata = markdownBlobMetadata(revisionId, body);
+    const revision: UnindexedObjectRevision = {
       revision_id: revisionId,
       ...metadata,
     };
@@ -26,13 +26,13 @@ describe("knowledge document object reconciliation", () => {
     const replacements: Array<{ revisionId: string; targetIds: string[] }> = [];
     await storage.write({
       id: revisionId,
-      objectKey: metadata.body_object_key,
+      blobKey: metadata.body_object_key,
       filename: `${revisionId}.md`,
       contentType: "text/markdown; charset=utf-8",
       sizeBytes: metadata.body_size_bytes,
       contentHash: metadata.body_content_hash,
     }, new Blob([body]).stream());
-    const maintenance: Pick<DocumentMaintenanceRepository,
+    const maintenance: Pick<BlobMaintenanceRepository,
       "unindexedLinkRevisions" | "replaceRevisionLinks" | "deferRevisionLinks"> = {
       async unindexedLinkRevisions() {
         return pending ? [revision] : [];
@@ -55,19 +55,19 @@ describe("knowledge document object reconciliation", () => {
   });
 
   test("defers missing or corrupt revisions while indexing later available bodies", async () => {
-    const storage = new MemoryObjectStorage();
+    const storage = new MemoryBlobStorage();
     const missingId = "11111111-1111-4111-8111-111111111111";
     const corruptId = "22222222-2222-4222-8222-222222222222";
     const validId = "33333333-3333-4333-8333-333333333333";
     const targetId = "44444444-4444-4444-8444-444444444444";
-    const missing = { revision_id: missingId, ...markdownObjectMetadata(missingId, "missing") };
-    const corrupt = { revision_id: corruptId, ...markdownObjectMetadata(corruptId, "expected") };
-    const validBody = `[Target](context-use://document/${targetId})`;
-    const valid = { revision_id: validId, ...markdownObjectMetadata(validId, validBody) };
-    const actualCorrupt = markdownObjectMetadata(corruptId, "corrupt!");
+    const missing = { revision_id: missingId, ...markdownBlobMetadata(missingId, "missing") };
+    const corrupt = { revision_id: corruptId, ...markdownBlobMetadata(corruptId, "expected") };
+    const validBody = `[Target](context-use://object/${targetId})`;
+    const valid = { revision_id: validId, ...markdownBlobMetadata(validId, validBody) };
+    const actualCorrupt = markdownBlobMetadata(corruptId, "corrupt!");
     await storage.write({
       id: corruptId,
-      objectKey: actualCorrupt.body_object_key,
+      blobKey: actualCorrupt.body_object_key,
       filename: `${corruptId}.md`,
       contentType: "text/markdown; charset=utf-8",
       sizeBytes: actualCorrupt.body_size_bytes,
@@ -75,7 +75,7 @@ describe("knowledge document object reconciliation", () => {
     }, new Blob(["corrupt!"]).stream());
     await storage.write({
       id: validId,
-      objectKey: valid.body_object_key,
+      blobKey: valid.body_object_key,
       filename: `${validId}.md`,
       contentType: "text/markdown; charset=utf-8",
       sizeBytes: valid.body_size_bytes,
@@ -84,7 +84,7 @@ describe("knowledge document object reconciliation", () => {
 
     const deferred: string[] = [];
     const replacements: Array<{ revisionId: string; targetIds: string[] }> = [];
-    const maintenance: Pick<DocumentMaintenanceRepository,
+    const maintenance: Pick<BlobMaintenanceRepository,
       "unindexedLinkRevisions" | "replaceRevisionLinks" | "deferRevisionLinks"> = {
       async unindexedLinkRevisions() {
         return [missing, corrupt, valid];
@@ -140,8 +140,8 @@ describe("knowledge document object reconciliation", () => {
       async verify() {
         return true;
       },
-      async read(objectKey: string) {
-        const size = sizesByKey.get(objectKey)!;
+      async read(blobKey: string) {
+        const size = sizesByKey.get(blobKey)!;
         activeCount += 1;
         activeBytes += size;
         maxActiveCount = Math.max(maxActiveCount, activeCount);
@@ -149,8 +149,8 @@ describe("knowledge document object reconciliation", () => {
         if (size > 16 * mib) oversizedConcurrency.push(activeCount);
         return new Blob(["No links."]);
       },
-    } as unknown as ObjectStorageBackend;
-    const maintenance: Pick<DocumentMaintenanceRepository,
+    } as unknown as BlobStorageBackend;
+    const maintenance: Pick<BlobMaintenanceRepository,
       "unindexedLinkRevisions" | "replaceRevisionLinks" | "deferRevisionLinks"> = {
       async unindexedLinkRevisions() {
         return revisions;

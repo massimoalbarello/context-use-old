@@ -1,16 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { extractDocumentLinks } from "@context-use/database";
+import { extractObjectLinks } from "@context-use/database";
 import { marked, type Token } from "marked";
 import sanitizeHtml from "sanitize-html";
 import { config } from "./config.ts";
 
 export type AssetResolution = { available: true; href: string; contentType: string } | { available: false };
-export type DocumentResolution =
+export type ObjectResolution =
   | { available: true; representation: "page" | "record"; href: string }
   | { available: true; representation: "asset"; href: string; contentType: string }
   | { available: false };
 export type MarkdownResolvers = {
-  document: (id: string) => Promise<DocumentResolution>;
+  object: (id: string) => Promise<ObjectResolution>;
   publicAssetPath?: (path: string) => Promise<AssetResolution>;
 };
 
@@ -160,18 +160,18 @@ function renderAssetReference(
   return `<a href="${escapeHtml(target.href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(linkLabel)}</a>`;
 }
 
-function renderAssetLink(label: string, target: Extract<DocumentResolution, { available: true; representation: "asset" }>): string {
+function renderAssetLink(label: string, target: Extract<ObjectResolution, { available: true; representation: "asset" }>): string {
   const linkLabel = label.trim()
     || (target.contentType.toLowerCase() === "application/pdf" ? "Open PDF" : "Open asset");
   return `<a href="${escapeHtml(target.href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(linkLabel)}</a>`;
 }
 
 export async function renderMarkdown(markdown: string, resolvers: MarkdownResolvers): Promise<string> {
-  const documents = new Map<string, DocumentResolution>();
+  const objects = new Map<string, ObjectResolution>();
   const publicAssets = new Map<string, AssetResolution>();
   const formattedAssets = new Map<string, string>();
-  await Promise.all(extractDocumentLinks(markdown).map(async (id) => (
-    documents.set(id, await resolvers.document(id))
+  await Promise.all(extractObjectLinks(markdown).map(async (id) => (
+    objects.set(id, await resolvers.object(id))
   )));
   const publicAssetPaths = [...markdown.matchAll(
     /context-use:\/\/public-asset\/([a-z0-9][a-z0-9/_-]*)/gi,
@@ -182,20 +182,20 @@ export async function renderMarkdown(markdown: string, resolvers: MarkdownResolv
   )));
 
   let source = markdown.replace(
-    /!\[([^\]\n]*)\]\(context-use:\/\/document\/([0-9a-f-]{36})(?:#[a-z0-9][a-z0-9_-]*)?\)(?:\{([^}\n]+)\})?/gi,
+    /!\[([^\]\n]*)\]\(context-use:\/\/object\/([0-9a-f-]{36})(?:#[a-z0-9][a-z0-9_-]*)?\)(?:\{([^}\n]+)\})?/gi,
     (_match, label: string, id: string, rawFormatting: string | undefined) => {
-      const target = documents.get(id.toLowerCase());
+      const target = objects.get(id.toLowerCase());
       return target?.available && target.representation === "asset"
         ? renderAssetReference(label, target, rawFormatting, formattedAssets)
         : `<span class="private-reference">Private asset unavailable</span>`;
     },
   );
   source = source.replace(
-    /(?<!!)\[([^\]\n]*)\]\(context-use:\/\/document\/([0-9a-f-]{36})(?:#([a-z0-9][a-z0-9_-]*))?\)/gi,
+    /(?<!!)\[([^\]\n]*)\]\(context-use:\/\/object\/([0-9a-f-]{36})(?:#([a-z0-9][a-z0-9_-]*))?\)/gi,
     (_match, label: string, id: string, fragment: string | undefined) => {
-      const target = documents.get(id.toLowerCase());
+      const target = objects.get(id.toLowerCase());
       if (!target?.available) {
-        return `<span class="private-reference">${escapeHtml(label || "Private document")}</span>`;
+        return `<span class="private-reference">${escapeHtml(label || "Private object")}</span>`;
       }
       return target.representation === "asset"
         ? renderAssetLink(label, target)
@@ -221,7 +221,7 @@ export async function renderMarkdown(markdown: string, resolvers: MarkdownResolv
     },
   );
   // Historical source remains immutable, but obsolete private identities are
-  // inert. Canonical routes produced by successful document resolvers remain.
+  // inert. Canonical routes produced by successful object resolvers remain.
   source = source.replace(
     /context-use:\/\/(?:document|page|directory|asset)\/[0-9a-f-]{36}|\/app\/(?:pages|directories)\/[0-9a-f-]{36}/gi,
     '<span class="private-reference">Private reference</span>',
@@ -313,7 +313,7 @@ export function publicationWarnings(markdown: string, metadata: string[] = []): 
   if (/(?:BEGIN (?:RSA |EC )?PRIVATE KEY|api[_-]?key\s*[:=]|secret\s*[:=]|bearer\s+[a-z0-9._-]{16,})/i.test(publicText)) {
     warnings.push("Possible secret material detected; review the page carefully");
   }
-  const privateReferences = extractDocumentLinks(markdown).length;
+  const privateReferences = extractObjectLinks(markdown).length;
   if (privateReferences) warnings.push(`${privateReferences} context-use reference(s) have independent visibility`);
   return warnings;
 }

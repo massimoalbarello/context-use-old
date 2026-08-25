@@ -376,7 +376,7 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function objectKey(object: Pick<ManifestObject, "object_kind" | "schema_name" | "object_name" | "identity_arguments">): string {
+function blobKey(object: Pick<ManifestObject, "object_kind" | "schema_name" | "object_name" | "identity_arguments">): string {
   return JSON.stringify([
     object.object_kind,
     object.schema_name,
@@ -453,7 +453,7 @@ export function restoreOwnershipManifestChecksum(
   return sha256(JSON.stringify({
     contract_version: CONTRACT_VERSION,
     roles: [...roles].sort((left, right) => left.role_oid.localeCompare(right.role_oid)),
-    objects: [...objects].sort((left, right) => objectKey(left).localeCompare(objectKey(right))),
+    objects: [...objects].sort((left, right) => blobKey(left).localeCompare(blobKey(right))),
     migrations: migrations.map(({ version, checksum }) => ({ version, checksum }))
       .sort((left, right) => left.version.localeCompare(right.version)),
     public_schema: publicSchema,
@@ -685,7 +685,7 @@ async function allPublicRoutinesAndViews(client: Client): Promise<OwnedObject[]>
       WHERE namespace.nspname=$1 AND relation.relname=$2 AND relation.relkind=$3
     `, [object.schema_name, object.object_name, relationKind]);
     if (statement.rowCount !== 1 || !statement.rows[0]) {
-      throw new Error(`Could not canonicalize restore ownership view ${objectKey(object)}`);
+      throw new Error(`Could not canonicalize restore ownership view ${blobKey(object)}`);
     }
     await client.query(statement.rows[0].statement);
     const canonical = await client.query<{ definition: string }>(`
@@ -697,7 +697,7 @@ async function allPublicRoutinesAndViews(client: Client): Promise<OwnedObject[]>
     `);
     await client.query("DROP VIEW pg_temp.context_use_restore_view_fingerprint");
     if (canonical.rowCount !== 1 || !canonical.rows[0]) {
-      throw new Error(`Could not read canonical restore ownership view ${objectKey(object)}`);
+      throw new Error(`Could not read canonical restore ownership view ${blobKey(object)}`);
     }
     const payload = JSON.parse(object.definition_payload) as Record<string, unknown>;
     // pg_get_viewdef is not necessarily idempotent: the first pg_dump replay
@@ -762,9 +762,9 @@ async function assertNoUnexpectedAdminSecurityDefiners(
   `, [admin.role_oid]);
   for (const routine of result.rows) {
     const executableBy = routine.executable_by.filter((role): role is string => role !== null);
-    if (executableBy.length && !expectedKeys.has(objectKey(routine))) {
+    if (executableBy.length && !expectedKeys.has(blobKey(routine))) {
       throw new Error(
-        `Unexpected migration-admin-owned SECURITY DEFINER routine ${objectKey(routine)} `
+        `Unexpected migration-admin-owned SECURITY DEFINER routine ${blobKey(routine)} `
         + `is executable by ${executableBy.join(", ")}`,
       );
     }
@@ -824,9 +824,9 @@ async function assertNoUnexpectedAdminViews(
   `, [admin.role_oid]);
   for (const view of result.rows) {
     const selectableBy = view.selectable_by.filter((role): role is string => role !== null);
-    if (selectableBy.length && !expectedKeys.has(objectKey(view))) {
+    if (selectableBy.length && !expectedKeys.has(blobKey(view))) {
       throw new Error(
-        `Unexpected migration-admin-owned view ${objectKey(view)} `
+        `Unexpected migration-admin-owned view ${blobKey(view)} `
         + `is selectable by ${selectableBy.join(", ")}`,
       );
     }
@@ -849,7 +849,7 @@ function manifestObjects(objects: readonly OwnedObject[]): ManifestObject[] {
 function validateUniqueObjects(objects: readonly ManifestObject[]): void {
   const keys = new Set<string>();
   for (const object of objects) {
-    const key = objectKey(object);
+    const key = blobKey(object);
     if (keys.has(key)) throw new Error(`Duplicate restore ownership identity ${key}`);
     keys.add(key);
     if (!SHA256_PATTERN.test(object.definition_sha256) || !SHA256_PATTERN.test(object.acl_sha256)) {
@@ -1408,7 +1408,7 @@ async function alterOwnerStatement(client: Client, object: ManifestObject): Prom
       object.owner_role_name,
     ]);
     if (result.rowCount !== 1 || !result.rows[0]) {
-      throw new Error(`Could not render restore ownership statement for ${objectKey(object)}`);
+      throw new Error(`Could not render restore ownership statement for ${blobKey(object)}`);
     }
     return result.rows[0].statement;
   }
@@ -1444,7 +1444,7 @@ async function alterOwnerStatement(client: Client, object: ManifestObject): Prom
     object.owner_role_name,
   ]);
   if (result.rowCount !== 1 || !result.rows[0]) {
-    throw new Error(`Could not render restore ownership statement for ${objectKey(object)}`);
+    throw new Error(`Could not render restore ownership statement for ${blobKey(object)}`);
   }
   return result.rows[0].statement;
 }
@@ -1470,39 +1470,39 @@ export async function reconcilePendingRestoreOwnership(
     await validateCurrentSchemaAndDefaultAcls(client, contract);
 
     const current = await allPublicRoutinesAndViews(client);
-    const currentByKey = new Map(current.map((object) => [objectKey(object), object]));
-    const expectedByKey = new Map(objects.map((object) => [objectKey(object), object]));
+    const currentByKey = new Map(current.map((object) => [blobKey(object), object]));
+    const expectedByKey = new Map(objects.map((object) => [blobKey(object), object]));
     for (const object of current.filter(({ owner_role_name }) => owner_role_name.startsWith("context_use_"))) {
-      if (!expectedByKey.has(objectKey(object))) {
-        throw new Error(`Unexpected Context Use-owned routine or view ${objectKey(object)}`);
+      if (!expectedByKey.has(blobKey(object))) {
+        throw new Error(`Unexpected Context Use-owned routine or view ${blobKey(object)}`);
       }
     }
     for (const expected of objects) {
-      const actual = currentByKey.get(objectKey(expected));
-      if (!actual) throw new Error(`Restore ownership target is missing: ${objectKey(expected)}`);
+      const actual = currentByKey.get(blobKey(expected));
+      if (!actual) throw new Error(`Restore ownership target is missing: ${blobKey(expected)}`);
       if (actual.owner_role_oid !== expected.owner_role_oid
           && actual.owner_role_oid !== manifest.preparer_role_oid) {
-        throw new Error(`Restore ownership target has an unexpected current owner: ${objectKey(expected)}`);
+        throw new Error(`Restore ownership target has an unexpected current owner: ${blobKey(expected)}`);
       }
       if (actual.owner_role_oid === expected.owner_role_oid
           && actual.owner_role_name !== expected.owner_role_name) {
-        throw new Error(`Restore ownership target role identity changed: ${objectKey(expected)}`);
+        throw new Error(`Restore ownership target role identity changed: ${blobKey(expected)}`);
       }
       if (actual.owner_role_oid === manifest.preparer_role_oid
           && actual.owner_role_name !== manifest.preparer_role_name) {
-        throw new Error(`Restore ownership migration administrator identity changed: ${objectKey(expected)}`);
+        throw new Error(`Restore ownership migration administrator identity changed: ${blobKey(expected)}`);
       }
       const actualDefinitionSha256 = sha256(actual.definition_payload);
       if (actualDefinitionSha256 !== expected.definition_sha256) {
         throw new Error(
-          `Restore ownership target definition changed: ${objectKey(expected)} `
+          `Restore ownership target definition changed: ${blobKey(expected)} `
           + `(expected ${expected.definition_sha256}, got ${actualDefinitionSha256})`,
         );
       }
       const actualAclSha256 = sha256(actual.acl_payload);
       if (actualAclSha256 !== expected.acl_sha256) {
         throw new Error(
-          `Restore ownership target ACL changed: ${objectKey(expected)} `
+          `Restore ownership target ACL changed: ${blobKey(expected)} `
           + `(expected ${expected.acl_sha256}, got ${actualAclSha256})`,
         );
       }
@@ -1516,14 +1516,14 @@ export async function reconcilePendingRestoreOwnership(
     for (const statement of alterStatements) await client.query(statement);
 
     const reconciled = await allPublicRoutinesAndViews(client);
-    const reconciledByKey = new Map(reconciled.map((object) => [objectKey(object), object]));
+    const reconciledByKey = new Map(reconciled.map((object) => [blobKey(object), object]));
     for (const expected of objects) {
-      const actual = reconciledByKey.get(objectKey(expected));
+      const actual = reconciledByKey.get(blobKey(expected));
       if (!actual || actual.owner_role_oid !== expected.owner_role_oid
           || actual.owner_role_name !== expected.owner_role_name
           || sha256(actual.definition_payload) !== expected.definition_sha256
           || sha256(actual.acl_payload) !== expected.acl_sha256) {
-        throw new Error(`Restore ownership verification failed: ${objectKey(expected)}`);
+        throw new Error(`Restore ownership verification failed: ${blobKey(expected)}`);
       }
     }
     await validateCurrentSchemaAndDefaultAcls(client, contract);

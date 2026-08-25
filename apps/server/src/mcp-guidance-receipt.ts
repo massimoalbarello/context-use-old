@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { config } from "./config.ts";
 
 export type KnowledgeGuideRevision = {
-  documentId: string;
+  pageId: string;
   revisionId: string;
 };
 
@@ -17,7 +17,7 @@ const MAX_CONTEXT_ID_LENGTH = 512;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 type ReceiptManifest = [
-  documentId: string,
+  pageId: string,
   revisionId: string,
   clientId: string,
   sessionId: string,
@@ -31,13 +31,13 @@ function manifest(
   guide: KnowledgeGuideRevision,
   context: KnowledgeGuideReceiptContext,
 ): ReceiptManifest {
-  if (!UUID.test(guide.documentId) || !UUID.test(guide.revisionId)) {
-    throw new Error("Knowledge guide document and revision IDs must be UUIDs");
+  if (!UUID.test(guide.pageId) || !UUID.test(guide.revisionId)) {
+    throw new Error("Knowledge guide object and revision IDs must be UUIDs");
   }
   if (!validContextId(context.clientId) || !validContextId(context.sessionId)) {
     throw new Error("Knowledge guide receipt context is invalid");
   }
-  return [guide.documentId, guide.revisionId, context.clientId, context.sessionId];
+  return [guide.pageId, guide.revisionId, context.clientId, context.sessionId];
 }
 
 function receiptSignature(encodedManifest: string): Buffer {
@@ -79,12 +79,12 @@ function receiptManifest(receipt: string): ReceiptManifest | null {
     return null;
   }
   if (!Array.isArray(value) || value.length !== 4) return null;
-  const [documentId, revisionId, clientId, sessionId] = value;
-  if (typeof documentId !== "string" || !UUID.test(documentId)
+  const [pageId, revisionId, clientId, sessionId] = value;
+  if (typeof pageId !== "string" || !UUID.test(pageId)
     || typeof revisionId !== "string" || !UUID.test(revisionId)
     || typeof clientId !== "string" || !validContextId(clientId)
     || typeof sessionId !== "string" || !validContextId(sessionId)) return null;
-  return [documentId, revisionId, clientId, sessionId];
+  return [pageId, revisionId, clientId, sessionId];
 }
 
 export function verifyKnowledgeGuideReceipt(

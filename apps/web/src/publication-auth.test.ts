@@ -14,7 +14,7 @@ describe("publication authorization", () => {
     })).toEqual({
       action: "publish",
       target_kind: "page",
-      target_document_id: targetId,
+      target_object_id: targetId,
       expected_revision_id: revisionId,
     });
   });
@@ -28,7 +28,7 @@ describe("publication authorization", () => {
     })).toEqual({
       action: "publish",
       target_kind: "asset",
-      target_document_id: targetId,
+      target_object_id: targetId,
     });
     expect(publicationIntentBody({
       action: "unpublish",
@@ -38,7 +38,7 @@ describe("publication authorization", () => {
     })).toEqual({
       action: "unpublish",
       target_kind: "page",
-      target_document_id: targetId,
+      target_object_id: targetId,
     });
   });
 

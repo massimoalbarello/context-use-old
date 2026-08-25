@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { assetContentResponse, parseAssetRange } from "./asset-content.ts";
-import { AssetNotFoundError, type ByteRange, type ObjectStorage } from "./storage.ts";
+import { AssetNotFoundError, type ByteRange, type BlobStorage } from "./storage.ts";
 
 const bytes = new TextEncoder().encode("0123456789");
 const asset = {
@@ -11,15 +11,15 @@ const asset = {
 };
 
 function storageFixture(missing = false) {
-  const reads: Array<{ objectKey: string; range?: ByteRange }> = [];
+  const reads: Array<{ blobKey: string; range?: ByteRange }> = [];
   const storage = {
-    async read(objectKey: string, range?: ByteRange) {
-      reads.push({ objectKey, ...(range ? { range } : {}) });
+    async read(blobKey: string, range?: ByteRange) {
+      reads.push({ blobKey, ...(range ? { range } : {}) });
       if (missing) throw new AssetNotFoundError();
       const selected = range ? bytes.slice(range.start, range.end + 1) : bytes;
       return new Blob([selected]);
     },
-  } as unknown as ObjectStorage;
+  } as unknown as BlobStorage;
   return { storage, reads };
 }
 
@@ -51,7 +51,7 @@ describe("API-proxied asset content", () => {
       "default-src 'none'; media-src 'self'; frame-ancestors 'self'",
     );
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
-    expect(reads).toEqual([{ objectKey: "objects/private-object" }]);
+    expect(reads).toEqual([{ blobKey: "objects/private-object" }]);
   });
 
   test("grants browser-generated inline viewers only the resource type they need", async () => {
@@ -92,7 +92,7 @@ describe("API-proxied asset content", () => {
     expect(response.headers.get("content-length")).toBe("4");
     expect(response.headers.get("etag")).toBe(`"sha256:${"a".repeat(64)}"`);
     expect(new TextDecoder().decode(await response.arrayBuffer())).toBe("2345");
-    expect(reads).toEqual([{ objectKey: "objects/private-object", range: { start: 2, end: 5 } }]);
+    expect(reads).toEqual([{ blobKey: "objects/private-object", range: { start: 2, end: 5 } }]);
   });
 
   test("serves PDFs inline so browser navigation previews instead of downloading", async () => {

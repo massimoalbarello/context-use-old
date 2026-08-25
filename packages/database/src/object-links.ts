@@ -1,12 +1,12 @@
 import type { Pool } from "pg";
 
-export type DocumentLinkIndex = {
+export type ObjectLinkIndex = {
   source_revision_id: string;
   links_indexed_at: Date | string | null;
   target_document_ids: string[];
 };
 
-export type DocumentBacklink = {
+export type ObjectBacklink = {
   source_document_id: string;
   source_revision_id: string;
   source_revision_number: number;
@@ -15,8 +15,8 @@ export type DocumentBacklink = {
   links_indexed_at: Date | string;
 };
 
-export type DocumentBacklinkPage = {
-  backlinks: DocumentBacklink[];
+export type ObjectBacklinkPage = {
+  backlinks: ObjectBacklink[];
   has_more: boolean;
 };
 
@@ -24,13 +24,13 @@ export type DocumentBacklinkPage = {
  * Revision-scoped derived graph access. Markdown remains authoritative: callers
  * replace the complete extracted target set, including an empty set.
  */
-export class DocumentLinkRepository {
+export class ObjectLinkRepository {
   constructor(private readonly pool: Pool) {}
 
   async replaceRevisionTargets(
     sourceRevisionId: string,
     targetDocumentIds: string[],
-  ): Promise<DocumentLinkIndex> {
+  ): Promise<ObjectLinkIndex> {
     await this.pool.query(
       "SELECT replace_document_links($1,$2::uuid[])",
       [sourceRevisionId, targetDocumentIds],
@@ -38,8 +38,8 @@ export class DocumentLinkRepository {
     return (await this.revisionIndex(sourceRevisionId))!;
   }
 
-  async revisionIndex(sourceRevisionId: string): Promise<DocumentLinkIndex | null> {
-    const result = await this.pool.query<DocumentLinkIndex>(
+  async revisionIndex(sourceRevisionId: string): Promise<ObjectLinkIndex | null> {
+    const result = await this.pool.query<ObjectLinkIndex>(
       `SELECT revision.id AS source_revision_id,revision.links_indexed_at,
          coalesce(
            array_agg(link.target_document_id ORDER BY link.target_document_id)
@@ -58,11 +58,11 @@ export class DocumentLinkRepository {
   async backlinks(
     targetDocumentId: string,
     limit = 100,
-  ): Promise<DocumentBacklinkPage> {
+  ): Promise<ObjectBacklinkPage> {
     const boundedLimit = Number.isFinite(limit)
       ? Math.min(Math.max(Math.floor(limit), 1), 500)
       : 100;
-    const result = await this.pool.query<DocumentBacklink>(
+    const result = await this.pool.query<ObjectBacklink>(
       `SELECT revision.document_id AS source_document_id,
          revision.id AS source_revision_id,
          revision.revision_number AS source_revision_number,

@@ -1,4 +1,4 @@
-export type KnowledgeDocumentPage = {
+export type KnowledgePage = {
   id: string;
   current_version_id: string;
   published_version_id: string | null;
@@ -39,7 +39,7 @@ export type Version = {
   created_at: string;
 };
 
-export type KnowledgeDocumentHistory = {
+export type KnowledgePageHistory = {
   revisions: Version[];
   has_more: boolean;
 };
@@ -63,7 +63,7 @@ export type PageVersionDiff = {
 
 export type KnowledgePageChange = {
   cursor: string;
-  document_id: string;
+  object_id: string;
   revision_id: string;
   revision_number: number;
   previous_revision_number: number | null;
@@ -127,7 +127,7 @@ export type PublicationPreview = {
   current_public_url: string | null;
   warnings: string[];
   references: Array<{
-    kind: "page" | "asset" | "record" | "document";
+    kind: "page" | "asset" | "record" | "object";
     id: string;
     label: string;
     public: boolean;

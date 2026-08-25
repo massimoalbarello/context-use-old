@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { api } from "../api.ts";
-import type { KnowledgeDocumentPage } from "../types.ts";
+import type { KnowledgePage } from "../types.ts";
 
-export function NewKnowledgeDocument({
+export function NewPage({
   onCancel,
   onCreated,
 }: {
   onCancel: () => void;
-  onCreated: (documentId: string) => void;
+  onCreated: (objectId: string) => void;
 }) {
   const [draft, setDraft] = useState({ title: "", summary: "", body_markdown: "" });
   const [commit, setCommit] = useState("");
@@ -18,24 +18,24 @@ export function NewKnowledgeDocument({
     setWorking(true);
     setMessage("");
     try {
-      const document = await api<KnowledgeDocumentPage>("/api/dashboard/documents", {
+      const page = await api<KnowledgePage>("/api/dashboard/objects", {
         method: "POST",
         body: JSON.stringify({ ...draft, commit_message: commit }),
       });
-      onCreated(document.id);
+      onCreated(page.id);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Document creation failed");
+      setMessage(error instanceof Error ? error.message : "Page creation failed");
     } finally {
       setWorking(false);
     }
   };
 
-  return <main className="editor new-document-editor">
+  return <main className="editor new-page-editor">
     <header className="editor-header">
       <div>
-        <span className="document-kicker">New knowledge document</span>
-        <h1>Create a standalone document</h1>
-        <p className="knowledge-summary">Give it a clear title and summary. Link it to related documents with stable document references.</p>
+        <span className="object-kicker">New page</span>
+        <h1>Create a standalone page</h1>
+        <p className="knowledge-summary">Give it a clear title and summary. Link it to related objects with stable object references.</p>
       </div>
     </header>
     <section className="edit-grid">
@@ -45,12 +45,12 @@ export function NewKnowledgeDocument({
           <label className="summary-field">Summary<input maxLength={320} required value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} /></label>
         </div>
       </div>
-      <textarea className="markdown-editor" value={draft.body_markdown} onChange={(event) => setDraft({ ...draft, body_markdown: event.target.value })} spellCheck placeholder="Write Markdown. Link another document with [label](context-use://document/<uuid>)." />
+      <textarea className="markdown-editor" value={draft.body_markdown} onChange={(event) => setDraft({ ...draft, body_markdown: event.target.value })} spellCheck placeholder="Write Markdown. Link another object with [label](context-use://object/<uuid>)." />
       <footer className="save-bar">
-        <input placeholder="Describe this document (required)" value={commit} onChange={(event) => setCommit(event.target.value)} />
+        <input placeholder="Describe this page change (required)" value={commit} onChange={(event) => setCommit(event.target.value)} />
         <div className="button-row">
           <button disabled={working} onClick={onCancel}>Cancel</button>
-          <button className="primary" disabled={working || !draft.title.trim() || !draft.summary.trim() || commit.trim().length < 3} onClick={() => void create()}>{working ? "Creating…" : "Create document"}</button>
+          <button className="primary" disabled={working || !draft.title.trim() || !draft.summary.trim() || commit.trim().length < 3} onClick={() => void create()}>{working ? "Creating…" : "Create page"}</button>
         </div>
       </footer>
     </section>

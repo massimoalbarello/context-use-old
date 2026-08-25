@@ -1,16 +1,16 @@
 import type { Pool } from "pg";
-import type { MarkdownObjectMetadata } from "./documents.ts";
+import type { MarkdownBlobMetadata } from "./markdown-blobs.ts";
 
-export type UnindexedDocumentRevision = MarkdownObjectMetadata & {
+export type UnindexedObjectRevision = MarkdownBlobMetadata & {
   revision_id: string;
 };
 
-export class DocumentMaintenanceRepository {
+export class BlobMaintenanceRepository {
   constructor(private readonly pool: Pool) {}
 
-  async unindexedLinkRevisions(limit = 250): Promise<UnindexedDocumentRevision[]> {
+  async unindexedLinkRevisions(limit = 250): Promise<UnindexedObjectRevision[]> {
     const boundedLimit = Math.min(Math.max(limit, 1), 1_000);
-    const result = await this.pool.query<UnindexedDocumentRevision>(
+    const result = await this.pool.query<UnindexedObjectRevision>(
       `SELECT revision.id AS revision_id,revision.body_object_key,
          revision.body_size_bytes,revision.body_content_hash
        FROM hypermedia_document_revisions revision

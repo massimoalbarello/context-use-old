@@ -45,31 +45,31 @@ describe("publication shared contracts", () => {
       {
         action: "publish",
         target_kind: "page",
-        target_document_id: documentId,
+        target_object_id: documentId,
         expected_revision_id: revisionId,
       },
-      { action: "unpublish", target_kind: "page", target_document_id: documentId },
-      { action: "publish", target_kind: "asset", target_document_id: documentId },
-      { action: "unpublish", target_kind: "asset", target_document_id: documentId },
+      { action: "unpublish", target_kind: "page", target_object_id: documentId },
+      { action: "publish", target_kind: "asset", target_object_id: documentId },
+      { action: "unpublish", target_kind: "asset", target_object_id: documentId },
     ]) {
       expect(publicationIntentSchema.safeParse(intent).success).toBe(true);
     }
 
     for (const intent of [
-      { action: "publish", target_kind: "page", target_document_id: documentId },
+      { action: "publish", target_kind: "page", target_object_id: documentId },
       {
         action: "unpublish",
         target_kind: "page",
-        target_document_id: documentId,
+        target_object_id: documentId,
         expected_revision_id: revisionId,
       },
       {
         action: "publish",
         target_kind: "asset",
-        target_document_id: documentId,
+        target_object_id: documentId,
         expected_revision_id: revisionId,
       },
-      { action: "publish", target_kind: "asset", target_document_id: documentId, extra: true },
+      { action: "publish", target_kind: "asset", target_object_id: documentId, extra: true },
     ]) {
       expect(publicationIntentSchema.safeParse(intent).success).toBe(false);
     }

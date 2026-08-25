@@ -1,18 +1,18 @@
-import type { DocumentAssetRepository } from "@context-use/database";
+import type { AssetRepository } from "@context-use/database";
 import { z } from "zod";
 import { config } from "./config.ts";
 import { verifyAssetCapability } from "./mcp-asset-capability.ts";
 import { activeMcpLineage } from "./mcp-auth-client.ts";
 import { requestMatchesOrigin, securityHeaders } from "./security.ts";
-import { AssetIntegrityError, type ObjectStorage } from "./storage.ts";
+import { AssetIntegrityError, type BlobStorage } from "./storage.ts";
 
 function problem(message: string, status: number, code: string): Response {
   return Response.json({ error: code, message }, { status, headers: securityHeaders });
 }
 
 export function createMcpAssetUploadHandler(
-  assets: DocumentAssetRepository,
-  storage: ObjectStorage,
+  assets: AssetRepository,
+  storage: BlobStorage,
   authorizeLineage = activeMcpLineage,
 ) {
   return async (request: Request, assetId: string): Promise<Response> => {
@@ -43,8 +43,8 @@ export function createMcpAssetUploadHandler(
     if (!request.body && expectedSize !== 0) return problem("Asset size mismatch", 422, "integrity_error");
     try {
       await storage.write({
-        id: asset.document_id,
-        objectKey: asset.object_key,
+        id: asset.object_id,
+        blobKey: asset.blob_key,
         filename: asset.filename,
         contentType: asset.content_type,
         sizeBytes: expectedSize,
@@ -54,6 +54,6 @@ export function createMcpAssetUploadHandler(
       if (error instanceof AssetIntegrityError) return problem(error.message, 422, "integrity_error");
       throw error;
     }
-    return Response.json({ uploaded: true, asset_id: asset.document_id }, { headers: securityHeaders });
+    return Response.json({ uploaded: true, object_id: asset.object_id }, { headers: securityHeaders });
   };
 }

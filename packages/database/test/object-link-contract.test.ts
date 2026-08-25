@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
-  GenericDocumentLinkContractError,
-  assertGenericDocumentLinksOnly,
-  genericDocumentTargets,
+  GenericObjectLinkContractError,
+  assertGenericObjectLinksOnly,
+  genericObjectTargets,
 } from "../src/index.ts";
 
 const first = "018f7688-0ad4-7b71-a0ac-17ed7415b940";
@@ -11,9 +11,9 @@ const second = "018f7688-0ad4-7b71-a0ac-17ed7415b941";
 describe("generic knowledge link contract", () => {
   test("accepts only rendered generic document links and preserves their full receipt", () => {
     const markdown = [
-      `[Page](context-use://document/${first}#next_steps)`,
-      `![Asset](context-use://document/${second})`,
-      `Duplicate: [same](context-use://document/${first})`,
+      `[Page](context-use://object/${first}#next_steps)`,
+      `![Asset](context-use://object/${second})`,
+      `Duplicate: [same](context-use://object/${first})`,
       "[Public page](/p/public-id)",
       "[Public Markdown](/p/public-id.md#section)",
       "[Public asset](/a/public-id)",
@@ -22,13 +22,13 @@ describe("generic knowledge link contract", () => {
       "[External](https://example.com/app/pages/not-private)",
     ].join("\n\n");
 
-    expect(() => assertGenericDocumentLinksOnly(markdown)).not.toThrow();
-    expect(genericDocumentTargets(markdown)).toEqual([first, second]);
+    expect(() => assertGenericObjectLinksOnly(markdown)).not.toThrow();
+    expect(genericObjectTargets(markdown)).toEqual([first, second]);
   });
 
   test("accepts generic reference links and ordinary rendered web links", () => {
     const markdown = [
-      `[generic]: context-use://document/${first}#section`,
+      `[generic]: context-use://object/${first}#section`,
       "",
       "[Referenced][generic]",
       "![Referenced image][generic]",
@@ -36,12 +36,12 @@ describe("generic knowledge link contract", () => {
       "<a href=\"https://example.com/app/pages/not-private\">External</a>",
     ].join("\n");
 
-    expect(() => assertGenericDocumentLinksOnly(markdown)).not.toThrow();
-    expect(genericDocumentTargets(markdown)).toEqual([first]);
+    expect(() => assertGenericObjectLinksOnly(markdown)).not.toThrow();
+    expect(genericObjectTargets(markdown)).toEqual([first]);
   });
 
   test.each([
-    `context-use://document/${first}`,
+    `context-use://object/${first}`,
     `[Page](context-use://page/${first})`,
     `![Asset](context-use://asset/${first})`,
     `[Directory](context-use://directory/${first})`,
@@ -57,9 +57,9 @@ describe("generic knowledge link contract", () => {
     "[Record](/api/dashboard/records/018f7688-0ad4-7b71-a0ac-17ed7415b940)",
     "[Asset](/api/mcp/assets/018f7688-0ad4-7b71-a0ac-17ed7415b940)",
     "[Document](</api/public/documents/018f7688-0ad4-7b71-a0ac-17ed7415b940>)",
-    `[see /app/pages/${first}](context-use://document/${second})`,
-    `[context-use://asset/${first}](context-use://document/${second})`,
-    `![[private/asset]](context-use://document/${second})`,
+    `[see /app/pages/${first}](context-use://object/${second})`,
+    `[context-use://asset/${first}](context-use://object/${second})`,
+    `![[private/asset]](context-use://object/${second})`,
     `[private]: /app/pages/${first}\n\n[Open][private]`,
     `[legacy]: context-use://page/${first}\n\n[Open][legacy]`,
     `[continued]:\n  /app/pages/${first}\n\n[Open][continued]`,
@@ -79,7 +79,7 @@ describe("generic knowledge link contract", () => {
     `<a href="&Tab;/app/documents/${first}">tabbed</a>`,
     `<a href="&NewLine;/api/dashboard/documents/${first}">newline</a>`,
     `<audio src="&bsol;app&bsol;assets&bsol;${first}"></audio>`,
-    `[nested ![private /app/documents/${first}](https://example.com/image.png)](context-use://document/${second})`,
+    `[nested ![private /app/documents/${first}](https://example.com/image.png)](context-use://object/${second})`,
     `<div>\ncontext-use://page/${first}\n</div>`,
     `<div>\n[[private/path]]\n</div>`,
     `<table>\n<tr><td>context-use://asset/${first}</td></tr>\n</table>`,
@@ -104,20 +104,20 @@ describe("generic knowledge link contract", () => {
     `See:/%61pp/documents/${first}`,
     `See:/&percnt;61pp/documents/${first}`,
   ])("rejects a rendered legacy or private destination: %s", (markdown) => {
-    expect(() => assertGenericDocumentLinksOnly(markdown))
-      .toThrow(GenericDocumentLinkContractError);
+    expect(() => assertGenericObjectLinksOnly(markdown))
+      .toThrow(GenericObjectLinkContractError);
   });
 
   test("invalid numeric entities fail with the stable contract error", () => {
-    expect(() => assertGenericDocumentLinksOnly(
+    expect(() => assertGenericObjectLinksOnly(
       `<a href="&#999999999999999999;/app/documents/${first}">bad</a>`,
-    )).toThrow(GenericDocumentLinkContractError);
+    )).toThrow(GenericObjectLinkContractError);
   });
 
   test("does not let a valid occurrence whitelist the same bytes in malformed prose", () => {
-    const generic = `[ok](context-use://document/${first})`;
-    expect(() => assertGenericDocumentLinksOnly(`${generic}\n\n[outer](${generic})`))
-      .toThrow(GenericDocumentLinkContractError);
+    const generic = `[ok](context-use://object/${first})`;
+    expect(() => assertGenericObjectLinksOnly(`${generic}\n\n[outer](${generic})`))
+      .toThrow(GenericObjectLinkContractError);
   });
 
   test("rejects pathological reference tables before entering the Markdown parser", () => {
@@ -133,14 +133,14 @@ describe("generic knowledge link contract", () => {
       )).join("\n"),
     ]) {
       const startedAt = performance.now();
-      expect(() => assertGenericDocumentLinksOnly(markdown))
-        .toThrow(GenericDocumentLinkContractError);
+      expect(() => assertGenericObjectLinksOnly(markdown))
+        .toThrow(GenericObjectLinkContractError);
       expect(performance.now() - startedAt).toBeLessThan(250);
     }
   });
 
   test("rejects pathological parser depth with the stable contract error", () => {
-    expect(() => assertGenericDocumentLinksOnly(`${"- ".repeat(256)}safe`)).not.toThrow();
+    expect(() => assertGenericObjectLinksOnly(`${"- ".repeat(256)}safe`)).not.toThrow();
     for (const markdown of [
       `${"> ".repeat(257)}safe`,
       `${"- ".repeat(257)}safe`,
@@ -148,16 +148,16 @@ describe("generic knowledge link contract", () => {
       "*".repeat(100_001),
       `${"<div>".repeat(300)}safe${"</div>".repeat(300)}`,
     ]) {
-      expect(() => assertGenericDocumentLinksOnly(markdown))
-        .toThrow(GenericDocumentLinkContractError);
+      expect(() => assertGenericObjectLinksOnly(markdown))
+        .toThrow(GenericObjectLinkContractError);
     }
   });
 
   test("bounds total container work across individually valid lines", () => {
     const markdown = `${`${"- ".repeat(256)}safe\n`.repeat(17)}`;
     const startedAt = performance.now();
-    expect(() => assertGenericDocumentLinksOnly(markdown))
-      .toThrow(GenericDocumentLinkContractError);
+    expect(() => assertGenericObjectLinksOnly(markdown))
+      .toThrow(GenericObjectLinkContractError);
     expect(performance.now() - startedAt).toBeLessThan(250);
   });
 
@@ -172,7 +172,7 @@ describe("generic knowledge link contract", () => {
       `\\[[escaped/path]] and \\[escaped](/app/pages/${first})`,
     ].join("\n\n");
 
-    expect(() => assertGenericDocumentLinksOnly(markdown)).not.toThrow();
-    expect(genericDocumentTargets(markdown)).toEqual([]);
+    expect(() => assertGenericObjectLinksOnly(markdown)).not.toThrow();
+    expect(genericObjectTargets(markdown)).toEqual([]);
   });
 });

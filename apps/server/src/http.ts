@@ -1,5 +1,5 @@
 import {
-  InvalidPrivateDocumentCursorError,
+  InvalidPrivateObjectCursorError,
   PublicationStateError,
   VersionConflictError,
 } from "@context-use/database";
@@ -25,7 +25,7 @@ export function routeError(error: unknown): Response {
   if (error instanceof VersionConflictError) {
     return json({ error: "version_conflict", current_version_number: error.currentVersion }, 409);
   }
-  if (error instanceof InvalidPrivateDocumentCursorError) {
+  if (error instanceof InvalidPrivateObjectCursorError) {
     return problem(error.message, 422, "invalid_cursor");
   }
   if (error instanceof PublicationStateError) return problem(error.message, 409, "publication_state");

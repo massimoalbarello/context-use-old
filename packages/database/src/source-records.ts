@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import {
-  assertMarkdownObject,
-  markdownObjectMetadata,
-  MAX_MARKDOWN_DOCUMENT_BYTES,
-  type MarkdownObjectMetadata,
-  type MarkdownObjectStore,
-} from "./documents.ts";
+  assertMarkdownBlob,
+  markdownBlobMetadata,
+  MAX_MARKDOWN_BLOB_BYTES,
+  type MarkdownBlobMetadata,
+  type MarkdownBlobStore,
+} from "./markdown-blobs.ts";
 
 export type SourceRecordWrite = {
   integration: string;
@@ -21,7 +21,7 @@ export type SourceRecordWrite = {
 };
 
 export type SourceRecordIdentity = {
-  document_id: string;
+  object_id: string;
   current_revision_id: string | null;
   reference: string;
 };
@@ -41,7 +41,7 @@ export type SourceRecordMetadata = SourceRecordIdentity & {
   updated_at: Date;
 };
 
-export type SourceRecordDocument = SourceRecordMetadata & {
+export type SourceRecord = SourceRecordMetadata & {
   body_markdown: string | null;
 };
 
@@ -84,7 +84,7 @@ const SOURCE_RECORD_FROM = `
 `;
 
 const SOURCE_RECORD_METADATA_COLUMNS = `
-  source.document_id,source.current_revision_id,
+  source.document_id AS object_id,source.current_revision_id,
   revision.revision_number,document.authority,
   source.integration,source.connection_instance_id::text AS connection_instance_id,
   source.connection_id,source.model,source.source_record_id,
@@ -141,9 +141,9 @@ function sourceRecordIdentity(
   record: Pick<CurrentSourceRecord, "document_id" | "current_revision_id">,
 ): SourceRecordIdentity {
   return {
-    document_id: record.document_id,
+    object_id: record.document_id,
     current_revision_id: record.current_revision_id,
-    reference: `context-use://document/${record.document_id}`,
+    reference: `context-use://object/${record.document_id}`,
   };
 }
 
@@ -155,13 +155,13 @@ function withReference<T extends SourceRecordMetadataRow>(
     connection_instance_id: record.connection_instance_id === null
       ? null
       : Number(record.connection_instance_id),
-    reference: `context-use://document/${record.document_id}`,
+    reference: `context-use://object/${record.object_id}`,
   };
 }
 
 function assertSourceAuthority(record: CurrentSourceRecord): void {
   if (record.authority !== "source") {
-    throw new Error("Source record points to a non-source document");
+    throw new Error("Source record points to a non-source object");
   }
 }
 
@@ -206,10 +206,10 @@ async function transaction<T>(pool: Pool, work: (client: PoolClient) => Promise<
 export class SourceRecordRepository implements SourceRecordWriter {
   constructor(
     private readonly pool: Pool,
-    private readonly bodies: MarkdownObjectStore,
+    private readonly bodies: MarkdownBlobStore,
   ) {}
 
-  private async withBody(row: SourceRecordDocumentRow | undefined): Promise<SourceRecordDocument | null> {
+  private async withBody(row: SourceRecordDocumentRow | undefined): Promise<SourceRecord | null> {
     if (!row) return null;
     const {
       body_object_key,
@@ -228,11 +228,11 @@ export class SourceRecordRepository implements SourceRecordWriter {
     const markdown = await this.bodies.read(object);
     return {
       ...record,
-      body_markdown: assertMarkdownObject(markdown, object),
+      body_markdown: assertMarkdownBlob(markdown, object),
     };
   }
 
-  async get(documentId: string): Promise<SourceRecordDocument | null> {
+  async get(documentId: string): Promise<SourceRecord | null> {
     const result = await this.pool.query<SourceRecordDocumentRow>(
       `${SOURCE_RECORD_DOCUMENT_SELECT} WHERE source.document_id=$1`,
       [documentId],
@@ -306,8 +306,8 @@ export class SourceRecordRepository implements SourceRecordWriter {
     const revisionId = randomUUID();
     const candidate = record.markdown === null
       ? null
-      : markdownObjectMetadata(revisionId, record.markdown);
-    if (candidate && candidate.body_size_bytes > MAX_MARKDOWN_DOCUMENT_BYTES) {
+      : markdownBlobMetadata(revisionId, record.markdown);
+    if (candidate && candidate.body_size_bytes > MAX_MARKDOWN_BLOB_BYTES) {
       throw new Error("Source record Markdown exceeds the document size limit");
     }
     const initial = await this.pool.query<CurrentSourceRecord>(
@@ -324,7 +324,7 @@ export class SourceRecordRepository implements SourceRecordWriter {
       }
     }
 
-    let stored: MarkdownObjectMetadata | null = null;
+    let stored: MarkdownBlobMetadata | null = null;
     if (candidate && initial.rows[0]?.body_content_hash !== candidate.body_content_hash) {
       stored = await this.bodies.write(revisionId, record.markdown!);
     }

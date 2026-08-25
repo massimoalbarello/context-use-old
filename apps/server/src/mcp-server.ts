@@ -1,19 +1,19 @@
 import {
-  DocumentAssetRepository,
-  DocumentLinkRepository,
+  AssetRepository,
+  ObjectLinkRepository,
   KnowledgeSettingsRepository,
-  KnowledgeDocumentRepository,
-  PrivateDocumentCatalogRepository,
+  KnowledgePageRepository,
+  PrivateObjectCatalogRepository,
   SourceRecordRepository,
 } from "@context-use/database";
 import {
-  archiveDocumentAssetSchema,
-  archiveKnowledgeDocumentSchema,
-  createDocumentAssetSchema,
-  createKnowledgeDocumentSchema,
-  updateKnowledgeDocumentSchema,
+  archiveAssetSchema,
+  archivePageSchema,
+  createAssetSchema,
+  createPageSchema,
+  updatePageSchema,
 } from "@context-use/shared";
-import type { PrivateDocumentCatalogItem } from "@context-use/database";
+import type { PrivateObjectCatalogItem } from "@context-use/database";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { config } from "./config.ts";
@@ -23,7 +23,7 @@ import {
   verifyKnowledgeGuideReceipt,
 } from "./mcp-guidance-receipt.ts";
 import type { SourceRecordReader } from "./nango-records.ts";
-import { documentDelta } from "./page-delta.ts";
+import { pageDelta } from "./page-delta.ts";
 
 export type McpContext = {
   clientId: string;
@@ -37,9 +37,9 @@ const BASE_SERVER_INSTRUCTIONS = "Use Context Use proactively when the user stat
   + "configured global guide, and reuse its receipt across every target in that session. ";
 
 const SERVER_INSTRUCTIONS = BASE_SERVER_INSTRUCTIONS
-  + "Use the stable-ID document tools (search_documents, read_document, create_document, "
-  + "update_document, archive_document, create_document_asset_upload, archive_document_asset). "
-  + "Navigate knowledge through search results, stable document identities and hyperlinks.";
+  + "Use the stable-ID object tools (search_objects, read_object, create_page, "
+  + "update_page, archive_page, create_asset_upload, archive_asset). "
+  + "Navigate knowledge through search results, stable object identities and hyperlinks.";
 
 const MCP_BACKLINK_LIMIT = 100;
 
@@ -66,7 +66,7 @@ const mutationReceiptSchemas = {
 };
 
 const knowledgeSessionOutputSchema = z.object({
-  document_id: z.string().uuid(),
+  object_id: z.string().uuid(),
   revision_id: z.string().uuid(),
   revision_number: z.number().int().positive(),
   title: z.string(),
@@ -75,39 +75,39 @@ const knowledgeSessionOutputSchema = z.object({
   knowledge_session_receipt: z.string(),
 }).strict();
 
-export type McpDocumentRepositories = {
-  knowledgeDocuments: KnowledgeDocumentRepository;
-  documentAssets: DocumentAssetRepository;
-  documentCatalog: PrivateDocumentCatalogRepository;
+export type McpObjectRepositories = {
+  pages: KnowledgePageRepository;
+  assets: AssetRepository;
+  objectCatalog: PrivateObjectCatalogRepository;
 };
 
-function documentCatalogSummary(document: PrivateDocumentCatalogItem) {
+function objectCatalogSummary(object: PrivateObjectCatalogItem) {
   return {
-    document_id: document.document_id,
-    document_kind: document.document_kind,
-    authority: document.authority,
-    representation: document.representation,
-    lifecycle: document.lifecycle,
-    current_revision_id: document.current_revision_id,
-    title: document.title,
-    summary: document.summary,
-    filename: document.filename,
-    content_type: document.content_type,
-    operational_roles: document.operational_roles,
-    updated_at: document.updated_at,
-    reference: `context-use://document/${document.document_id}`,
+    object_id: object.object_id,
+    object_kind: object.object_kind,
+    authority: object.authority,
+    representation: object.representation,
+    lifecycle: object.lifecycle,
+    current_revision_id: object.current_revision_id,
+    title: object.title,
+    summary: object.summary,
+    filename: object.filename,
+    content_type: object.content_type,
+    operational_roles: object.operational_roles,
+    updated_at: object.updated_at,
+    reference: `context-use://object/${object.object_id}`,
   };
 }
 
-function unknownDocument(documentId: string, retryTool: string) {
+function unknownObject(objectId: string, retryTool: string) {
   return textContent([
-    "DOCUMENT_NOT_FOUND",
-    `No active knowledge document has id ${documentId}, so nothing was changed.`,
-    `Use search_documents, copy the stable document_id exactly, and retry ${retryTool}.`,
+    "OBJECT_NOT_FOUND",
+    `No active page has object id ${objectId}, so nothing was changed.`,
+    `Use search_objects, copy the stable object_id exactly, and retry ${retryTool}.`,
   ].join("\n\n"), true);
 }
 
-function documentGuidanceRequired(retryTool: string) {
+function pageGuidanceRequired(retryTool: string) {
   return textContent([
     "KNOWLEDGE_GUIDE_REQUIRED",
     "Call begin_knowledge_session with {}, read the returned configured global guide, and retry with its knowledge_session_receipt.",
@@ -118,10 +118,10 @@ function documentGuidanceRequired(retryTool: string) {
 export async function createMcpServer(
   context: McpContext,
   sourceRecords: SourceRecordReader | undefined,
-  recordDocuments: SourceRecordRepository | undefined,
+  recordObjects: SourceRecordRepository | undefined,
   knowledgeSettings: KnowledgeSettingsRepository,
-  documentLinks: DocumentLinkRepository,
-  documents: McpDocumentRepositories,
+  objectLinks: ObjectLinkRepository,
+  objects: McpObjectRepositories,
 ): Promise<McpServer> {
   const server = new McpServer(
     { name: "context-use", version: "0.1.92" },
@@ -130,21 +130,21 @@ export async function createMcpServer(
   const actor = { kind: "mcp" as const, subject: context.clientId };
 
   async function hypermedia(
-    documentId: string,
+    objectId: string,
     revisionId: string | null,
   ) {
     const [index, backlinkPage, backlinksComplete] = await Promise.all([
-      revisionId ? documentLinks.revisionIndex(revisionId) : Promise.resolve(null),
-      documentLinks.backlinks(documentId, MCP_BACKLINK_LIMIT),
-      documentLinks.backlinksComplete(),
+      revisionId ? objectLinks.revisionIndex(revisionId) : Promise.resolve(null),
+      objectLinks.backlinks(objectId, MCP_BACKLINK_LIMIT),
+      objectLinks.backlinksComplete(),
     ]);
     return {
       links_indexed: revisionId === null || index?.links_indexed_at != null,
-      outbound_document_ids: index?.links_indexed_at == null
+      outbound_object_ids: index?.links_indexed_at == null
         ? []
         : index.target_document_ids,
       backlinks: backlinkPage.backlinks.map((backlink) => ({
-        source_document_id: backlink.source_document_id,
+        source_object_id: backlink.source_document_id,
         source_revision_id: backlink.source_revision_id,
         source_revision_number: backlink.source_revision_number,
         source_authority: backlink.source_authority,
@@ -160,67 +160,67 @@ export async function createMcpServer(
     if (!guide) return false;
     if (knowledgeSessionReceipt === undefined) return false;
     return verifyKnowledgeGuideReceipt(knowledgeSessionReceipt, {
-      documentId: guide.document_id,
+      pageId: guide.document_id,
       revisionId: guide.current_revision_id,
     }, context);
   }
 
-    server.registerTool("search_documents", {
-      description: "Search the unified private document catalog by title, summary, filename and indexed text. Returns stable document references and preview metadata without storage locators or source-system identifiers. Use read_document to load one selected document.",
+    server.registerTool("search_objects", {
+      description: "Search the unified private object catalog by title, summary, filename and indexed text. Returns stable object references and preview metadata without blob locators or source-system identifiers. Use read_object to load one selected object.",
       inputSchema: z.object({
         query: z.string().trim().min(1).max(500),
-        document_kind: z.enum(["knowledge", "record", "asset"]).optional(),
+        object_kind: z.enum(["page", "record", "asset"]).optional(),
         include_retired: z.boolean().default(false),
         cursor: z.string().min(1).max(4096).optional(),
         limit: z.number().int().min(1).max(100).default(30),
       }).strict(),
       annotations: { readOnlyHint: true },
-    }, async ({ query, document_kind, include_retired, cursor, limit }) => {
-      const result = await documents.documentCatalog.search(query, {
-        ...(document_kind ? { document_kind } : {}),
+    }, async ({ query, object_kind, include_retired, cursor, limit }) => {
+      const result = await objects.objectCatalog.search(query, {
+        ...(object_kind ? { object_kind } : {}),
         include_retired,
         ...(cursor ? { cursor } : {}),
         limit,
       });
       return jsonObjectContent({
-        documents: result.documents.map(documentCatalogSummary),
+        objects: result.objects.map(objectCatalogSummary),
         next_cursor: result.next_cursor,
         has_more: result.has_more,
       });
     });
 
-    server.registerTool("read_document", {
-      description: "Read one private document by stable UUID. Knowledge and source documents return current Markdown and hypermedia links; assets return metadata and a short-lived checksum-bound download request. Storage keys are never exposed.",
-      inputSchema: z.object({ document_id: z.string().uuid() }).strict(),
+    server.registerTool("read_object", {
+      description: "Read one private object by stable UUID. Pages and records return current Markdown and hypermedia links; assets return metadata and a short-lived checksum-bound download request. Blob keys are never exposed.",
+      inputSchema: z.object({ object_id: z.string().uuid() }).strict(),
       annotations: { readOnlyHint: true },
-    }, async ({ document_id }) => {
-      const catalog = await documents.documentCatalog.get(document_id);
+    }, async ({ object_id }) => {
+      const catalog = await objects.objectCatalog.get(object_id);
       if (!catalog) return jsonContent(null);
-      if (catalog.document_kind === "knowledge") {
-        const document = await documents.knowledgeDocuments.get(document_id);
-        if (!document) return jsonContent(null);
+      if (catalog.object_kind === "page") {
+        const page = await objects.pages.get(object_id);
+        if (!page) return jsonContent(null);
         return jsonContent({
-          ...documentCatalogSummary(catalog),
-          revision_number: document.revision_number,
-          body_markdown: document.body_markdown,
-          hypermedia: await hypermedia(document.document_id, document.current_revision_id),
+          ...objectCatalogSummary(catalog),
+          revision_number: page.revision_number,
+          body_markdown: page.body_markdown,
+          hypermedia: await hypermedia(page.object_id, page.current_revision_id),
         });
       }
-      if (catalog.document_kind === "record") {
-        const record = await recordDocuments?.get(document_id);
+      if (catalog.object_kind === "record") {
+        const record = await recordObjects?.get(object_id);
         if (!record) return jsonContent(null);
         return jsonContent({
-          ...documentCatalogSummary(catalog),
+          ...objectCatalogSummary(catalog),
           revision_number: record.revision_number,
           body_markdown: record.body_markdown,
-          hypermedia: await hypermedia(record.document_id, record.current_revision_id),
+          hypermedia: await hypermedia(record.object_id, record.current_revision_id),
         });
       }
-      const asset = await documents.documentAssets.get(document_id, { include_deleted: true });
+      const asset = await objects.assets.get(object_id, { include_deleted: true });
       if (!asset) return jsonContent(null);
-      const capability = createAssetCapability("download", document_id, context);
+      const capability = createAssetCapability("download", object_id, context);
       return jsonContent({
-        ...documentCatalogSummary(catalog),
+        ...objectCatalogSummary(catalog),
         size_bytes: asset.size_bytes,
         content_hash: asset.content_hash,
         width: asset.width,
@@ -228,113 +228,114 @@ export async function createMcpServer(
         duration_seconds: asset.duration_seconds,
         download: {
           method: "GET",
-          url: `${config.APP_ORIGIN}/api/mcp/assets/${encodeURIComponent(document_id)}/content`,
+          url: `${config.APP_ORIGIN}/api/mcp/assets/${encodeURIComponent(object_id)}/content`,
           headers: { "x-context-use-download-token": capability.token },
           expires_at: capability.expiresAt,
         },
       });
     });
 
-    server.registerTool("create_document", {
-      description: "Create a private Markdown knowledge document with a stable UUID and no caller-selected path. Requires a current knowledge_session_receipt from begin_knowledge_session. The summary is used in search and link previews.",
-      inputSchema: createKnowledgeDocumentSchema.extend(mutationReceiptSchemas).strict(),
+    server.registerTool("create_page", {
+      description: "Create a private Markdown page with a stable object UUID and no caller-selected path. Requires a current knowledge_session_receipt from begin_knowledge_session. The summary is used in search and link previews.",
+      inputSchema: createPageSchema.extend(mutationReceiptSchemas).strict(),
       annotations: { destructiveHint: false },
     }, async ({ knowledge_session_receipt, ...input }) => {
       if (!await hasCurrentGuidance(knowledge_session_receipt)) {
-        return documentGuidanceRequired("create_document");
+        return pageGuidanceRequired("create_page");
       }
-      const document = await documents.knowledgeDocuments.create(input, actor);
+      const page = await objects.pages.create(input, actor);
       return jsonContent({
-        document_id: document.document_id,
-        current_revision_id: document.current_revision_id,
-        revision_number: document.revision_number,
-        title: document.title,
-        summary: document.summary,
-        body_markdown: document.body_markdown,
-        reference: `context-use://document/${document.document_id}`,
+        object_id: page.object_id,
+        current_revision_id: page.current_revision_id,
+        revision_number: page.revision_number,
+        title: page.title,
+        summary: page.summary,
+        body_markdown: page.body_markdown,
+        reference: `context-use://object/${page.object_id}`,
       });
     });
 
-    server.registerTool("update_document", {
-      description: "Create a new immutable revision of an active knowledge document by stable UUID. Read it first and pass expected_revision_number for optimistic concurrency.",
-      inputSchema: updateKnowledgeDocumentSchema.extend({
-        document_id: z.string().uuid(),
+    server.registerTool("update_page", {
+      description: "Create a new immutable revision of an active page by stable object UUID. Read it first and pass expected_revision_number for optimistic concurrency.",
+      inputSchema: updatePageSchema.extend({
+        object_id: z.string().uuid(),
         ...mutationReceiptSchemas,
       }).strict(),
       annotations: { destructiveHint: false },
     }, async ({
-      document_id,
+      object_id,
       knowledge_session_receipt,
       ...input
     }) => {
-      const existing = await documents.knowledgeDocuments.get(document_id);
-      if (!existing || existing.archived_at) return unknownDocument(document_id, "update_document");
+      const existing = await objects.pages.get(object_id);
+      if (!existing || existing.archived_at) return unknownObject(object_id, "update_page");
       if (!await hasCurrentGuidance(knowledge_session_receipt)) {
-        return documentGuidanceRequired("update_document");
+        return pageGuidanceRequired("update_page");
       }
-      const updated = await documents.knowledgeDocuments.update(document_id, input, actor);
-      if (!updated) return unknownDocument(document_id, "update_document");
+      const updated = await objects.pages.update(object_id, input, actor);
+      if (!updated) return unknownObject(object_id, "update_page");
       return jsonContent({
-        document_id: updated.document_id,
+        object_id: updated.object_id,
         current_revision_id: updated.current_revision_id,
         revision_number: updated.revision_number,
         title: updated.title,
         summary: updated.summary,
         body_markdown: updated.body_markdown,
-        reference: `context-use://document/${updated.document_id}`,
+        reference: `context-use://object/${updated.object_id}`,
       });
     });
 
-    server.registerTool("archive_document", {
-      description: "Archive one unpublished knowledge document by stable UUID using optimistic concurrency. Requires a current knowledge_session_receipt from begin_knowledge_session.",
-      inputSchema: archiveKnowledgeDocumentSchema.extend({
-        document_id: z.string().uuid(),
+    server.registerTool("archive_page", {
+      description: "Archive one unpublished page by stable object UUID using optimistic concurrency. Requires a current knowledge_session_receipt from begin_knowledge_session.",
+      inputSchema: archivePageSchema.extend({
+        object_id: z.string().uuid(),
         ...mutationReceiptSchemas,
       }).strict(),
       annotations: { destructiveHint: true },
-    }, async ({ document_id, knowledge_session_receipt, ...input }) => {
-      const existing = await documents.knowledgeDocuments.get(document_id);
-      if (!existing) return unknownDocument(document_id, "archive_document");
+    }, async ({ object_id, knowledge_session_receipt, ...input }) => {
+      const existing = await objects.pages.get(object_id);
+      if (!existing) return unknownObject(object_id, "archive_page");
       if (!await hasCurrentGuidance(knowledge_session_receipt)) {
-        return documentGuidanceRequired("archive_document");
+        return pageGuidanceRequired("archive_page");
       }
-      const archived = await documents.knowledgeDocuments.archive(document_id, input, actor);
+      const archived = await objects.pages.archive(object_id, input, actor);
       return archived ? jsonContent({
-        document_id: archived.document_id,
+        object_id: archived.object_id,
         current_revision_id: archived.current_revision_id,
         revision_number: archived.revision_number,
         archived_at: archived.archived_at,
-        reference: `context-use://document/${archived.document_id}`,
-      }) : unknownDocument(document_id, "archive_document");
+        reference: `context-use://object/${archived.object_id}`,
+      }) : unknownObject(object_id, "archive_page");
     });
 
-    server.registerTool("create_document_asset_upload", {
-      description: "Create a checksum-bound private asset document with a stable UUID. PUT the exact raw bytes to the returned URL with every returned header before expires_at.",
-      inputSchema: createDocumentAssetSchema.extend(mutationReceiptSchemas).strict(),
+    server.registerTool("create_asset_upload", {
+      description: "Create a checksum-bound private asset with a stable object UUID. PUT the exact raw bytes to the returned URL with every returned header before expires_at.",
+      inputSchema: createAssetSchema.extend(mutationReceiptSchemas).strict(),
       annotations: { destructiveHint: false },
     }, async ({ knowledge_session_receipt, ...input }) => {
       if (!await hasCurrentGuidance(knowledge_session_receipt)) {
-        return documentGuidanceRequired("create_document_asset_upload");
+        return pageGuidanceRequired("create_asset_upload");
       }
-      const created = await documents.documentAssets.create(input);
-      const documentId = created.document.document_id;
-      const capability = createAssetCapability("upload", documentId, context);
-      const reference = `context-use://document/${documentId}`;
-      const markdownAlt = created.document.filename.replace(/[\[\]\r\n]+/g, " ")
+      const created = await objects.assets.create(input);
+      const objectId = created.object.object_id;
+      const { object_id: _objectId, ...asset } = created.object;
+      const capability = createAssetCapability("upload", objectId, context);
+      const reference = `context-use://object/${objectId}`;
+      const markdownAlt = created.object.filename.replace(/[\[\]\r\n]+/g, " ")
         .replace(/\s+/g, " ").trim() || "Image";
       const imageMarkdown = `![${markdownAlt}](${reference})`;
       return jsonContent({
-        document: created.document,
+        object: { object_id: objectId, ...asset },
         reference,
-        ...(/^image\/(?:png|jpeg|gif|webp|avif)(?:;|$)/i.test(created.document.content_type)
+        ...(/^image\/(?:png|jpeg|gif|webp|avif)(?:;|$)/i.test(created.object.content_type)
           ? { page_markdown: { default: imageMarkdown, formatted_example: `${imageMarkdown}{size=medium align=center shape=auto}` } }
           : {}),
         upload: {
           method: "PUT",
-          url: `${config.APP_ORIGIN}/api/mcp/assets/${encodeURIComponent(documentId)}/content`,
+          url: `${config.APP_ORIGIN}/api/mcp/assets/${encodeURIComponent(objectId)}/content`,
           headers: {
-            "content-type": created.document.content_type,
-            "content-length": created.document.size_bytes,
+            "content-type": created.object.content_type,
+            "content-length": created.object.size_bytes,
             "x-context-use-upload-token": capability.token,
           },
           expires_at: capability.expiresAt,
@@ -342,17 +343,17 @@ export async function createMcpServer(
       });
     });
 
-    server.registerTool("archive_document_asset", {
-      description: "Archive one private asset document by stable UUID. Published assets and assets referenced by active knowledge are rejected.",
-      inputSchema: archiveDocumentAssetSchema.extend(mutationReceiptSchemas).strict(),
+    server.registerTool("archive_asset", {
+      description: "Archive one private asset by stable object UUID. Published assets and assets referenced by active pages are rejected.",
+      inputSchema: archiveAssetSchema.extend(mutationReceiptSchemas).strict(),
       annotations: { destructiveHint: true },
-    }, async ({ asset_id, knowledge_session_receipt }) => {
-      const asset = await documents.documentAssets.get(asset_id);
+    }, async ({ object_id, knowledge_session_receipt }) => {
+      const asset = await objects.assets.get(object_id);
       if (!asset) return jsonContent(null);
       if (!await hasCurrentGuidance(knowledge_session_receipt)) {
-        return documentGuidanceRequired("archive_document_asset");
+        return pageGuidanceRequired("archive_asset");
       }
-      return jsonContent(await documents.documentAssets.archive({ asset_id }));
+      return jsonContent(await objects.assets.archive({ object_id }));
     });
 
   if (sourceRecords) {
@@ -376,18 +377,18 @@ export async function createMcpServer(
     });
   }
 
-  if (recordDocuments) {
+  if (recordObjects) {
     server.registerTool("search_records", {
-      description: "Search connector-controlled private records by full text; every normalized query term must occur somewhere in the record. Returns ranked metadata and canonical document references only; use read_record to load one exact Markdown body. Records are evidence owned by their connector, cannot be edited by agents, and cannot be published.",
+      description: "Search connector-controlled private records by full text; every normalized query term must occur somewhere in the record. Returns ranked metadata and canonical object references only; use read_record to load one exact Markdown body. Records are evidence owned by their connector, cannot be edited by agents, and cannot be published.",
       inputSchema: z.object({
         query: z.string().min(1).max(500),
         limit: z.number().int().min(1).max(100).default(30),
       }).strict(),
       annotations: { readOnlyHint: true },
     }, async ({ query, limit }) => {
-      const records = await recordDocuments.searchMetadata(query, { limit });
+      const records = await recordObjects.searchMetadata(query, { limit });
       return jsonContent(records.map((record) => ({
-        document_id: record.document_id,
+        object_id: record.object_id,
         current_revision_id: record.current_revision_id,
         reference: record.reference,
         revision_number: record.revision_number,
@@ -404,14 +405,14 @@ export async function createMcpServer(
     });
 
     server.registerTool("read_record", {
-      description: "Read one connector-controlled private record by its stable document ID. Returns its exact current Markdown (or a deletion tombstone), canonical document reference, indexed outbound links, and bounded live backlinks without exposing storage keys. backlinks_has_more only reports pagination; backlinks_complete is false while any active current page or record revision remains unindexed, so undiscovered backlinks may still exist. Records cannot be edited by agents or published.",
-      inputSchema: z.object({ document_id: z.string().uuid() }).strict(),
+      description: "Read one connector-controlled private record by its stable object ID. Returns its exact current Markdown (or a deletion tombstone), canonical object reference, indexed outbound links, and bounded live backlinks without exposing blob keys. backlinks_has_more only reports pagination; backlinks_complete is false while any active current page or record revision remains unindexed, so undiscovered backlinks may still exist. Records cannot be edited by agents or published.",
+      inputSchema: z.object({ object_id: z.string().uuid() }).strict(),
       annotations: { readOnlyHint: true },
-    }, async ({ document_id }) => {
-      const record = await recordDocuments.get(document_id);
+    }, async ({ object_id }) => {
+      const record = await recordObjects.get(object_id);
       if (!record) return jsonContent(null);
       return jsonContent({
-        document_id: record.document_id,
+        object_id: record.object_id,
         current_revision_id: record.current_revision_id,
         reference: record.reference,
         revision_number: record.revision_number,
@@ -425,7 +426,7 @@ export async function createMcpServer(
         created_at: record.created_at,
         updated_at: record.updated_at,
         body_markdown: record.body_markdown,
-        hypermedia: await hypermedia(record.document_id, record.current_revision_id),
+        hypermedia: await hypermedia(record.object_id, record.current_revision_id),
       });
     });
   }
@@ -444,7 +445,7 @@ export async function createMcpServer(
         "The workspace has no active global knowledge-maintenance guide, so mutations are disabled.",
       ].join("\n\n"), true);
     }
-    const revision = await documents.knowledgeDocuments.revision(
+    const revision = await objects.pages.revision(
       metadata.document_id,
       metadata.revision_number,
     );
@@ -455,22 +456,22 @@ export async function createMcpServer(
       ].join("\n\n"), true);
     }
     return jsonObjectContent({
-      document_id: metadata.document_id,
+      object_id: metadata.document_id,
       revision_id: metadata.current_revision_id,
       revision_number: metadata.revision_number,
       title: metadata.title,
       summary: metadata.summary,
       body_markdown: revision.body_markdown,
       knowledge_session_receipt: createKnowledgeGuideReceipt({
-        documentId: metadata.document_id,
+        pageId: metadata.document_id,
         revisionId: metadata.current_revision_id,
       }, context),
     });
   });
 
 
-  server.registerTool("list_document_changes", {
-      description: "List authored knowledge-document changes after an opaque cursor. Rows identify stable documents and revisions without bodies or storage locators. Paginate one fixed window with next_page_token, then persist next_cursor only after the complete window succeeds.",
+  server.registerTool("list_page_changes", {
+      description: "List authored page changes after an opaque cursor. Rows identify stable objects and revisions without bodies or blob locators. Paginate one fixed window with next_page_token, then persist next_cursor only after the complete window succeeds.",
       inputSchema: z.object({
         cursor: z.string().regex(/^cu-page-changes-v1\.[0-9a-z]+$/).optional(),
         page_token: z.string().regex(/^cu-page-scan-v1\.[0-9a-z]+\.[0-9a-z]+\.[0-9a-z]+$/).optional(),
@@ -482,7 +483,7 @@ export async function createMcpServer(
       }),
       annotations: { readOnlyHint: true },
     }, async ({ cursor, page_token, limit }) => {
-      const batch = await documents.knowledgeDocuments.changesSince({
+      const batch = await objects.pages.changesSince({
         ...(cursor ? { cursor } : {}),
         ...(page_token ? { pageToken: page_token } : {}),
         limit,
@@ -490,10 +491,10 @@ export async function createMcpServer(
       return jsonObjectContent(batch);
     });
 
-    server.registerTool("compare_document_revisions", {
-      description: "Compare two immutable authored-document revisions from a list_document_changes row. Returns title/summary changes and compact Markdown fragments without storage metadata.",
+    server.registerTool("compare_page_revisions", {
+      description: "Compare two immutable page revisions from a list_page_changes row. Returns title/summary changes and compact Markdown fragments without blob metadata.",
       inputSchema: z.object({
-        document_id: z.string().uuid(),
+        object_id: z.string().uuid(),
         previous_revision_number: z.number().int().positive().nullable(),
         revision_number: z.number().int().positive(),
       }).strict().superRefine((value, context) => {
@@ -506,22 +507,22 @@ export async function createMcpServer(
         }
       }),
       annotations: { readOnlyHint: true },
-    }, async ({ document_id, previous_revision_number, revision_number }) => {
+    }, async ({ object_id, previous_revision_number, revision_number }) => {
       const [requestedPrevious, current] = await Promise.all([
         previous_revision_number === null
           ? Promise.resolve(null)
-          : documents.knowledgeDocuments.revision(document_id, previous_revision_number),
-        documents.knowledgeDocuments.revision(document_id, revision_number),
+          : objects.pages.revision(object_id, previous_revision_number),
+        objects.pages.revision(object_id, revision_number),
       ]);
       if (!current) {
         return textContent([
-          "DOCUMENT_DELTA_UNAVAILABLE",
-          `Document ${document_id} revision ${revision_number} is not retained; no safe comparison was produced.`,
+          "PAGE_DELTA_UNAVAILABLE",
+          `Page ${object_id} revision ${revision_number} is not retained; no safe comparison was produced.`,
         ].join("\n\n"), true);
       }
       const retainedPrevious = previous_revision_number !== null && !requestedPrevious
-        ? await documents.knowledgeDocuments.oldestRetainedRevisionAfter(
-          document_id,
+        ? await objects.pages.oldestRetainedRevisionAfter(
+          object_id,
           previous_revision_number,
           revision_number,
         ) ?? current
@@ -532,9 +533,9 @@ export async function createMcpServer(
         : requestedPrevious
           ? previous_revision_number
           : retainedPrevious!.revision_number;
-      const delta = await documentDelta(previous, current);
+      const delta = await pageDelta(previous, current);
       return jsonObjectContent({
-        document_id,
+        object_id,
         comparison: {
           requested_from_revision: previous_revision_number,
           actual_from_revision: actualFromRevision,
@@ -546,28 +547,31 @@ export async function createMcpServer(
       });
     });
 
-    server.registerTool("list_document_revisions", {
-      description: "List one authored document's immutable revision metadata and commit attribution by stable UUID.",
-      inputSchema: z.object({ document_id: z.string().uuid() }).strict(),
+    server.registerTool("list_page_revisions", {
+      description: "List one page's immutable revision metadata and commit attribution by stable object UUID.",
+      inputSchema: z.object({ object_id: z.string().uuid() }).strict(),
       annotations: { readOnlyHint: true },
-    }, async ({ document_id }) => {
-      const history = await documents.knowledgeDocuments.history(document_id);
-      return jsonContent(history.revisions.map(({ body_markdown: _body, ...revision }) => revision));
+    }, async ({ object_id }) => {
+      const history = await objects.pages.history(object_id);
+      return jsonContent(history.revisions.map(({ body_markdown: _body, ...revision }) => ({
+        ...revision,
+        object_id,
+      })));
     });
 
-    server.registerTool("read_document_revision", {
-      description: "Read one exact immutable authored-document revision by stable document UUID and revision number.",
+    server.registerTool("read_page_revision", {
+      description: "Read one exact immutable page revision by stable object UUID and revision number.",
       inputSchema: z.object({
-        document_id: z.string().uuid(),
+        object_id: z.string().uuid(),
         revision_number: z.number().int().positive(),
       }).strict(),
       annotations: { readOnlyHint: true },
-    }, async ({ document_id, revision_number }) => {
-      const revision = await documents.knowledgeDocuments.revision(document_id, revision_number);
+    }, async ({ object_id, revision_number }) => {
+      const revision = await objects.pages.revision(object_id, revision_number);
       if (!revision) return jsonContent(null);
       return jsonContent({
         ...revision,
-        reference: `context-use://document/${document_id}`,
+        reference: `context-use://object/${object_id}`,
       });
     });
 

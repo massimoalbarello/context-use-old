@@ -1,16 +1,16 @@
 import type {
-  PrivateDocumentCatalogFilters,
-  PrivateDocumentCatalogItem,
-  PrivateDocumentCatalogPage,
-  PrivateDocumentNeighborhood,
+  PrivateObjectCatalogFilters,
+  PrivateObjectCatalogItem,
+  PrivateObjectCatalogPage,
+  PrivateObjectNeighborhood,
 } from "@context-use/database";
 import {
-  dashboardDocumentCatalogPageSchema,
-  dashboardDocumentNeighborhoodSchema,
-  dashboardDocumentSummarySchema,
-  type DashboardDocumentCatalogPage,
-  type DashboardDocumentNeighborhood,
-  type DashboardDocumentSummary,
+  dashboardObjectCatalogPageSchema,
+  dashboardObjectNeighborhoodSchema,
+  dashboardObjectSummarySchema,
+  type DashboardObjectCatalogPage,
+  type DashboardObjectNeighborhood,
+  type DashboardObjectSummary,
 } from "@context-use/shared";
 import { z } from "zod";
 
@@ -38,7 +38,7 @@ const OptionalCatalogTypes = z.preprocess(
   (value) => typeof value === "string" && value.trim()
     ? value.split(",").map((entry) => entry.trim())
     : undefined,
-  z.array(z.enum(["knowledge", "record", "asset", "public", "archived"]))
+  z.array(z.enum(["page", "record", "asset", "public", "archived"]))
     .min(1)
     .max(5)
     .refine((entries) => new Set(entries).size === entries.length, "Types must be unique")
@@ -51,7 +51,7 @@ const catalogQuerySchema = z.object({
   limit: OptionalLimit,
   include_retired: OptionalBoolean,
   authority: z.enum(["knowledge", "source"]).optional(),
-  kind: z.enum(["knowledge", "record", "asset"]).optional(),
+  kind: z.enum(["page", "record", "asset"]).optional(),
   lifecycle: z.enum(["active", "archived", "deleted"]).optional(),
   types: OptionalCatalogTypes,
 }).strict();
@@ -63,26 +63,26 @@ const neighborhoodQuerySchema = z.object({
   limit: OptionalLimit,
 }).strict();
 
-export type DashboardDocumentCatalogRequest = {
+export type DashboardObjectCatalogRequest = {
   query: string | null;
-  options: PrivateDocumentCatalogFilters & {
+  options: PrivateObjectCatalogFilters & {
     cursor?: string;
     limit?: number;
     include_retired?: boolean;
   };
 };
 
-export type DashboardDocumentNeighborhoodRequest = {
+export type DashboardObjectNeighborhoodRequest = {
   requested_revision_id?: string;
-  outbound_after_document_id?: string;
+  outbound_after_object_id?: string;
   outbound_limit?: number;
-  backlink_after_document_id?: string;
+  backlink_after_object_id?: string;
   backlink_limit?: number;
 };
 
-export function parseDashboardDocumentCatalogQuery(
+export function parseDashboardObjectCatalogQuery(
   input: Record<string, string | undefined>,
-): DashboardDocumentCatalogRequest {
+): DashboardObjectCatalogRequest {
   const parsed = catalogQuerySchema.parse(input);
   return {
     query: parsed.q ?? null,
@@ -93,24 +93,24 @@ export function parseDashboardDocumentCatalogQuery(
         ? {}
         : { include_retired: parsed.include_retired }),
       ...(parsed.authority ? { authority: parsed.authority } : {}),
-      ...(parsed.kind ? { document_kind: parsed.kind } : {}),
+      ...(parsed.kind ? { object_kind: parsed.kind } : {}),
       ...(parsed.lifecycle ? { lifecycle: parsed.lifecycle } : {}),
       ...(parsed.types ? { catalog_types: parsed.types } : {}),
     },
   };
 }
 
-export function parseDashboardDocumentNeighborhoodQuery(
+export function parseDashboardObjectNeighborhoodQuery(
   input: Record<string, string | undefined>,
-): DashboardDocumentNeighborhoodRequest {
+): DashboardObjectNeighborhoodRequest {
   const parsed = neighborhoodQuerySchema.parse(input);
   return {
     ...(parsed.revision_id ? { requested_revision_id: parsed.revision_id } : {}),
     ...(parsed.outbound_cursor
-      ? { outbound_after_document_id: parsed.outbound_cursor }
+      ? { outbound_after_object_id: parsed.outbound_cursor }
       : {}),
     ...(parsed.backlink_cursor
-      ? { backlink_after_document_id: parsed.backlink_cursor }
+      ? { backlink_after_object_id: parsed.backlink_cursor }
       : {}),
     ...(parsed.limit
       ? { outbound_limit: parsed.limit, backlink_limit: parsed.limit }
@@ -118,55 +118,55 @@ export function parseDashboardDocumentNeighborhoodQuery(
   };
 }
 
-export function dashboardDocumentSummary(
-  document: PrivateDocumentCatalogItem,
-): DashboardDocumentSummary {
-  return dashboardDocumentSummarySchema.parse({
-    document_id: document.document_id,
-    document_kind: document.document_kind,
-    authority: document.authority,
-    representation: document.representation,
-    lifecycle: document.lifecycle,
-    current_revision_id: document.current_revision_id,
-    title: document.title,
-    summary: document.summary,
-    filename: document.filename,
-    content_type: document.content_type,
-    integration: document.integration,
-    source_model: document.source_model,
-    operational_roles: document.operational_roles,
-    updated_at: document.updated_at,
+export function dashboardObjectSummary(
+  object: PrivateObjectCatalogItem,
+): DashboardObjectSummary {
+  return dashboardObjectSummarySchema.parse({
+    object_id: object.object_id,
+    object_kind: object.object_kind,
+    authority: object.authority,
+    representation: object.representation,
+    lifecycle: object.lifecycle,
+    current_revision_id: object.current_revision_id,
+    title: object.title,
+    summary: object.summary,
+    filename: object.filename,
+    content_type: object.content_type,
+    integration: object.integration,
+    source_model: object.source_model,
+    operational_roles: object.operational_roles,
+    updated_at: object.updated_at,
   });
 }
 
-export function dashboardDocumentCatalogPage(
-  page: PrivateDocumentCatalogPage,
-): DashboardDocumentCatalogPage {
-  return dashboardDocumentCatalogPageSchema.parse({
-    documents: page.documents.map(dashboardDocumentSummary),
+export function dashboardObjectCatalogPage(
+  page: PrivateObjectCatalogPage,
+): DashboardObjectCatalogPage {
+  return dashboardObjectCatalogPageSchema.parse({
+    objects: page.objects.map(dashboardObjectSummary),
     next_cursor: page.next_cursor,
     has_more: page.has_more,
   });
 }
 
-export function dashboardDocumentNeighborhood(
-  neighborhood: PrivateDocumentNeighborhood,
-): DashboardDocumentNeighborhood {
-  return dashboardDocumentNeighborhoodSchema.parse({
-    document: dashboardDocumentSummary(neighborhood.document),
+export function dashboardObjectNeighborhood(
+  neighborhood: PrivateObjectNeighborhood,
+): DashboardObjectNeighborhood {
+  return dashboardObjectNeighborhoodSchema.parse({
+    object: dashboardObjectSummary(neighborhood.object),
     outbound: {
       revision_id: neighborhood.outbound.revision_id,
       neighbors: neighborhood.outbound.neighbors.map((neighbor) => ({
-        target_document_id: neighbor.target_document_id,
+        target_object_id: neighbor.target_object_id,
         resolved: neighbor.resolved,
-        document: neighbor.document ? dashboardDocumentSummary(neighbor.document) : null,
+        object: neighbor.object ? dashboardObjectSummary(neighbor.object) : null,
       })),
       next_cursor: neighborhood.outbound.next_cursor,
       has_more: neighborhood.outbound.has_more,
       index_complete: neighborhood.outbound.index_complete,
     },
     backlinks: {
-      documents: neighborhood.backlinks.documents.map(dashboardDocumentSummary),
+      objects: neighborhood.backlinks.objects.map(dashboardObjectSummary),
       next_cursor: neighborhood.backlinks.next_cursor,
       has_more: neighborhood.backlinks.has_more,
       completeness_checked: neighborhood.backlinks.completeness_checked,

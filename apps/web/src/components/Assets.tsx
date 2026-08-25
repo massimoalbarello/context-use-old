@@ -127,7 +127,7 @@ export function AssetDetails({
     setPendingAction(action);
   };
 
-  return <main className="content-page asset-details"><header><div><span className="document-kicker">Document asset</span><h1>{asset.filename}</h1></div><span className={isPublic ? "status public" : "status"}>{isPublic ? "Public" : "Private"}</span></header>
+  return <main className="content-page asset-details"><header><div><span className="object-kicker">Asset</span><h1>{asset.filename}</h1></div><span className={isPublic ? "status public" : "status"}>{isPublic ? "Public" : "Private"}</span></header>
     {message && <p className="asset-message" role="status">{message}</p>}
     <section className="asset-card">
       {contentState === "checking" && <div className="asset-preview-state">Checking asset content…</div>}
@@ -135,7 +135,7 @@ export function AssetDetails({
       {contentState === "available" && !previewFailed && <AssetPreview asset={asset} onPreviewError={() => setPreviewFailed(true)} />}
       {contentState === "available" && previewFailed && <div className="asset-preview-state"><strong>Preview unavailable</strong><span>The content is stored correctly, but this browser could not display the format. You can still open the original file.</span></div>}
       <dl><div><dt>Type</dt><dd>{asset.content_type}</dd></div><div><dt>Size</dt><dd>{(asset.size_bytes / 1024).toFixed(1)} KB</dd></div><div><dt>{contentState === "available" ? "Uploaded" : "Record created"}</dt><dd>{new Date(asset.created_at).toLocaleString()}</dd></div></dl>
-      <div className="asset-reference"><span>Private reference</span><code>context-use://document/{asset.id}</code></div>
+      <div className="asset-reference"><span>Private reference</span><code>context-use://object/{asset.id}</code></div>
       {isPublic && publicUrl && <div className="asset-reference public"><span>Public URL</span><div><code>{publicUrl}</code><button onClick={copyPublicUrl}>Copy</button></div></div>}
       <div className="button-row">
         {contentState === "available" && <a className="button" href={`/api/dashboard/assets/${asset.id}/content`} target="_blank" rel="noreferrer">Open original</a>}

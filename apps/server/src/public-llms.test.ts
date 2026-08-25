@@ -43,7 +43,7 @@ describe("public LLM context", () => {
       "",
       "## Discovery",
       "",
-      "- [Public entrypoint](https://massimo.example/p/): Open the configured starting document.",
+      "- [Public entrypoint](https://massimo.example/p/): Open the configured starting page.",
       "- [XML sitemap](https://massimo.example/sitemap.xml): Canonical HTML URLs for every published page.",
       "",
       "## Complete public context",

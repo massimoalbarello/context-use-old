@@ -1,4 +1,4 @@
-import type { SourceRecordDocument } from "@context-use/database";
+import type { SourceRecord } from "@context-use/database";
 
 export type DashboardSourceRecord = {
   id: string;
@@ -12,11 +12,11 @@ export type DashboardSourceRecord = {
 };
 
 export function dashboardSourceRecord(
-  record: SourceRecordDocument,
+  record: SourceRecord,
   renderedHtml: string,
 ): DashboardSourceRecord {
   return {
-    id: record.document_id,
+    id: record.object_id,
     current_version_id: record.current_revision_id,
     version_number: record.revision_number,
     integration: record.integration,

@@ -57,7 +57,7 @@ describe("publication dashboard boundary", () => {
       id: intentId,
       action: "publish",
       target_kind: "page",
-      target_document_id: documentId,
+      target_object_id: documentId,
       expected_revision_id: revisionId,
       candidate_public_id: publicId,
       expires_at: expiresAt,
@@ -66,7 +66,7 @@ describe("publication dashboard boundary", () => {
     const intent = await new PublicationRepository(pool).begin({
       action: "publish",
       target_kind: "page",
-      target_document_id: documentId,
+      target_object_id: documentId,
       expected_revision_id: revisionId,
     }, { ownerUserId: "context-use-owner", sessionId: "session-1" });
 
@@ -91,7 +91,7 @@ describe("publication dashboard boundary", () => {
       id: intentId,
       action: "unpublish",
       target_kind: "asset",
-      target_document_id: documentId,
+      target_object_id: documentId,
       expected_revision_id: null,
       candidate_public_id: null,
       expires_at: new Date(),
@@ -101,7 +101,7 @@ describe("publication dashboard boundary", () => {
     await publications.begin({
       action: "unpublish",
       target_kind: "asset",
-      target_document_id: documentId,
+      target_object_id: documentId,
     }, { ownerUserId: "context-use-owner", sessionId: "session-2" });
     await publications.cancel(intentId, {
       ownerUserId: "context-use-owner",
@@ -120,7 +120,7 @@ describe("publication dashboard boundary", () => {
       id: intentId,
       action: "publish",
       target_kind: "asset",
-      target_document_id: documentId,
+      target_object_id: documentId,
       expected_revision_id: null,
       candidate_public_id: publicId,
       expires_at: new Date(),
@@ -130,7 +130,7 @@ describe("publication dashboard boundary", () => {
     const input = {
       action: "publish" as const,
       target_kind: "asset" as const,
-      target_document_id: documentId,
+      target_object_id: documentId,
     };
     const principal = { ownerUserId: "context-use-owner", sessionId: "retry-session" };
 
@@ -181,7 +181,7 @@ describe("publication storage boundary", () => {
       projected_target_public_ids: [publicId, linkedPublicId].sort(),
       projection_receipt_hash: hash("b"),
       target_projection: [{
-        target_document_id: documentId,
+        target_object_id: documentId,
         outcome: "self",
         public_id: publicId,
         public_target_kind: "page",
@@ -194,7 +194,13 @@ describe("publication storage boundary", () => {
       body_object_key: target.body_object_key,
       body_size_bytes: null,
       body_content_hash: null,
-      authorization: target,
+      authorization: {
+        ...target,
+        target_projection: target.target_projection.map(({ target_object_id, ...projection }) => ({
+          ...projection,
+          target_document_id: target_object_id,
+        })),
+      },
     };
     const { calls, pool } = recordingPool([row]);
     const storage = new StoragePublicationRepository(pool);

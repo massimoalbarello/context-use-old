@@ -1,19 +1,19 @@
-import type { DocumentAssetRepository } from "@context-use/database";
+import type { AssetRepository } from "@context-use/database";
 import { z } from "zod";
 import { assetContentResponse } from "./asset-content.ts";
 import { config } from "./config.ts";
 import { verifyAssetCapability } from "./mcp-asset-capability.ts";
 import { activeMcpLineage } from "./mcp-auth-client.ts";
 import { requestMatchesOrigin, securityHeaders } from "./security.ts";
-import type { ObjectStorage } from "./storage.ts";
+import type { BlobStorage } from "./storage.ts";
 
 function problem(message: string, status: number, code: string): Response {
   return Response.json({ error: code, message }, { status, headers: securityHeaders });
 }
 
 export function createMcpAssetDownloadHandler(
-  assets: DocumentAssetRepository,
-  storage: ObjectStorage,
+  assets: AssetRepository,
+  storage: BlobStorage,
   authorizeLineage = activeMcpLineage,
 ) {
   return async (request: Request, assetId: string): Promise<Response> => {
@@ -33,6 +33,6 @@ export function createMcpAssetDownloadHandler(
 
     const asset = await assets.getForStorage(z.string().uuid().parse(assetId));
     if (!asset) return problem("Asset not found", 404, "not_found");
-    return assetContentResponse(request, asset, storage, false, asset.object_key);
+    return assetContentResponse(request, asset, storage, false, asset.blob_key);
   };
 }

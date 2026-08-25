@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api.ts";
 import { confirmPublicationChange } from "../publication-auth.ts";
 import type {
-  KnowledgeDocumentPage,
+  KnowledgePage,
   PublicationPreview,
   RepublicationReview as Review,
 } from "../types.ts";
@@ -75,7 +75,7 @@ export function RepublicationReview({ review, candidateVersionNumber }: {
 }
 
 export function PublicationDialog({ page, versionNumber, publishedVersionNumber, onClose, onChanged }: {
-  page: KnowledgeDocumentPage;
+  page: KnowledgePage;
   versionNumber: number;
   publishedVersionNumber: number | undefined;
   onClose: () => void;
@@ -90,7 +90,7 @@ export function PublicationDialog({ page, versionNumber, publishedVersionNumber,
     setPreview(null);
     setConfirmed(false);
     setError("");
-    api<PublicationPreview>(`/api/dashboard/knowledge-documents/${page.id}/publication-preview`).then(setPreview).catch((cause: Error) => setError(cause.message));
+    api<PublicationPreview>(`/api/dashboard/pages/${page.id}/publication-preview`).then(setPreview).catch((cause: Error) => setError(cause.message));
   }, [page.id, versionNumber]);
 
   const canPublish = Boolean(preview && preview.version_number === page.version_number);
@@ -132,7 +132,7 @@ export function PublicationDialog({ page, versionNumber, publishedVersionNumber,
       ? <>Public URL: <a href={preview.current_public_url} target="_blank" rel="noreferrer">{preview.current_public_url}</a></>
       : "A permanent opaque public URL will be assigned after passkey confirmation."}</p>
     {preview && <section className="publication-metadata"><strong>{preview.title}</strong><p>{preview.summary}</p></section>}
-    {preview && <p className="publication-index-note">This publishes only this exact document snapshot. Linked documents keep their own independent visibility and permanent URLs.</p>}
+    {preview && <p className="publication-index-note">This publishes only this exact page snapshot. Linked objects keep their own independent visibility and permanent URLs.</p>}
     {preview?.republication && <RepublicationReview
       review={preview.republication}
       candidateVersionNumber={preview.version_number}

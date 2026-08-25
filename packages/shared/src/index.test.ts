@@ -1,34 +1,34 @@
 import { describe, expect, test } from "bun:test";
 import {
-  archiveDocumentAssetSchema,
-  archiveKnowledgeDocumentSchema,
-  createDocumentAssetSchema,
-  createKnowledgeDocumentSchema,
-  dashboardDocumentCatalogPageSchema,
-  dashboardDocumentNeighborhoodSchema,
-  dashboardDocumentSummarySchema,
+  archiveAssetSchema,
+  archivePageSchema,
+  createAssetSchema,
+  createPageSchema,
+  dashboardObjectCatalogPageSchema,
+  dashboardObjectNeighborhoodSchema,
+  dashboardObjectSummarySchema,
   PAGE_MARKDOWN_BODY_DESCRIPTION,
-  updateKnowledgeDocumentSchema,
+  updatePageSchema,
 } from "./index.ts";
 
 const pageId = "11111111-1111-4111-8111-111111111111";
 const versionId = "22222222-2222-4222-8222-222222222222";
 
 describe("strict mutation schemas", () => {
-  test("describes the safe image and video formatting contract at the document boundary", () => {
-    expect(createKnowledgeDocumentSchema.shape.body_markdown.description).toBe(PAGE_MARKDOWN_BODY_DESCRIPTION);
-    expect(updateKnowledgeDocumentSchema.shape.body_markdown.description).toContain("layout=half");
-    expect(updateKnowledgeDocumentSchema.shape.body_markdown.description).toContain("consecutive images or videos");
-    expect(createKnowledgeDocumentSchema.shape.body_markdown.description).toContain("[Label](context-use://document/<uuid>)");
-    expect(createKnowledgeDocumentSchema.shape.body_markdown.description).toContain("![Alt](context-use://document/<uuid>)");
-    expect(createKnowledgeDocumentSchema.shape.body_markdown.description).not.toContain("context-use://page/");
-    expect(createKnowledgeDocumentSchema.shape.body_markdown.description).not.toContain("context-use://asset/");
-    expect(createKnowledgeDocumentSchema.shape.body_markdown.description).toContain("shape=auto|square|portrait|landscape");
-    expect(createKnowledgeDocumentSchema.shape.body_markdown.description).toContain("Example: ![Portrait]");
+  test("describes the safe image and video formatting contract at the object boundary", () => {
+    expect(createPageSchema.shape.body_markdown.description).toBe(PAGE_MARKDOWN_BODY_DESCRIPTION);
+    expect(updatePageSchema.shape.body_markdown.description).toContain("layout=half");
+    expect(updatePageSchema.shape.body_markdown.description).toContain("consecutive images or videos");
+    expect(createPageSchema.shape.body_markdown.description).toContain("[Label](context-use://object/<uuid>)");
+    expect(createPageSchema.shape.body_markdown.description).toContain("![Alt](context-use://object/<uuid>)");
+    expect(createPageSchema.shape.body_markdown.description).not.toContain("context-use://page/");
+    expect(createPageSchema.shape.body_markdown.description).not.toContain("context-use://asset/");
+    expect(createPageSchema.shape.body_markdown.description).toContain("shape=auto|square|portrait|landscape");
+    expect(createPageSchema.shape.body_markdown.description).toContain("Example: ![Portrait]");
   });
 
-  test("document asset uploads bind metadata to an exact checksum and size", () => {
-    expect(createDocumentAssetSchema.safeParse({
+  test("asset uploads bind metadata to an exact checksum and size", () => {
+    expect(createAssetSchema.safeParse({
       filename: "site-photo.jpg",
       content_type: "image/jpeg",
       size_bytes: 123,
@@ -36,7 +36,7 @@ describe("strict mutation schemas", () => {
       width: 800,
       height: 600,
     }).success).toBe(true);
-    expect(createDocumentAssetSchema.safeParse({
+    expect(createAssetSchema.safeParse({
       filename: "site-photo.jpg",
       content_type: "image/jpeg",
       size_bytes: 123,
@@ -45,61 +45,61 @@ describe("strict mutation schemas", () => {
   });
 
   test("asset archival accepts only a stable asset identifier", () => {
-    expect(archiveDocumentAssetSchema.safeParse({ asset_id: pageId }).success).toBe(true);
-    expect(archiveDocumentAssetSchema.safeParse({
-      asset_id: pageId,
+    expect(archiveAssetSchema.safeParse({ object_id: pageId }).success).toBe(true);
+    expect(archiveAssetSchema.safeParse({
+      object_id: pageId,
       unexpected_field: true,
     }).success).toBe(false);
   });
 
-  test("knowledge document writes are canonical and reject publication fields", () => {
-    expect(Object.keys(createKnowledgeDocumentSchema.shape).sort()).toEqual([
+  test("knowledge page writes are canonical and reject publication fields", () => {
+    expect(Object.keys(createPageSchema.shape).sort()).toEqual([
       "body_markdown", "commit_message", "summary", "title",
     ]);
-    expect(Object.keys(updateKnowledgeDocumentSchema.shape).sort()).toEqual([
+    expect(Object.keys(updatePageSchema.shape).sort()).toEqual([
       "body_markdown", "commit_message", "expected_revision_number", "summary", "title",
     ]);
-    expect(Object.keys(archiveKnowledgeDocumentSchema.shape).sort()).toEqual([
+    expect(Object.keys(archivePageSchema.shape).sort()).toEqual([
       "commit_message", "expected_revision_number",
     ]);
     const create = {
       title: "Private note",
       summary: "A private knowledge document.",
-      body_markdown: "Linked to [evidence](context-use://document/11111111-1111-4111-8111-111111111111).",
+      body_markdown: "Linked to [evidence](context-use://object/11111111-1111-4111-8111-111111111111).",
       commit_message: "Create private note",
     };
-    expect(createKnowledgeDocumentSchema.parse(create)).toEqual(create);
-    expect(createKnowledgeDocumentSchema.shape.summary.description).toContain("document search");
-    expect(createKnowledgeDocumentSchema.shape.summary.description).not.toContain("directory");
-    expect(updateKnowledgeDocumentSchema.shape.summary.description).not.toContain("directory");
-    expect(createKnowledgeDocumentSchema.safeParse({ ...create, unexpected_field: true }).success)
+    expect(createPageSchema.parse(create)).toEqual(create);
+    expect(createPageSchema.shape.summary.description).toContain("object search");
+    expect(createPageSchema.shape.summary.description).not.toContain("directory");
+    expect(updatePageSchema.shape.summary.description).not.toContain("directory");
+    expect(createPageSchema.safeParse({ ...create, unexpected_field: true }).success)
       .toBe(false);
-    expect(createKnowledgeDocumentSchema.safeParse({ ...create, summary: "first\nsecond" }).success)
+    expect(createPageSchema.safeParse({ ...create, summary: "first\nsecond" }).success)
       .toBe(false);
 
     const update = { ...create, commit_message: "Update private note", expected_revision_number: 2 };
-    expect(updateKnowledgeDocumentSchema.parse(update)).toEqual(update);
-    expect(updateKnowledgeDocumentSchema.safeParse({ ...update, unexpected_field: true }).success)
+    expect(updatePageSchema.parse(update)).toEqual(update);
+    expect(updatePageSchema.safeParse({ ...update, unexpected_field: true }).success)
       .toBe(false);
-    expect(updateKnowledgeDocumentSchema.safeParse({ ...update, expected_revision_number: 0 }).success)
+    expect(updatePageSchema.safeParse({ ...update, expected_revision_number: 0 }).success)
       .toBe(false);
-    expect(updateKnowledgeDocumentSchema.safeParse({
+    expect(updatePageSchema.safeParse({
       ...update,
       expected_revision_number: undefined,
       expected_version_number: 2,
     }).success).toBe(false);
 
     const archive = { commit_message: "Archive private note", expected_revision_number: 2 };
-    expect(archiveKnowledgeDocumentSchema.parse(archive)).toEqual(archive);
-    expect(archiveKnowledgeDocumentSchema.safeParse({ ...archive, unexpected_field: true }).success)
+    expect(archivePageSchema.parse(archive)).toEqual(archive);
+    expect(archivePageSchema.safeParse({ ...archive, unexpected_field: true }).success)
       .toBe(false);
   });
 
-  test("document asset writes accept only bounded canonical metadata", () => {
-    expect(Object.keys(createDocumentAssetSchema.shape).sort()).toEqual([
+  test("asset writes accept only bounded canonical metadata", () => {
+    expect(Object.keys(createAssetSchema.shape).sort()).toEqual([
       "content_type", "duration_seconds", "filename", "height", "sha256", "size_bytes", "width",
     ]);
-    expect(Object.keys(archiveDocumentAssetSchema.shape)).toEqual(["asset_id"]);
+    expect(Object.keys(archiveAssetSchema.shape)).toEqual(["object_id"]);
     const create = {
       filename: "site-photo.jpg",
       content_type: "image/jpeg",
@@ -109,31 +109,31 @@ describe("strict mutation schemas", () => {
       height: 600,
       duration_seconds: 0,
     };
-    expect(createDocumentAssetSchema.parse(create)).toEqual(create);
-    expect(createDocumentAssetSchema.safeParse({ ...create, unexpected_field: true }).success)
+    expect(createAssetSchema.parse(create)).toEqual(create);
+    expect(createAssetSchema.safeParse({ ...create, unexpected_field: true }).success)
       .toBe(false);
-    expect(createDocumentAssetSchema.safeParse({ ...create, size_bytes: 5_000_000_001 }).success)
+    expect(createAssetSchema.safeParse({ ...create, size_bytes: 5_000_000_001 }).success)
       .toBe(false);
-    expect(createDocumentAssetSchema.safeParse({ ...create, sha256: "A".repeat(64) }).success)
+    expect(createAssetSchema.safeParse({ ...create, sha256: "A".repeat(64) }).success)
       .toBe(false);
-    expect(createDocumentAssetSchema.safeParse({ ...create, filename: "../site-photo.jpg" }).success)
+    expect(createAssetSchema.safeParse({ ...create, filename: "../site-photo.jpg" }).success)
       .toBe(false);
-    expect(createDocumentAssetSchema.safeParse({ ...create, filename: "folder/site-photo.jpg" }).success)
+    expect(createAssetSchema.safeParse({ ...create, filename: "folder/site-photo.jpg" }).success)
       .toBe(false);
-    expect(createDocumentAssetSchema.safeParse({ ...create, content_type: "image/jpeg\r\nX-Leak: 1" }).success)
+    expect(createAssetSchema.safeParse({ ...create, content_type: "image/jpeg\r\nX-Leak: 1" }).success)
       .toBe(false);
 
-    expect(archiveDocumentAssetSchema.safeParse({ asset_id: pageId }).success).toBe(true);
-    expect(archiveDocumentAssetSchema.safeParse({
-      asset_id: pageId,
+    expect(archiveAssetSchema.safeParse({ object_id: pageId }).success).toBe(true);
+    expect(archiveAssetSchema.safeParse({
+      object_id: pageId,
       unexpected_field: true,
     }).success).toBe(false);
   });
 
-  test("dashboard document discovery is strict and locator-free", () => {
+  test("dashboard object discovery is strict and locator-free", () => {
     const summary = {
-      document_id: pageId,
-      document_kind: "knowledge" as const,
+      object_id: pageId,
+      object_kind: "page" as const,
       authority: "knowledge" as const,
       representation: "markdown" as const,
       lifecycle: "active" as const,
@@ -147,7 +147,7 @@ describe("strict mutation schemas", () => {
       operational_roles: ["automation_instructions" as const],
       updated_at: "2026-08-23T12:34:56.789Z",
     };
-    expect(dashboardDocumentSummarySchema.parse(summary)).toEqual(summary);
+    expect(dashboardObjectSummarySchema.parse(summary)).toEqual(summary);
     for (const forbidden of [
       "body_object_key",
       "body_content_hash",
@@ -155,32 +155,32 @@ describe("strict mutation schemas", () => {
       "connection_id",
       "public_id",
     ]) {
-      expect(dashboardDocumentSummarySchema.safeParse({ ...summary, [forbidden]: "private" }).success)
+      expect(dashboardObjectSummarySchema.safeParse({ ...summary, [forbidden]: "private" }).success)
         .toBe(false);
     }
 
-    expect(dashboardDocumentCatalogPageSchema.parse({
-      documents: [summary],
+    expect(dashboardObjectCatalogPageSchema.parse({
+      objects: [summary],
       next_cursor: "opaque-cursor",
       has_more: true,
-    }).documents[0]).toEqual(summary);
-    expect(dashboardDocumentNeighborhoodSchema.parse({
-      document: summary,
+    }).objects[0]).toEqual(summary);
+    expect(dashboardObjectNeighborhoodSchema.parse({
+      object: summary,
       outbound: {
         revision_id: versionId,
-        neighbors: [{ target_document_id: pageId, resolved: true, document: summary }],
+        neighbors: [{ target_object_id: pageId, resolved: true, object: summary }],
         next_cursor: null,
         has_more: false,
         index_complete: true,
       },
       backlinks: {
-        documents: [summary],
+        objects: [summary],
         next_cursor: null,
         has_more: false,
         completeness_checked: false,
         complete: null,
       },
-    }).outbound.neighbors[0]?.document).toEqual(summary);
+    }).outbound.neighbors[0]?.object).toEqual(summary);
   });
 
 });

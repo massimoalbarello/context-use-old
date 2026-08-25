@@ -5,7 +5,7 @@ export async function confirmPageDeletion(pageId: string): Promise<void> {
   const created = await api<{
     intent: { id: string };
     authentication_options: Parameters<typeof startAuthentication>[0]["optionsJSON"];
-  }>(`/api/dashboard/knowledge-documents/${pageId}/deletion-intents`, {
+  }>(`/api/dashboard/pages/${pageId}/deletion-intents`, {
     method: "POST",
     body: "{}",
   });

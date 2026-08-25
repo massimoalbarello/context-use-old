@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { documentDelta, markdownChanges } from "./page-delta.ts";
+import { pageDelta, markdownChanges } from "./page-delta.ts";
 
 describe("page delta", () => {
   test("isolates a one-word edit without returning unchanged paragraphs or duplicate representations", async () => {
@@ -85,8 +85,8 @@ describe("page delta", () => {
     expect(await markdownChanges(before, after)).toEqual(expected);
   });
 
-  test("compares stable document revisions from canonical metadata", async () => {
-    expect(await documentDelta({
+  test("compares stable page revisions from canonical metadata", async () => {
+    expect(await pageDelta({
       title: "Old title",
       summary: "Stable summary",
       body_markdown: "Old body\n",

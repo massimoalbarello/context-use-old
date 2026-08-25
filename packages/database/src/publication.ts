@@ -21,7 +21,7 @@ export type DashboardPublicationStatus = {
 
 type PublicationIntentBase = {
   id: string;
-  target_document_id: string;
+  target_object_id: string;
   expires_at: Date | string;
 };
 
@@ -60,10 +60,14 @@ export type PublicationProjectionOutcome =
   | "dangling";
 
 export type PublicationProjectionTarget = {
-  target_document_id: string;
+  target_object_id: string;
   outcome: PublicationProjectionOutcome;
   public_id: string | null;
   public_target_kind: "page" | "asset" | null;
+};
+
+type StoredPublicationProjectionTarget = Omit<PublicationProjectionTarget, "target_object_id"> & {
+  target_document_id: string;
 };
 
 type PublicationWriteAuthorizationBase = {
@@ -285,14 +289,14 @@ export class PublicationRepository {
     intentId: string = randomUUID(),
   ): Promise<PublicationIntent> {
     const result = await this.dashboardPool.query<PublicationIntent>(
-      `SELECT id,action,target_kind,target_document_id,expected_revision_id,
+      `SELECT id,action,target_kind,target_document_id AS target_object_id,expected_revision_id,
          candidate_public_id,expires_at
        FROM begin_publication_intent($1,$2,$3,$4,$5,$6,$7)`,
       [
         intentId,
         input.action,
         input.target_kind,
-        input.target_document_id,
+        input.target_object_id,
         "expected_revision_id" in input ? input.expected_revision_id : null,
         principal.ownerUserId,
         principal.sessionId,
@@ -370,14 +374,36 @@ export class StoragePublicationRepository {
       body_object_key: string;
       body_size_bytes: number | string | null;
       body_content_hash: string | null;
-      authorization: PublicationWriteAuthorization | null;
+      authorization: unknown;
     }>(
       `SELECT claim_token,finalized,artifact_id,body_object_key,
          body_size_bytes,body_content_hash,"authorization"
        FROM claim_publication_artifact($1,$2)`,
       [intentId, requestedClaimToken],
     );
-    return this.claimRow(result.rows[0]);
+    const row = requireRow(result.rows[0], "Publication object claim");
+    const storedAuthorization = row?.authorization as (
+      Omit<PagePublicationWriteAuthorization, "target_projection"> & {
+        target_projection: StoredPublicationProjectionTarget[];
+      }
+    ) | AssetPublicationWriteAuthorization | null;
+    if (storedAuthorization?.target_kind === "page") {
+      const { target_projection, ...authorization } = storedAuthorization;
+      return this.claimRow<PagePublicationWriteAuthorization>({
+        ...row,
+        authorization: {
+          ...authorization,
+          target_projection: target_projection.map(({ target_document_id, ...target }) => ({
+            ...target,
+            target_object_id: target_document_id,
+          })),
+        },
+      });
+    }
+    return this.claimRow<PublicationWriteAuthorization>({
+      ...row,
+      authorization: storedAuthorization,
+    });
   }
 
   async finalizeIntent(claimToken: string, receipt: PublicationArtifactReceipt): Promise<void> {

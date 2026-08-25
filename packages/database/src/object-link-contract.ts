@@ -3,8 +3,8 @@ import { parseDocument } from "htmlparser2";
 import { lexer, type Token, type Tokens } from "marked";
 
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
-const GENERIC_DOCUMENT_DESTINATION = new RegExp(
-  `^context-use://document/(${UUID})(?:#[a-z0-9][a-z0-9_-]*)?$`,
+const GENERIC_OBJECT_DESTINATION = new RegExp(
+  `^context-use://object/(${UUID})(?:#[a-z0-9][a-z0-9_-]*)?$`,
   "i",
 );
 const PRIVATE_ROUTE_WITH_ID = new RegExp(
@@ -22,10 +22,10 @@ const MAX_FORMATTING_DELIMITERS = 100_000;
 const MAX_HTML_NODES = 10_000;
 const MAX_HTML_DEPTH = 256;
 
-export class GenericDocumentLinkContractError extends Error {
+export class GenericObjectLinkContractError extends Error {
   constructor() {
-    super("Authored knowledge may use only context-use://document/<uuid> internal links");
-    this.name = "GenericDocumentLinkContractError";
+    super("Authored pages may use only context-use://object/<uuid> internal links");
+    this.name = "GenericObjectLinkContractError";
   }
 }
 
@@ -57,7 +57,7 @@ function normalizeDestination(value: string): string {
 }
 
 function genericTarget(destination: string): string | null {
-  return GENERIC_DOCUMENT_DESTINATION.exec(normalizeDestination(destination))?.[1]?.toLowerCase() ?? null;
+  return GENERIC_OBJECT_DESTINATION.exec(normalizeDestination(destination))?.[1]?.toLowerCase() ?? null;
 }
 
 function invalidInternalDestination(destination: string): boolean {
@@ -265,12 +265,12 @@ function parseContract(markdown: string): ParsedContract {
  * by the application. Code, comments and escaped examples remain inert; every
  * rendered internal link must use generic document identity.
  */
-export function assertGenericDocumentLinksOnly(markdown: string): void {
-  if (parseContract(markdown).invalid) throw new GenericDocumentLinkContractError();
+export function assertGenericObjectLinksOnly(markdown: string): void {
+  if (parseContract(markdown).invalid) throw new GenericObjectLinkContractError();
 }
 
-export function genericDocumentTargets(markdown: string): string[] {
+export function genericObjectTargets(markdown: string): string[] {
   const parsed = parseContract(markdown);
-  if (parsed.invalid) throw new GenericDocumentLinkContractError();
+  if (parsed.invalid) throw new GenericObjectLinkContractError();
   return parsed.targets;
 }

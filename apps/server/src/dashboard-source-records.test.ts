@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import type { SourceRecordDocument } from "@context-use/database";
+import type { SourceRecord } from "@context-use/database";
 import { dashboardSourceRecord } from "./dashboard-source-records.ts";
 
-const record: SourceRecordDocument = {
-  document_id: "11111111-1111-4111-8111-111111111111",
+const record: SourceRecord = {
+  object_id: "11111111-1111-4111-8111-111111111111",
   current_revision_id: "22222222-2222-4222-8222-222222222222",
-  reference: "context-use://document/11111111-1111-4111-8111-111111111111",
+  reference: "context-use://object/11111111-1111-4111-8111-111111111111",
   authority: "source",
   revision_number: 3,
   integration: "granola",
@@ -25,7 +25,7 @@ describe("dashboard source records", () => {
   test("projects a rendered read-only page without connector-private identifiers", () => {
     const response = dashboardSourceRecord(record, "<h1>Product review</h1>");
     expect(response).toEqual({
-      id: record.document_id,
+      id: record.object_id,
       current_version_id: record.current_revision_id,
       version_number: 3,
       integration: "granola",

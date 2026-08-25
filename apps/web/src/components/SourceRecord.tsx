@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { api } from "../api.ts";
 import type { SourceRecordPage } from "../types.ts";
 
-export function sourceRecordPageUrl(documentId: string): string {
-  return `/api/dashboard/source-records/${documentId}`;
+export function sourceRecordPageUrl(objectId: string): string {
+  return `/api/dashboard/source-records/${objectId}`;
 }
 
 function sourceLabel(record: SourceRecordPage): string {
@@ -16,7 +16,7 @@ export function SourceRecordContents({ record }: { record: SourceRecordPage }) {
   return <main className="editor source-record-page">
     <header className="editor-header source-record-header">
       <div>
-        <span className="document-kicker">Connected source · Read-only</span>
+        <span className="object-kicker">Connected source · Read-only</span>
         <p className="source-record-origin">{sourceLabel(record)}</p>
         <time className="page-last-edited" dateTime={new Date(record.source_updated_at).toISOString()}>
           Synced {new Intl.DateTimeFormat(undefined, {
@@ -36,7 +36,7 @@ export function SourceRecordContents({ record }: { record: SourceRecordPage }) {
   </main>;
 }
 
-export function SourceRecord({ documentId }: { documentId: string }) {
+export function SourceRecord({ objectId }: { objectId: string }) {
   const [record, setRecord] = useState<SourceRecordPage | null>(null);
   const [error, setError] = useState("");
 
@@ -44,14 +44,14 @@ export function SourceRecord({ documentId }: { documentId: string }) {
     const controller = new AbortController();
     setRecord(null);
     setError("");
-    api<SourceRecordPage>(sourceRecordPageUrl(documentId), {
+    api<SourceRecordPage>(sourceRecordPageUrl(objectId), {
       signal: controller.signal,
     }).then(setRecord).catch((caught: unknown) => {
       if (caught instanceof DOMException && caught.name === "AbortError") return;
       setError(caught instanceof Error ? caught.message : "Could not load source record");
     });
     return () => controller.abort();
-  }, [documentId]);
+  }, [objectId]);
 
   if (!record) return <main className="editor-empty">{error || "Loading source record…"}</main>;
 

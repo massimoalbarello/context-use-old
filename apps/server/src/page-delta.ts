@@ -58,7 +58,7 @@ export async function markdownChanges(
   return changes;
 }
 
-export async function documentDelta(
+export async function pageDelta(
   previous: DocumentRevisionForDelta | null,
   current: DocumentRevisionForDelta,
 ): Promise<{ metadata_changes: DocumentMetadataChange[]; markdown_changes: MarkdownChange[] }> {

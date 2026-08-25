@@ -2,8 +2,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { Client, Pool } from "pg";
 import { disposableDatabaseUrl } from "../src/disposable-database.ts";
-import { DocumentMaintenanceRepository } from "../src/document-maintenance.ts";
-import { DocumentLinkRepository } from "../src/document-links.ts";
+import { BlobMaintenanceRepository } from "../src/blob-maintenance.ts";
+import { ObjectLinkRepository } from "../src/object-links.ts";
 import { KnowledgeSettingsRepository } from "../src/knowledge-settings.ts";
 
 const adminUrl = await disposableDatabaseUrl();
@@ -189,7 +189,7 @@ describeDatabase("hypermedia document substrate", () => {
   });
 
   test("a failed revision attempt rotates behind work beyond the current batch", async () => {
-    const maintenance = new DocumentMaintenanceRepository(repositoryPool);
+    const maintenance = new BlobMaintenanceRepository(repositoryPool);
     await admin.query(
       `SELECT replace_document_links(id,'{}'::uuid[])
        FROM hypermedia_document_revisions
@@ -225,7 +225,7 @@ describeDatabase("hypermedia document substrate", () => {
   });
 
   test("backlinks follow only current, active source revisions", async () => {
-    const links = new DocumentLinkRepository(repositoryPool);
+    const links = new ObjectLinkRepository(repositoryPool);
     const target = await createPage();
     const source = await createPage();
 
@@ -313,7 +313,7 @@ describeDatabase("hypermedia document substrate", () => {
   });
 
   test("backlink completeness tracks every active current page and record revision", async () => {
-    const links = new DocumentLinkRepository(repositoryPool);
+    const links = new ObjectLinkRepository(repositoryPool);
     await admin.query(
       `UPDATE hypermedia_document_revisions revision
        SET links_indexed_at=coalesce(revision.links_indexed_at,now())

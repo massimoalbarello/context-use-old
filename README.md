@@ -21,10 +21,10 @@ those links, and so do your agents.
 
 ## Agents keep it organized
 
-Versioned instruction documents tell agents how to summarize, connect, and maintain durable
-knowledge. Agents find those instructions through search and stable links, just like every other
-hypermedia document. That's what keeps a knowledge base this size usable rather than a pile of
-notes.
+Versioned instruction pages tell agents how to summarize, connect, and maintain durable
+knowledge. Agents find those pages through object search and stable links, just like every other
+page in the knowledge graph. That's what keeps a knowledge base this size usable rather than a
+pile of notes.
 
 ## Private by default
 

@@ -1,32 +1,32 @@
 import { describe, expect, test } from "bun:test";
-import type { KnowledgeDocument, KnowledgeDocumentRevision } from "@context-use/database";
+import type { KnowledgePage, PageRevision } from "@context-use/database";
 import {
-  dashboardKnowledgeDocument,
-  dashboardKnowledgeRevision,
-  dashboardKnowledgeRevisionDelta,
+  dashboardPage,
+  dashboardPageRevision,
+  dashboardPageRevisionDelta,
   dashboardRepublicationReview,
-} from "./dashboard-knowledge-documents.ts";
+} from "./dashboard-pages.ts";
 
-const revision: KnowledgeDocumentRevision = {
-  document_id: "11111111-1111-4111-8111-111111111111",
+const revision: PageRevision = {
+  object_id: "11111111-1111-4111-8111-111111111111",
   revision_id: "22222222-2222-4222-8222-222222222222",
   revision_number: 2,
   title: "Hypermedia navigation",
   summary: "Navigation follows stable documents and their links.",
-  body_markdown: "[Related](context-use://document/33333333-3333-4333-8333-333333333333)",
+  body_markdown: "[Related](context-use://object/33333333-3333-4333-8333-333333333333)",
   commit_message: "Link related knowledge",
   actor_kind: "dashboard",
   actor_subject: "owner",
   created_at: "2026-08-23T12:00:00.000Z",
   link_contract: "generic_document_v1",
   contract_provenance: "authored",
-  target_document_ids: ["33333333-3333-4333-8333-333333333333"],
+  target_object_ids: ["33333333-3333-4333-8333-333333333333"],
 };
 
 describe("canonical dashboard knowledge responses", () => {
-  test("projects document content without private object locators", () => {
-    const document: KnowledgeDocument = {
-      document_id: revision.document_id,
+  test("projects page content without private object locators", () => {
+    const document: KnowledgePage = {
+      object_id: revision.object_id,
       current_revision_id: revision.revision_id,
       public_id: null,
       revision_number: revision.revision_number,
@@ -39,27 +39,27 @@ describe("canonical dashboard knowledge responses", () => {
       updated_at: revision.created_at,
       body_markdown: revision.body_markdown,
     };
-    const projected = dashboardKnowledgeDocument(document, "<p>Related</p>", {
+    const projected = dashboardPage(document, "<p>Related</p>", {
       published_revision_id: revision.revision_id,
       published_revision_number: revision.revision_number,
-      public_url: `https://example.test/p/${revision.document_id}`,
+      public_url: `https://example.test/p/${revision.object_id}`,
     });
     expect(projected).toMatchObject({
-      id: document.document_id,
+      id: document.object_id,
       current_version_id: document.current_revision_id,
       version_number: 2,
       rendered_html: "<p>Related</p>",
       published_version_number: 2,
-      public_url: `https://example.test/p/${revision.document_id}`,
+      public_url: `https://example.test/p/${revision.object_id}`,
     });
     expect(projected).not.toHaveProperty("body_object_key");
     expect(projected).not.toHaveProperty("canonical_published");
   });
 
   test("projects revisions and computes title, summary and Markdown changes only", async () => {
-    expect(dashboardKnowledgeRevision(revision)).toEqual({
+    expect(dashboardPageRevision(revision)).toEqual({
       id: revision.revision_id,
-      page_id: revision.document_id,
+      page_id: revision.object_id,
       version_number: revision.revision_number,
       title: revision.title,
       summary: revision.summary,
@@ -69,7 +69,7 @@ describe("canonical dashboard knowledge responses", () => {
       actor_subject: revision.actor_subject,
       created_at: revision.created_at,
     });
-    const delta = await dashboardKnowledgeRevisionDelta({
+    const delta = await dashboardPageRevisionDelta({
       ...revision,
       revision_number: 1,
       revision_id: "44444444-4444-4444-8444-444444444444",

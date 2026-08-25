@@ -27,7 +27,7 @@ describe("source record page", () => {
 
   test("starts with a page-shaped loading state", () => {
     const html = renderToStaticMarkup(createElement(SourceRecord, {
-      documentId: "11111111-1111-4111-8111-111111111111",
+      objectId: "11111111-1111-4111-8111-111111111111",
     }));
     expect(html).toContain("Loading source record");
     expect(html).not.toContain("Private reference");

@@ -47,7 +47,7 @@ The mark is `ALTER DATABASE … SET "context_use.disposable_test_database" = 'tr
 The local stack above is therefore never eligible: these suites would delete its owner identity
 while leaving related authentication state behind.
 
-The local stack stores document and asset objects in MinIO through the same S3 client used in
+The local stack stores immutable blobs for pages, records, and assets in MinIO through the same S3 client used in
 production. `bun run local reset` removes that object-store volume together with the database
 knowledge state.
 
@@ -56,8 +56,8 @@ knowledge state.
 New installations receive the Git-versioned default corpus during the isolated deployment
 preparation step. On later deployments, that same stopped-consumer boundary compares the configured
 global guide with the release's embedded `AGENTS.md` and creates one new immutable revision when they
-differ. Matching guides are left unchanged. The automation instructions, state documents and owner
-documents are not reapplied; they remain managed through their stable document identities, revisions,
+differ. Matching guides are left unchanged. The automation instruction, state, and owner pages are
+not reapplied; they remain managed through their stable object identities, revisions,
 links and search APIs. There is no template-management API.
 
 Validate changes to the shipped bootstrap corpus with its focused database and template tests.
@@ -66,16 +66,16 @@ knowledge base.
 
 ## Knowledge automations
 
-Context Use stores automation instructions and supporting assets as ordinary private hypermedia
-documents. An external harness such as OpenClaw can schedule a job that finds the instruction by
-title or stable document identity, reads it with the document tools, then follows its links and
+Context Use stores automation instructions as ordinary private pages and supporting media as assets.
+An external harness such as OpenClaw can schedule a job that finds the instruction by title or stable
+object identity, reads it with the object tools, then follows its links and
 uses the ordinary knowledge and asset tools. Scheduling, retries, and run history stay in the
 harness. An incremental automation may keep exactly one non-secret opaque checkpoint in its
-stable state document.
+stable state page.
 
-The bootstrap corpus includes instruction documents for activity distillation, diary composition,
+The bootstrap corpus includes instruction pages for activity distillation, diary composition,
 and guideline consistency review, with checkpoint state where required. Schedule an external
-harness to search for and execute the relevant instruction document. Those documents are the
+harness to search for and execute the relevant instruction page. Those pages are the
 canonical operating contracts and are deliberately not duplicated here.
 
 The dashboard's **History** section shows the same durable page ledger, including creates,

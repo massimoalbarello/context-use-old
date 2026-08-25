@@ -2,12 +2,12 @@ import { z } from "zod";
 
 export const PAGE_MARKDOWN_BODY_DESCRIPTION = [
   "Markdown page body.",
-  "Link to any document with [Label](context-use://document/<uuid>); append #heading-slug to link to a section.",
+  "Link to any object with [Label](context-use://object/<uuid>); append #heading-slug to link to a section.",
   "Heading slugs are lowercase words joined by hyphens (## Next Steps becomes #next-steps); repeated headings add -2, -3, and so on.",
-  "Embed an image or video document with ![Alt](context-use://document/<uuid>).",
+  "Embed an image or video asset with ![Alt](context-use://object/<uuid>).",
   "Optional safe image or video attributes immediately follow it: {size=small|medium|large|full align=left|center|right shape=auto|square|portrait|landscape layout=block|half|third}.",
   "Use layout=half or layout=third on consecutive images or videos for responsive columns.",
-  "Example: ![Portrait](context-use://document/<uuid>){size=medium align=center shape=square}.",
+  "Example: ![Portrait](context-use://object/<uuid>){size=medium align=center shape=square}.",
   "Images and videos with enforced shapes crop with object-fit: cover; assets must be published independently before public pages can render them.",
 ].join(" ");
 
@@ -27,25 +27,25 @@ export const KnowledgeSummary = z
   .min(1)
   .max(320)
   .refine((value) => !/[\r\n]/.test(value), "Use a single-line summary")
-  .describe("Required one-sentence summary used in document discovery and search results.");
+  .describe("Required one-sentence summary used in object discovery and search results.");
 const PageBodyMarkdown = z.string().max(2_000_000).describe(PAGE_MARKDOWN_BODY_DESCRIPTION);
 
-export const createKnowledgeDocumentSchema = z
+export const createPageSchema = z
   .object({
     title: z.string().trim().min(1).max(240),
     summary: KnowledgeSummary.describe(
-      "Required one-sentence summary used in document search and private link previews.",
+      "Required one-sentence summary used in object search and private link previews.",
     ),
     body_markdown: PageBodyMarkdown,
     commit_message: CommitMessage,
   })
   .strict();
 
-export const updateKnowledgeDocumentSchema = z
+export const updatePageSchema = z
   .object({
     title: z.string().trim().min(1).max(240),
     summary: KnowledgeSummary.describe(
-      "Required one-sentence summary used in document search and private link previews.",
+      "Required one-sentence summary used in object search and private link previews.",
     ),
     body_markdown: PageBodyMarkdown,
     commit_message: CommitMessage,
@@ -53,7 +53,7 @@ export const updateKnowledgeDocumentSchema = z
   })
   .strict();
 
-export const archiveKnowledgeDocumentSchema = z
+export const archivePageSchema = z
   .object({
     commit_message: CommitMessage,
     expected_revision_number: z.number().int().positive(),
@@ -63,26 +63,26 @@ export const archiveKnowledgeDocumentSchema = z
 const pagePublishIntentSchema = z.object({
   action: z.literal("publish"),
   target_kind: z.literal("page"),
-  target_document_id: UUID,
+  target_object_id: UUID,
   expected_revision_id: UUID,
 }).strict();
 
 const pageUnpublishIntentSchema = z.object({
   action: z.literal("unpublish"),
   target_kind: z.literal("page"),
-  target_document_id: UUID,
+  target_object_id: UUID,
 }).strict();
 
 const assetPublishIntentSchema = z.object({
   action: z.literal("publish"),
   target_kind: z.literal("asset"),
-  target_document_id: UUID,
+  target_object_id: UUID,
 }).strict();
 
 const assetUnpublishIntentSchema = z.object({
   action: z.literal("unpublish"),
   target_kind: z.literal("asset"),
-  target_document_id: UUID,
+  target_object_id: UUID,
 }).strict();
 
 /** Four exact variants keep page revision approval distinct from asset publication. */
@@ -115,11 +115,11 @@ export const publicRouteSchema = z.string().refine(
 );
 
 const AssetFilename = z.string().trim().min(1).max(1024);
-const DocumentAssetFilename = AssetFilename.refine(
+const AssetObjectFilename = AssetFilename.refine(
   (value) => value !== "." && value !== ".." && !/[\\/\u0000-\u001f\u007f]/.test(value),
   "Use a filename, not a path or control characters",
 );
-const DocumentAssetContentType = z.string().trim().min(1).max(255).refine(
+const AssetObjectContentType = z.string().trim().min(1).max(255).refine(
   (value) => !/[\r\n\u0000]/.test(value),
   "Content type cannot contain control characters",
 );
@@ -178,8 +178,8 @@ const assetPublicationArtifactReceiptSchema = z.object({
   target_kind: z.literal("asset"),
   body_size_bytes: z.number().int().min(0).max(5_000_000_000),
   body_content_hash: Hex64,
-  public_filename: DocumentAssetFilename,
-  public_content_type: DocumentAssetContentType,
+  public_filename: AssetObjectFilename,
+  public_content_type: AssetObjectContentType,
   public_width: z.number().int().positive().nullish(),
   public_height: z.number().int().positive().nullish(),
   // PostgreSQL `numeric` may be more precise than a JavaScript number. The
@@ -193,9 +193,9 @@ export const publicationArtifactReceiptSchema = z.discriminatedUnion("target_kin
   assetPublicationArtifactReceiptSchema,
 ]);
 
-export const createDocumentAssetSchema = z.object({
-  filename: DocumentAssetFilename.describe("Filename presented for this document asset."),
-  content_type: DocumentAssetContentType,
+export const createAssetSchema = z.object({
+  filename: AssetObjectFilename.describe("Filename presented for this asset."),
+  content_type: AssetObjectContentType,
   size_bytes: z.number().int().min(0).max(5_000_000_000),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   width: z.number().int().positive().optional(),
@@ -203,8 +203,8 @@ export const createDocumentAssetSchema = z.object({
   duration_seconds: z.number().nonnegative().optional(),
 }).strict();
 
-export const archiveDocumentAssetSchema = z.object({
-  asset_id: UUID,
+export const archiveAssetSchema = z.object({
+  object_id: UUID,
 }).strict();
 
 export type PublicationIntentInput = z.infer<typeof publicationIntentSchema>;
@@ -215,27 +215,27 @@ export type PublicationEntrypointInput = z.infer<
   typeof publicationEntrypointSchema
 >;
 export type PublicRouteInput = z.infer<typeof publicRouteSchema>;
-export type CreateKnowledgeDocumentInput = z.infer<typeof createKnowledgeDocumentSchema>;
-export type UpdateKnowledgeDocumentInput = z.infer<typeof updateKnowledgeDocumentSchema>;
-export type ArchiveKnowledgeDocumentInput = z.infer<typeof archiveKnowledgeDocumentSchema>;
-export type CreateDocumentAssetInput = z.infer<typeof createDocumentAssetSchema>;
-export type ArchiveDocumentAssetInput = z.infer<typeof archiveDocumentAssetSchema>;
+export type CreatePageInput = z.infer<typeof createPageSchema>;
+export type UpdatePageInput = z.infer<typeof updatePageSchema>;
+export type ArchivePageInput = z.infer<typeof archivePageSchema>;
+export type CreateAssetInput = z.infer<typeof createAssetSchema>;
+export type ArchiveAssetInput = z.infer<typeof archiveAssetSchema>;
 
-export const dashboardDocumentKindSchema = z.enum(["knowledge", "record", "asset"]);
-export const dashboardDocumentLifecycleSchema = z.enum(["active", "archived", "deleted"]);
-export const dashboardDocumentOperationalRoleSchema = z.enum([
+export const dashboardObjectKindSchema = z.enum(["page", "record", "asset"]);
+export const dashboardObjectLifecycleSchema = z.enum(["active", "archived", "deleted"]);
+export const dashboardObjectOperationalRoleSchema = z.enum([
   "global_guide",
   "automation_instructions",
   "automation_state",
 ]);
 
-/** Canonical, locator-free document metadata safe for the authenticated dashboard. */
-export const dashboardDocumentSummarySchema = z.object({
-  document_id: UUID,
-  document_kind: dashboardDocumentKindSchema,
+/** Canonical, locator-free object metadata safe for the authenticated dashboard. */
+export const dashboardObjectSummarySchema = z.object({
+  object_id: UUID,
+  object_kind: dashboardObjectKindSchema,
   authority: z.enum(["knowledge", "source"]),
   representation: z.enum(["markdown", "asset"]),
-  lifecycle: dashboardDocumentLifecycleSchema,
+  lifecycle: dashboardObjectLifecycleSchema,
   current_revision_id: UUID.nullable(),
   title: z.string().nullable(),
   summary: z.string().nullable(),
@@ -243,33 +243,33 @@ export const dashboardDocumentSummarySchema = z.object({
   content_type: z.string().nullable(),
   integration: z.string().nullable(),
   source_model: z.string().nullable(),
-  operational_roles: z.array(dashboardDocumentOperationalRoleSchema),
+  operational_roles: z.array(dashboardObjectOperationalRoleSchema),
   updated_at: z.string().datetime({ offset: true }),
 }).strict();
 
-export const dashboardDocumentCatalogPageSchema = z.object({
-  documents: z.array(dashboardDocumentSummarySchema),
+export const dashboardObjectCatalogPageSchema = z.object({
+  objects: z.array(dashboardObjectSummarySchema),
   next_cursor: z.string().nullable(),
   has_more: z.boolean(),
 }).strict();
 
-export const dashboardDocumentNeighborSchema = z.object({
-  target_document_id: UUID,
+export const dashboardObjectNeighborSchema = z.object({
+  target_object_id: UUID,
   resolved: z.boolean(),
-  document: dashboardDocumentSummarySchema.nullable(),
+  object: dashboardObjectSummarySchema.nullable(),
 }).strict();
 
-export const dashboardDocumentNeighborhoodSchema = z.object({
-  document: dashboardDocumentSummarySchema,
+export const dashboardObjectNeighborhoodSchema = z.object({
+  object: dashboardObjectSummarySchema,
   outbound: z.object({
     revision_id: UUID.nullable(),
-    neighbors: z.array(dashboardDocumentNeighborSchema),
+    neighbors: z.array(dashboardObjectNeighborSchema),
     next_cursor: UUID.nullable(),
     has_more: z.boolean(),
     index_complete: z.boolean(),
   }).strict(),
   backlinks: z.object({
-    documents: z.array(dashboardDocumentSummarySchema),
+    objects: z.array(dashboardObjectSummarySchema),
     next_cursor: UUID.nullable(),
     has_more: z.boolean(),
     completeness_checked: z.boolean(),
@@ -277,15 +277,15 @@ export const dashboardDocumentNeighborhoodSchema = z.object({
   }).strict(),
 }).strict();
 
-export type DashboardDocumentKind = z.infer<typeof dashboardDocumentKindSchema>;
-export type DashboardDocumentLifecycle = z.infer<typeof dashboardDocumentLifecycleSchema>;
-export type DashboardDocumentOperationalRole = z.infer<
-  typeof dashboardDocumentOperationalRoleSchema
+export type DashboardObjectKind = z.infer<typeof dashboardObjectKindSchema>;
+export type DashboardObjectLifecycle = z.infer<typeof dashboardObjectLifecycleSchema>;
+export type DashboardObjectOperationalRole = z.infer<
+  typeof dashboardObjectOperationalRoleSchema
 >;
-export type DashboardDocumentSummary = z.infer<typeof dashboardDocumentSummarySchema>;
-export type DashboardDocumentCatalogPage = z.infer<typeof dashboardDocumentCatalogPageSchema>;
-export type DashboardDocumentNeighbor = z.infer<typeof dashboardDocumentNeighborSchema>;
-export type DashboardDocumentNeighborhood = z.infer<typeof dashboardDocumentNeighborhoodSchema>;
+export type DashboardObjectSummary = z.infer<typeof dashboardObjectSummarySchema>;
+export type DashboardObjectCatalogPage = z.infer<typeof dashboardObjectCatalogPageSchema>;
+export type DashboardObjectNeighbor = z.infer<typeof dashboardObjectNeighborSchema>;
+export type DashboardObjectNeighborhood = z.infer<typeof dashboardObjectNeighborhoodSchema>;
 export type Actor = {
   kind: "dashboard" | "mcp";
   subject: string;

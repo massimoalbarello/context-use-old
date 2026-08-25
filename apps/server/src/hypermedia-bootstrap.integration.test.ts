@@ -4,17 +4,17 @@ import {
   AutomationRegistryRepository,
   defaultHypermediaBootstrapTemplate,
   HypermediaBootstrapRepository,
-  KnowledgeDocumentRepository,
+  KnowledgePageRepository,
   KnowledgeSettingsRepository,
-  markdownObjectMetadata,
-  type MarkdownObjectMetadata,
-  type MarkdownObjectStore,
+  markdownBlobMetadata,
+  type MarkdownBlobMetadata,
+  type MarkdownBlobStore,
 } from "@context-use/database";
 import { disposableDatabaseUrl } from "@context-use/database/disposable-database";
 import { developmentResetSql } from "../../../packages/database/src/reset-development.ts";
 import {
   applyHypermediaBootstrap,
-  hypermediaBootstrapDocuments,
+  hypermediaBootstrapPages,
   synchronizeGlobalGuide,
 } from "./hypermedia-bootstrap-command.ts";
 
@@ -25,9 +25,9 @@ const corpusUrl = process.env.CORPUS_DATABASE_URL;
 const admin = enabled ? new Client({ connectionString: adminUrl }) : null;
 const corpus = enabled && corpusUrl ? new Pool({ connectionString: corpusUrl }) : null;
 const objects = new Map<string, string>();
-const bodies: MarkdownObjectStore = {
+const bodies: MarkdownBlobStore = {
   async write(revisionId, markdown) {
-    const metadata = markdownObjectMetadata(revisionId, markdown);
+    const metadata = markdownBlobMetadata(revisionId, markdown);
     const existing = objects.get(metadata.body_object_key);
     if (existing !== undefined && existing !== markdown) {
       throw new Error("Bootstrap object changed across replay");
@@ -35,7 +35,7 @@ const bodies: MarkdownObjectStore = {
     objects.set(metadata.body_object_key, markdown);
     return metadata;
   },
-  async read(metadata: MarkdownObjectMetadata) {
+  async read(metadata: MarkdownBlobMetadata) {
     const markdown = objects.get(metadata.body_object_key);
     if (markdown === undefined) throw new Error("Bootstrap object is missing");
     return markdown;
@@ -90,12 +90,12 @@ describeBootstrap("fresh hypermedia bootstrap", () => {
       await expect(admin!.query(
         `UPDATE hypermedia_bootstrap_allocations
          SET document_id=gen_random_uuid()
-         WHERE document_kind='global_guide'`,
+         WHERE object_kind='global_guide'`,
       )).rejects.toMatchObject({ code: "55000" });
     } finally {
       await admin!.query("ROLLBACK");
     }
-    const documents = hypermediaBootstrapDocuments(defaultHypermediaBootstrapTemplate, allocations);
+    const documents = hypermediaBootstrapPages(defaultHypermediaBootstrapTemplate, allocations);
     const completedAt = await applyHypermediaBootstrap({
       allocations,
       template: defaultHypermediaBootstrapTemplate,
@@ -109,11 +109,11 @@ describeBootstrap("fresh hypermedia bootstrap", () => {
     expect(allocations).toHaveLength(5);
     expect(completedAt).toBeTruthy();
     expect(await bootstrap.begin()).toEqual([]);
-    for (const document of documents) await bootstrap.ensureDocument(document);
+    for (const document of documents) await bootstrap.ensurePage(document);
     expect(await bootstrap.complete()).toEqual(completedAt);
 
     const state = await admin!.query<{
-      documents: string;
+      pages: string;
       revisions: string;
       contracts: string;
       search: string;
@@ -137,7 +137,7 @@ describeBootstrap("fresh hypermedia bootstrap", () => {
            AS entrypoint_latched`,
     );
     expect(state.rows[0]).toEqual({
-      documents: "5",
+      pages: "5",
       revisions: "5",
       contracts: "5",
       search: "5",
@@ -149,34 +149,34 @@ describeBootstrap("fresh hypermedia bootstrap", () => {
     expect(objects.size).toBe(5);
 
     const settings = new KnowledgeSettingsRepository(corpus!);
-    const knowledgeDocuments = new KnowledgeDocumentRepository(corpus!, bodies);
+    const knowledgePages = new KnowledgePageRepository(corpus!, bodies);
     const current = await synchronizeGlobalGuide({
-      repositories: { settings, documents: knowledgeDocuments },
-      guide: defaultHypermediaBootstrapTemplate.documents.global_guide,
+      repositories: { settings, pages: knowledgePages },
+      guide: defaultHypermediaBootstrapTemplate.pages.global_guide,
       templateName: defaultHypermediaBootstrapTemplate.name,
     });
     expect(current).toMatchObject({ revision_number: 1, updated: false });
 
     const changedGuide = {
-      ...defaultHypermediaBootstrapTemplate.documents.global_guide,
-      body_markdown: `${defaultHypermediaBootstrapTemplate.documents.global_guide.body_markdown}\nManaged upgrade.\n`,
+      ...defaultHypermediaBootstrapTemplate.pages.global_guide,
+      body_markdown: `${defaultHypermediaBootstrapTemplate.pages.global_guide.body_markdown}\nManaged upgrade.\n`,
     };
     const updated = await synchronizeGlobalGuide({
-      repositories: { settings, documents: knowledgeDocuments },
+      repositories: { settings, pages: knowledgePages },
       guide: changedGuide,
       templateName: defaultHypermediaBootstrapTemplate.name,
     });
     expect(updated).toMatchObject({
-      document_id: current.document_id,
+      object_id: current.object_id,
       revision_number: 2,
       updated: true,
     });
-    expect(await knowledgeDocuments.get(current.document_id)).toMatchObject({
+    expect(await knowledgePages.get(current.object_id)).toMatchObject({
       revision_number: 2,
       body_markdown: changedGuide.body_markdown,
     });
     expect(await synchronizeGlobalGuide({
-      repositories: { settings, documents: knowledgeDocuments },
+      repositories: { settings, pages: knowledgePages },
       guide: changedGuide,
       templateName: defaultHypermediaBootstrapTemplate.name,
     })).toMatchObject({ revision_number: 2, updated: false });

@@ -1,25 +1,25 @@
 import { resolve } from "node:path";
 import {
   AutomationRegistryRepository,
-  DocumentAssetRepository,
-  KnowledgeDocumentRepository,
+  AssetRepository,
+  KnowledgePageRepository,
   KnowledgeBundleRepository,
   KNOWLEDGE_BUNDLE_PART_SIZE,
-  PrivateDocumentCatalogRepository,
+  PrivateObjectCatalogRepository,
   PageDeletionRepository,
   PublicationRepository,
   PublicEntrypointRepository,
   SourceRecordRepository,
   createPool,
-  extractDocumentLinks,
+  extractObjectLinks,
   mapConcurrently,
 } from "@context-use/database";
 import {
-  archiveKnowledgeDocumentSchema,
-  createKnowledgeDocumentSchema,
+  archivePageSchema,
+  createPageSchema,
   publicationEntrypointSchema,
   publicationIntentSchema,
-  updateKnowledgeDocumentSchema,
+  updatePageSchema,
 } from "@context-use/shared";
 import { Elysia } from "elysia";
 import { z } from "zod";
@@ -33,19 +33,19 @@ import {
 } from "./confirmation-client.ts";
 import { dashboardServices } from "./dashboard-services.ts";
 import {
-  dashboardDocumentCatalogPage,
-  dashboardDocumentNeighborhood,
-  dashboardDocumentSummary,
-  parseDashboardDocumentCatalogQuery,
-  parseDashboardDocumentNeighborhoodQuery,
-} from "./dashboard-document-discovery.ts";
+  dashboardObjectCatalogPage,
+  dashboardObjectNeighborhood,
+  dashboardObjectSummary,
+  parseDashboardObjectCatalogQuery,
+  parseDashboardObjectNeighborhoodQuery,
+} from "./dashboard-object-discovery.ts";
 import { dashboardSourceRecord } from "./dashboard-source-records.ts";
 import {
-  dashboardKnowledgeDocument,
-  dashboardKnowledgeRevision,
-  dashboardKnowledgeRevisionDelta,
+  dashboardPage,
+  dashboardPageRevision,
+  dashboardPageRevisionDelta,
   dashboardRepublicationReview,
-} from "./dashboard-knowledge-documents.ts";
+} from "./dashboard-pages.ts";
 import { bodyJson, json, problem, routeError } from "./http.ts";
 import { publicationWarnings, renderMarkdown } from "./markdown.ts";
 import {
@@ -55,7 +55,7 @@ import {
 } from "./security.ts";
 import { AssetIntegrityError } from "./storage.ts";
 import { BrokeredStorage } from "./storage-client.ts";
-import { BrokeredMarkdownObjectStore } from "./markdown-object-store.ts";
+import { BrokeredMarkdownBlobStore } from "./markdown-blob-store.ts";
 import {
   KNOWLEDGE_BUNDLE_CONTENT_TYPE,
   materializeFullKnowledgeBundle,
@@ -69,29 +69,29 @@ const storage = new BrokeredStorage({
   socketPath: config.STORAGE_SOCKET_PATH,
   token: config.STORAGE_DASHBOARD_TOKEN,
 });
-const markdownObjects = new BrokeredMarkdownObjectStore(storage);
+const markdownBlobs = new BrokeredMarkdownBlobStore(storage);
 
-const dashboardKnowledgeDocuments = new KnowledgeDocumentRepository(dashboardPool, markdownObjects);
+const dashboardPages = new KnowledgePageRepository(dashboardPool, markdownBlobs);
 const pageDeletions = new PageDeletionRepository(dashboardPool);
-const dashboardAssets = new DocumentAssetRepository(dashboardPool);
+const dashboardAssets = new AssetRepository(dashboardPool);
 const publications = new PublicationRepository(dashboardPool);
 const publicEntrypoint = new PublicEntrypointRepository(dashboardPool);
 const knowledgeBundles = new KnowledgeBundleRepository(dashboardPool);
-const dashboardDocumentCatalog = new PrivateDocumentCatalogRepository(dashboardPool);
+const dashboardObjectCatalog = new PrivateObjectCatalogRepository(dashboardPool);
 const dashboardAutomations = new AutomationRegistryRepository(dashboardPool);
-const dashboardSourceRecords = new SourceRecordRepository(dashboardPool, markdownObjects);
+const dashboardSourceRecords = new SourceRecordRepository(dashboardPool, markdownBlobs);
 
 async function dashboardAssetPublication(asset: {
-  document_id: string;
+  object_id: string;
   filename: string;
   content_type: string;
   size_bytes: string | number;
   content_hash: string;
   created_at: Date | string;
 }) {
-  const status = await publications.status("asset", asset.document_id);
+  const status = await publications.status("asset", asset.object_id);
   return {
-    id: asset.document_id,
+    id: asset.object_id,
     filename: asset.filename,
     content_type: asset.content_type,
     size_bytes: Number(asset.size_bytes),
@@ -120,39 +120,39 @@ async function ownerRequest(request: Request, mutation: boolean | "upload" = fal
   return principal;
 }
 
-function privateDocumentResolvers() {
+function privateObjectResolvers() {
   return {
-    document: async (id: string) => {
-      const document = await dashboardDocumentCatalog.get(id);
-      if (!document || document.lifecycle !== "active") return { available: false as const };
-      if (document.document_kind === "asset") {
+    object: async (id: string) => {
+      const object = await dashboardObjectCatalog.get(id);
+      if (!object || object.lifecycle !== "active") return { available: false as const };
+      if (object.object_kind === "asset") {
         return {
           available: true as const,
           representation: "asset" as const,
           href: `/api/dashboard/assets/${id}/content`,
-          contentType: document.content_type ?? "application/octet-stream",
+          contentType: object.content_type ?? "application/octet-stream",
         };
       }
       return {
         available: true as const,
-        representation: document.document_kind === "record" ? "record" as const : "page" as const,
-        href: `/app/documents/${id}`,
+        representation: object.object_kind === "record" ? "record" as const : "page" as const,
+        href: `/app/objects/${id}`,
       };
     },
   };
 }
 
-async function dashboardKnowledgeDocumentResponse(documentId: string) {
-  const [document, publicationStatus] = await Promise.all([
-    dashboardKnowledgeDocuments.get(documentId),
-    publications.status("page", documentId),
+async function dashboardPageResponse(objectId: string) {
+  const [page, publicationStatus] = await Promise.all([
+    dashboardPages.get(objectId),
+    publications.status("page", objectId),
   ]);
-  if (!document) return null;
+  if (!page) return null;
   const renderedHtml = await renderMarkdown(
-    document.body_markdown,
-    privateDocumentResolvers(),
+    page.body_markdown,
+    privateObjectResolvers(),
   );
-  return dashboardKnowledgeDocument(document, renderedHtml, {
+  return dashboardPage(page, renderedHtml, {
     published_revision_id: publicationStatus.active
       ? publicationStatus.published_revision_id
       : null,
@@ -166,7 +166,7 @@ async function dashboardKnowledgeDocumentResponse(documentId: string) {
 }
 
 type PreviewTarget = {
-  kind: "page" | "asset" | "record" | "document";
+  kind: "page" | "asset" | "record" | "object";
   id: string;
   label: string;
   public: boolean;
@@ -194,36 +194,36 @@ function publicationPreviewTargets(
           contentType: null,
         };
       }
-      const document = await dashboardDocumentCatalog.get(id);
-      if (!document || document.lifecycle !== "active") {
+      const object = await dashboardObjectCatalog.get(id);
+      if (!object || object.lifecycle !== "active") {
         return {
-          kind: "document",
+          kind: "object",
           id,
-          label: "Missing document",
+          label: "Missing object",
           public: false,
           href: null,
           contentType: null,
         };
       }
-      if (document.document_kind === "asset") {
+      if (object.object_kind === "asset") {
         const status = await publications.status("asset", id);
         return {
           kind: "asset",
           id,
-          label: document.filename ?? "Asset",
+          label: object.filename ?? "Asset",
           public: status.active,
           href: status.active && status.public_id
             ? `${config.ASSET_ORIGIN}/a/${status.public_id}`
             : null,
-          contentType: document.content_type,
+          contentType: object.content_type,
         };
       }
-      if (document.document_kind === "knowledge") {
+      if (object.object_kind === "page") {
         const status = await publications.status("page", id);
         return {
           kind: "page",
           id,
-          label: document.title ?? "Knowledge document",
+          label: object.title ?? "Page",
           public: status.active,
           href: status.active && status.public_id
             ? `/p/${status.public_id}`
@@ -234,7 +234,7 @@ function publicationPreviewTargets(
       return {
         kind: "record",
         id,
-        label: document.title ?? "Source record",
+        label: object.title ?? "Source record",
         public: false,
         href: null,
         contentType: null,
@@ -246,7 +246,7 @@ function publicationPreviewTargets(
   return {
     resolveTarget,
     markdownResolvers: {
-      document: async (id: string) => {
+      object: async (id: string) => {
         const target = await resolveTarget(id);
         return target.public && target.href
           ? target.kind === "asset"
@@ -369,8 +369,8 @@ function bundleStatusBody(status: Awaited<ReturnType<KnowledgeBundleRepository["
     phase: status.phase,
     records_completed: Number(status.records_completed),
     records_total: Number(status.records_total),
-    objects_completed: Number(status.objects_completed),
-    objects_total: Number(status.objects_total),
+    blobs_completed: Number(status.objects_completed),
+    blobs_total: Number(status.objects_total),
     bytes_completed: Number(status.bytes_completed),
     bytes_total: Number(status.bytes_total),
     ...(status.status === "ready" ? {
@@ -552,18 +552,18 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     const contentHash = z.string().regex(/^[a-f0-9]{64}$/)
       .parse(request.headers.get("x-content-sha256"));
     if (sizeBytes !== expectedBytes) return problem("Knowledge import part has the wrong size", 400, "part_size_mismatch");
-    const objectKey = importPartKey(importId, partNumber);
+    const blobKey = importPartKey(importId, partNumber);
     await storage.writeImportPart({
       importId,
       partNumber,
-      objectKey,
+      blobKey,
       sizeBytes,
       contentHash,
       body: request.body,
     });
     await knowledgeBundles.recordImportPart(importId, {
       part_number: partNumber,
-      object_key: objectKey,
+      object_key: blobKey,
       size_bytes: sizeBytes,
       content_hash: contentHash,
     });
@@ -606,8 +606,8 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
       uploaded_parts: parts.map((part) => part.part_number),
       records_completed: Number(job.records_completed),
       records_total: Number(job.records_total),
-      objects_completed: Number(job.objects_completed),
-      objects_total: Number(job.objects_total),
+      blobs_completed: Number(job.objects_completed),
+      blobs_total: Number(job.objects_total),
       bytes_completed: Number(job.bytes_completed),
       bytes_total: Number(job.bytes_total),
       ...(job.status === "awaiting_confirmation" ? {
@@ -616,44 +616,44 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
       ...(job.status === "failed" ? { code: job.error_code, message: job.error_message } : {}),
     });
   })
-  .get("/api/dashboard/documents", async ({ request, query }) => {
+  .get("/api/dashboard/objects", async ({ request, query }) => {
     await ownerRequest(request);
-    const parsed = parseDashboardDocumentCatalogQuery(query);
+    const parsed = parseDashboardObjectCatalogQuery(query);
     const page = parsed.query
-      ? await dashboardDocumentCatalog.search(parsed.query, parsed.options)
-      : await dashboardDocumentCatalog.list(parsed.options);
-    return json(dashboardDocumentCatalogPage(page));
+      ? await dashboardObjectCatalog.search(parsed.query, parsed.options)
+      : await dashboardObjectCatalog.list(parsed.options);
+    return json(dashboardObjectCatalogPage(page));
   })
   .get("/api/dashboard/automations", async ({ request }) => {
     await ownerRequest(request);
     const registrations = await dashboardAutomations.listActive();
     return json({
       automations: await Promise.all(registrations.map(async (registration) => {
-        const instructions = await dashboardDocumentCatalog.get(registration.instructions_document_id);
+        const instructions = await dashboardObjectCatalog.get(registration.instructions_document_id);
         return {
           id: registration.id,
           name: registration.name,
-          instructions: instructions ? dashboardDocumentSummary(instructions) : null,
+          instructions: instructions ? dashboardObjectSummary(instructions) : null,
         };
       })),
     });
   })
-  .post("/api/dashboard/documents", async ({ request }) => {
+  .post("/api/dashboard/objects", async ({ request }) => {
     const principal = await ownerRequest(request, true);
-    const input = createKnowledgeDocumentSchema.parse(await bodyJson(request));
-    const created = await dashboardKnowledgeDocuments.create(input, {
+    const input = createPageSchema.parse(await bodyJson(request));
+    const created = await dashboardPages.create(input, {
       kind: "dashboard",
       subject: principal.userId,
     });
-    const response = await dashboardKnowledgeDocumentResponse(created.document_id);
-    return response ? json(response, 201) : problem("Document was not retained", 409, "write_conflict");
+    const response = await dashboardPageResponse(created.object_id);
+    return response ? json(response, 201) : problem("Page was not retained", 409, "write_conflict");
   })
-  .get("/api/dashboard/documents/:id", async ({ request, params }) => {
+  .get("/api/dashboard/objects/:id", async ({ request, params }) => {
     await ownerRequest(request);
-    const document = await dashboardDocumentCatalog.get(z.string().uuid().parse(params.id));
-    return document
-      ? json(dashboardDocumentSummary(document))
-      : problem("Document not found", 404, "not_found");
+    const object = await dashboardObjectCatalog.get(z.string().uuid().parse(params.id));
+    return object
+      ? json(dashboardObjectSummary(object))
+      : problem("Object not found", 404, "not_found");
   })
   .get("/api/dashboard/source-records/:id", async ({ request, params }) => {
     await ownerRequest(request);
@@ -661,48 +661,48 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     if (!record) return problem("Source record not found", 404, "not_found");
     const renderedHtml = record.body_markdown === null
       ? ""
-      : await renderMarkdown(record.body_markdown, privateDocumentResolvers());
+      : await renderMarkdown(record.body_markdown, privateObjectResolvers());
     return json(dashboardSourceRecord(record, renderedHtml));
   })
-  .get("/api/dashboard/documents/:id/neighborhood", async ({ request, params, query }) => {
+  .get("/api/dashboard/objects/:id/neighborhood", async ({ request, params, query }) => {
     await ownerRequest(request);
-    const neighborhood = await dashboardDocumentCatalog.neighborhood(
+    const neighborhood = await dashboardObjectCatalog.neighborhood(
       z.string().uuid().parse(params.id),
-      parseDashboardDocumentNeighborhoodQuery(query),
+      parseDashboardObjectNeighborhoodQuery(query),
     );
     return neighborhood
-      ? json(dashboardDocumentNeighborhood(neighborhood))
-      : problem("Document not found", 404, "not_found");
+      ? json(dashboardObjectNeighborhood(neighborhood))
+      : problem("Object not found", 404, "not_found");
   })
-  .get("/api/dashboard/knowledge-documents/:id", async ({ request, params }) => {
+  .get("/api/dashboard/pages/:id", async ({ request, params }) => {
     await ownerRequest(request);
-    const document = await dashboardKnowledgeDocumentResponse(z.string().uuid().parse(params.id));
-    return document ? json(document) : problem("Knowledge document not found", 404, "not_found");
+    const page = await dashboardPageResponse(z.string().uuid().parse(params.id));
+    return page ? json(page) : problem("Page not found", 404, "not_found");
   })
-  .get("/api/dashboard/knowledge-documents/:id/publication-preview", async ({ request, params }) => {
+  .get("/api/dashboard/pages/:id/publication-preview", async ({ request, params }) => {
     await ownerRequest(request);
-    const documentId = z.string().uuid().parse(params.id);
-    const [document, status] = await Promise.all([
-      dashboardKnowledgeDocuments.get(documentId),
-      publications.status("page", documentId),
+    const pageId = z.string().uuid().parse(params.id);
+    const [page, status] = await Promise.all([
+      dashboardPages.get(pageId),
+      publications.status("page", pageId),
     ]);
-    if (!document || document.archived_at) {
-      return problem("Active knowledge document not found", 404, "not_found");
+    if (!page || page.archived_at) {
+      return problem("Active page not found", 404, "not_found");
     }
-    const preview = publicationPreviewTargets({ id: documentId, title: document.title });
+    const preview = publicationPreviewTargets({ id: pageId, title: page.title });
     const renderedHtml = await renderMarkdown(
-      document.body_markdown,
+      page.body_markdown,
       preview.markdownResolvers,
     );
     const references = await Promise.all(
-      extractDocumentLinks(document.body_markdown).map(preview.resolveTarget),
+      extractObjectLinks(page.body_markdown).map(preview.resolveTarget),
     );
     let republication = null;
     if (status.active && status.published_revision_number !== null) {
       const [published, candidate, history] = await Promise.all([
-        dashboardKnowledgeDocuments.revision(documentId, status.published_revision_number),
-        dashboardKnowledgeDocuments.revision(documentId, document.revision_number),
-        dashboardKnowledgeDocuments.history(documentId, { limit: 100 }),
+        dashboardPages.revision(pageId, status.published_revision_number),
+        dashboardPages.revision(pageId, page.revision_number),
+        dashboardPages.history(pageId, { limit: 100 }),
       ]);
       if (!published || !candidate) {
         return problem("Published revision evidence is unavailable", 409, "publication_state_invalid");
@@ -714,18 +714,18 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
       );
     }
     return json({
-      page_id: document.document_id,
-      version_id: document.current_revision_id,
-      version_number: document.revision_number,
-      title: document.title,
-      summary: document.summary,
+      page_id: page.object_id,
+      version_id: page.current_revision_id,
+      version_number: page.revision_number,
+      title: page.title,
+      summary: page.summary,
       rendered_html: renderedHtml,
       current_public_url: status.active && status.public_id
         ? `${config.APP_ORIGIN}/p/${status.public_id}`
         : null,
       warnings: publicationWarnings(
-        document.body_markdown,
-        [document.title, document.summary],
+        page.body_markdown,
+        [page.title, page.summary],
       ),
       references: references.map(({ contentType: _contentType, href: publicUrl, ...reference }) => ({
         ...reference,
@@ -734,55 +734,55 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
       republication,
     });
   })
-  .put("/api/dashboard/knowledge-documents/:id", async ({ request, params }) => {
+  .put("/api/dashboard/pages/:id", async ({ request, params }) => {
     const principal = await ownerRequest(request, true);
-    const documentId = z.string().uuid().parse(params.id);
-    const input = updateKnowledgeDocumentSchema.parse(await bodyJson(request));
-    const updated = await dashboardKnowledgeDocuments.update(documentId, input, {
+    const pageId = z.string().uuid().parse(params.id);
+    const input = updatePageSchema.parse(await bodyJson(request));
+    const updated = await dashboardPages.update(pageId, input, {
       kind: "dashboard",
       subject: principal.userId,
     });
-    if (!updated) return problem("Knowledge document not found", 404, "not_found");
-    const response = await dashboardKnowledgeDocumentResponse(documentId);
-    return response ? json(response) : problem("Document update was not retained", 409, "write_conflict");
+    if (!updated) return problem("Page not found", 404, "not_found");
+    const response = await dashboardPageResponse(pageId);
+    return response ? json(response) : problem("Page update was not retained", 409, "write_conflict");
   })
-  .post("/api/dashboard/knowledge-documents/:id/archive", async ({ request, params }) => {
+  .post("/api/dashboard/pages/:id/archive", async ({ request, params }) => {
     const principal = await ownerRequest(request, true);
-    const documentId = z.string().uuid().parse(params.id);
-    const input = archiveKnowledgeDocumentSchema.parse(await bodyJson(request));
-    const archived = await dashboardKnowledgeDocuments.archive(documentId, input, {
+    const pageId = z.string().uuid().parse(params.id);
+    const input = archivePageSchema.parse(await bodyJson(request));
+    const archived = await dashboardPages.archive(pageId, input, {
       kind: "dashboard",
       subject: principal.userId,
     });
-    if (!archived) return problem("Knowledge document not found", 404, "not_found");
-    const response = await dashboardKnowledgeDocumentResponse(documentId);
-    return response ? json(response) : problem("Document archive was not retained", 409, "write_conflict");
+    if (!archived) return problem("Page not found", 404, "not_found");
+    const response = await dashboardPageResponse(pageId);
+    return response ? json(response) : problem("Page archive was not retained", 409, "write_conflict");
   })
-  .post("/api/dashboard/knowledge-documents/:id/deletion-intents", async ({ request, params }) => {
+  .post("/api/dashboard/pages/:id/deletion-intents", async ({ request, params }) => {
     const principal = await ownerRequest(request, true);
     emptyObjectSchema.parse(await bodyJson(request));
-    const documentId = z.string().uuid().parse(params.id);
-    const [document, publication] = await Promise.all([
-      dashboardKnowledgeDocuments.get(documentId),
-      publications.status("page", documentId),
+    const pageId = z.string().uuid().parse(params.id);
+    const [page, publication] = await Promise.all([
+      dashboardPages.get(pageId),
+      publications.status("page", pageId),
     ]);
-    if (!document) return problem("Knowledge document not found", 404, "not_found");
-    if (!document.archived_at || publication.active) {
-      return problem("Only archived, unpublished knowledge documents can be permanently deleted", 409, "document_not_deletable");
+    if (!page) return problem("Page not found", 404, "not_found");
+    if (!page.archived_at || publication.active) {
+      return problem("Only archived, unpublished pages can be permanently deleted", 409, "page_not_deletable");
     }
-    const intent = await pageDeletions.createIntent(documentId, {
+    const intent = await pageDeletions.createIntent(pageId, {
       ownerUserId: principal.userId,
       sessionId: principal.sessionId,
     });
     if (!intent) {
-      return problem("Knowledge document is no longer eligible for permanent deletion", 409, "document_not_deletable");
+      return problem("Page is no longer eligible for permanent deletion", 409, "page_not_deletable");
     }
     const authenticationOptions = await issueConfirmationOptions("page_deletion", intent.id);
     return json({ intent, authentication_options: authenticationOptions }, 201);
   })
-  .get("/api/dashboard/knowledge-documents/:id/history", async ({ request, params, query }) => {
+  .get("/api/dashboard/pages/:id/history", async ({ request, params, query }) => {
     await ownerRequest(request);
-    const history = await dashboardKnowledgeDocuments.history(
+    const history = await dashboardPages.history(
       z.string().uuid().parse(params.id),
       {
         ...(query.before === undefined ? {} : {
@@ -794,13 +794,13 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
       },
     );
     return json({
-      revisions: history.revisions.map(dashboardKnowledgeRevision),
+      revisions: history.revisions.map(dashboardPageRevision),
       has_more: history.has_more,
     });
   })
-  .get("/api/dashboard/knowledge-documents/:id/versions/:version/diff", async ({ request, params, query }) => {
+  .get("/api/dashboard/pages/:id/versions/:version/diff", async ({ request, params, query }) => {
     await ownerRequest(request);
-    const documentId = z.string().uuid().parse(params.id);
+    const pageId = z.string().uuid().parse(params.id);
     const revisionNumber = z.coerce.number().int().positive().parse(params.version);
     const previousRevisionNumber = query.from === undefined
       ? null
@@ -811,17 +811,17 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     const [previous, current] = await Promise.all([
       previousRevisionNumber === null
         ? Promise.resolve(null)
-        : dashboardKnowledgeDocuments.revision(documentId, previousRevisionNumber),
-      dashboardKnowledgeDocuments.revision(documentId, revisionNumber),
+        : dashboardPages.revision(pageId, previousRevisionNumber),
+      dashboardPages.revision(pageId, revisionNumber),
     ]);
     if (!current) return problem("Revision not found", 404, "not_found");
     if (previousRevisionNumber !== null && !previous) {
       return problem("Comparison revision not found", 404, "not_found");
     }
     return json({
-      page_id: documentId,
+      page_id: pageId,
       comparison: { from_version: previousRevisionNumber, to_version: revisionNumber },
-      ...await dashboardKnowledgeRevisionDelta(previous, current),
+      ...await dashboardPageRevisionDelta(previous, current),
     });
   })
   .get("/api/dashboard/knowledge-changes", async ({ request, query }) => {
@@ -832,7 +832,7 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     const limit = query.limit === undefined
       ? 50
       : z.coerce.number().int().min(1).max(100).parse(query.limit);
-    return json(await dashboardKnowledgeDocuments.recentChanges({
+    return json(await dashboardPages.recentChanges({
       ...(before ? { before } : {}),
       limit,
     }));
@@ -863,8 +863,8 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     if (!request.body && expectedSize !== 0) return problem("Asset size mismatch", 422, "integrity_error");
     try {
       await storage.write({
-        id: asset.document_id,
-        objectKey: asset.object_key,
+        id: asset.object_id,
+        blobKey: asset.blob_key,
         filename: asset.filename,
         contentType: asset.content_type,
         sizeBytes: expectedSize,
@@ -880,10 +880,10 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     await ownerRequest(request);
     const asset = await dashboardAssets.getForStorage(z.string().uuid().parse(params.id));
     if (!asset) return problem("Asset not found", 404, "not_found");
-    const publicationStatus = await publications.status("asset", asset.document_id);
+    const publicationStatus = await publications.status("asset", asset.object_id);
     return json({
       content_available: await storage.verify(
-        asset.object_key,
+        asset.blob_key,
         Number(asset.size_bytes),
         asset.content_hash,
       ),
@@ -897,13 +897,13 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     await ownerRequest(request);
     const asset = await dashboardAssets.getForStorage(z.string().uuid().parse(params.id));
     if (!asset) return problem("Asset not found", 404, "not_found");
-    return assetContentResponse(request, asset, storage, true, asset.object_key);
+    return assetContentResponse(request, asset, storage, true, asset.blob_key);
   })
   .delete("/api/dashboard/assets/:id", async ({ request, params }) => {
     await ownerRequest(request, true);
-    const objectKey = await dashboardAssets.delete(z.string().uuid().parse(params.id));
-    if (!objectKey) return problem("Published or referenced asset cannot be deleted", 409, "asset_in_use");
-    await storage.delete(objectKey);
+    const blobKey = await dashboardAssets.delete(z.string().uuid().parse(params.id));
+    if (!blobKey) return problem("Published or referenced asset cannot be deleted", 409, "asset_in_use");
+    await storage.delete(blobKey);
     return json({ deleted: true });
   })
 

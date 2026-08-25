@@ -8,7 +8,7 @@ This package is the thin OpenClaw binding for Context-use. It keeps the reusable
 - Inbound assets receive opaque, turn-scoped handles. The curator can inspect them and stream their exact bytes only to a signed upload URL on the configured Context-use HTTPS origin.
 
 The curator opens a knowledge session, reads the live global hypermedia-maintenance guide, and
-reuses its receipt for stable-ID document and asset mutations. Direct user statements do not
+reuses its receipt for stable-ID page and asset mutations. Direct user statements do not
 receive synthetic Nango/source-record provenance.
 
 ## Install from this checkout

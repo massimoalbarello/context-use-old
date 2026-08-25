@@ -1,10 +1,10 @@
 import type {
-  KnowledgeDocument,
-  KnowledgeDocumentRevision,
+  KnowledgePage,
+  PageRevision,
 } from "@context-use/database";
 import { markdownChanges } from "./page-delta.ts";
 
-export type DashboardKnowledgeDocument = {
+export type DashboardPage = {
   id: string;
   current_version_id: string;
   published_version_id: string | null;
@@ -21,7 +21,7 @@ export type DashboardKnowledgeDocument = {
   updated_at: Date | string;
 };
 
-export type DashboardKnowledgeRevision = {
+export type DashboardPageRevision = {
   id: string;
   page_id: string;
   version_number: number;
@@ -52,39 +52,39 @@ export type DashboardRepublicationReview = {
   queued_versions_complete: boolean;
 };
 
-export function dashboardKnowledgeDocument(
-  document: KnowledgeDocument,
+export function dashboardPage(
+  page: KnowledgePage,
   renderedHtml: string,
   options: {
     published_revision_id: string | null;
     published_revision_number: number | null;
     public_url: string | null;
   },
-): DashboardKnowledgeDocument {
+): DashboardPage {
   return {
-    id: document.document_id,
-    current_version_id: document.current_revision_id,
+    id: page.object_id,
+    current_version_id: page.current_revision_id,
     published_version_id: options.published_revision_id,
     published_version_number: options.published_revision_number,
-    public_id: document.public_id,
-    archived_at: document.archived_at,
-    version_number: document.revision_number,
-    title: document.title,
-    summary: document.summary,
-    body_markdown: document.body_markdown,
+    public_id: page.public_id,
+    archived_at: page.archived_at,
+    version_number: page.revision_number,
+    title: page.title,
+    summary: page.summary,
+    body_markdown: page.body_markdown,
     rendered_html: renderedHtml,
     public_url: options.public_url,
-    created_at: document.created_at,
-    updated_at: document.updated_at,
+    created_at: page.created_at,
+    updated_at: page.updated_at,
   };
 }
 
-export function dashboardKnowledgeRevision(
-  revision: KnowledgeDocumentRevision,
-): DashboardKnowledgeRevision {
+export function dashboardPageRevision(
+  revision: PageRevision,
+): DashboardPageRevision {
   return {
     id: revision.revision_id,
-    page_id: revision.document_id,
+    page_id: revision.object_id,
     version_number: revision.revision_number,
     title: revision.title,
     summary: revision.summary,
@@ -96,9 +96,9 @@ export function dashboardKnowledgeRevision(
   };
 }
 
-export async function dashboardKnowledgeRevisionDelta(
-  previous: KnowledgeDocumentRevision | null,
-  current: KnowledgeDocumentRevision,
+export async function dashboardPageRevisionDelta(
+  previous: PageRevision | null,
+  current: PageRevision,
 ) {
   const metadataChanges: Array<{
     field: "title" | "summary";
@@ -119,9 +119,9 @@ export async function dashboardKnowledgeRevisionDelta(
 }
 
 export async function dashboardRepublicationReview(
-  published: KnowledgeDocumentRevision,
-  candidate: KnowledgeDocumentRevision,
-  retainedHistory: KnowledgeDocumentRevision[],
+  published: PageRevision,
+  candidate: PageRevision,
+  retainedHistory: PageRevision[],
 ): Promise<DashboardRepublicationReview> {
   const queued = retainedHistory
     .filter((revision) => (
@@ -131,7 +131,7 @@ export async function dashboardRepublicationReview(
     .sort((left, right) => left.revision_number - right.revision_number);
   return {
     published_version_number: published.revision_number,
-    ...await dashboardKnowledgeRevisionDelta(published, candidate),
+    ...await dashboardPageRevisionDelta(published, candidate),
     queued_versions: queued.map((revision) => ({
       version_number: revision.revision_number,
       commit_message: revision.commit_message,

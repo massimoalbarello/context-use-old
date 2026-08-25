@@ -2,11 +2,11 @@ import { createHash } from "node:crypto";
 import {
   AssetIntegrityError,
   AssetNotFoundError,
-  ObjectAlreadyExistsError,
+  BlobAlreadyExistsError,
   type ByteRange,
-  type GeneratedObjectMetadata,
-  type ObjectStorageBackend,
-  type StoredAsset,
+  type GeneratedBlobMetadata,
+  type BlobStorageBackend,
+  type StoredBlob,
 } from "./storage.ts";
 
 async function collect(body: ReadableStream<Uint8Array> | null): Promise<Uint8Array> {
@@ -15,89 +15,89 @@ async function collect(body: ReadableStream<Uint8Array> | null): Promise<Uint8Ar
     : new Uint8Array();
 }
 
-export class MemoryObjectStorage implements ObjectStorageBackend {
+export class MemoryBlobStorage implements BlobStorageBackend {
   private readonly objects = new Map<string, Uint8Array>();
-  private readonly generated = new Map<string, GeneratedObjectMetadata>();
+  private readonly generated = new Map<string, GeneratedBlobMetadata>();
 
-  async write(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void> {
+  async write(asset: StoredBlob, body: ReadableStream<Uint8Array> | null): Promise<void> {
     await this.writeVerified(asset, body, false);
   }
 
-  async writeOnce(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void> {
+  async writeOnce(asset: StoredBlob, body: ReadableStream<Uint8Array> | null): Promise<void> {
     await this.writeVerified(asset, body, true);
   }
 
   private async writeVerified(
-    asset: StoredAsset,
+    asset: StoredBlob,
     body: ReadableStream<Uint8Array> | null,
     createOnly: boolean,
   ): Promise<void> {
-    if (createOnly && this.objects.has(asset.objectKey)) throw new ObjectAlreadyExistsError();
+    if (createOnly && this.objects.has(asset.blobKey)) throw new BlobAlreadyExistsError();
     const value = await collect(body);
     if (value.byteLength !== asset.sizeBytes
         || createHash("sha256").update(value).digest("hex") !== asset.contentHash) {
       throw new AssetIntegrityError();
     }
-    if (createOnly && this.objects.has(asset.objectKey)) throw new ObjectAlreadyExistsError();
-    this.objects.set(asset.objectKey, value);
+    if (createOnly && this.objects.has(asset.blobKey)) throw new BlobAlreadyExistsError();
+    this.objects.set(asset.blobKey, value);
   }
 
   async writeBundle(
-    objectKey: string,
+    blobKey: string,
     body: ReadableStream<Uint8Array> | null,
-  ): Promise<GeneratedObjectMetadata> {
+  ): Promise<GeneratedBlobMetadata> {
     const value = await collect(body);
     if (!value.byteLength) throw new Error("Knowledge bundle is empty");
     const metadata = {
       sizeBytes: value.byteLength,
       contentHash: createHash("sha256").update(value).digest("hex"),
     };
-    this.objects.set(objectKey, value);
-    this.generated.set(objectKey, metadata);
+    this.objects.set(blobKey, value);
+    this.generated.set(blobKey, metadata);
     return metadata;
   }
 
-  async inspectBundle(objectKey: string): Promise<GeneratedObjectMetadata | null> {
-    return this.objects.has(objectKey) ? this.generated.get(objectKey) ?? null : null;
+  async inspectBundle(blobKey: string): Promise<GeneratedBlobMetadata | null> {
+    return this.objects.has(blobKey) ? this.generated.get(blobKey) ?? null : null;
   }
 
-  async deleteBundle(objectKey: string): Promise<void> {
-    this.generated.delete(objectKey);
-    this.objects.delete(objectKey);
+  async deleteBundle(blobKey: string): Promise<void> {
+    this.generated.delete(blobKey);
+    this.objects.delete(blobKey);
   }
 
-  async writeImportPart(asset: StoredAsset, body: ReadableStream<Uint8Array> | null): Promise<void> {
+  async writeImportPart(asset: StoredBlob, body: ReadableStream<Uint8Array> | null): Promise<void> {
     return this.writeOnce(asset, body);
   }
 
-  async inspectImportPart(objectKey: string): Promise<GeneratedObjectMetadata | null> {
-    const value = this.objects.get(objectKey);
+  async inspectImportPart(blobKey: string): Promise<GeneratedBlobMetadata | null> {
+    const value = this.objects.get(blobKey);
     return value ? {
       sizeBytes: value.byteLength,
       contentHash: createHash("sha256").update(value).digest("hex"),
     } : null;
   }
 
-  async deleteImportPart(objectKey: string): Promise<void> {
-    return this.delete(objectKey);
+  async deleteImportPart(blobKey: string): Promise<void> {
+    return this.delete(blobKey);
   }
 
-  async delete(objectKey: string): Promise<void> {
-    this.objects.delete(objectKey);
+  async delete(blobKey: string): Promise<void> {
+    this.objects.delete(blobKey);
   }
 
-  async exists(objectKey: string): Promise<boolean> {
-    return this.objects.has(objectKey);
+  async exists(blobKey: string): Promise<boolean> {
+    return this.objects.has(blobKey);
   }
 
-  async read(objectKey: string, range?: ByteRange): Promise<BodyInit> {
-    const value = this.objects.get(objectKey);
+  async read(blobKey: string, range?: ByteRange): Promise<BodyInit> {
+    const value = this.objects.get(blobKey);
     if (!value) throw new AssetNotFoundError();
     return range ? value.slice(range.start, range.end + 1) : value.slice();
   }
 
-  async verify(objectKey: string, sizeBytes: number, contentHash: string): Promise<boolean> {
-    const value = this.objects.get(objectKey);
+  async verify(blobKey: string, sizeBytes: number, contentHash: string): Promise<boolean> {
+    const value = this.objects.get(blobKey);
     return Boolean(value
       && value.byteLength === sizeBytes
       && createHash("sha256").update(value).digest("hex") === contentHash);
