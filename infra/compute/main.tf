@@ -217,7 +217,7 @@ resource "aws_instance" "app" {
     volume_type = "gp3"
     # The Nango root image contains the complete Functions runtime. Keep
     # immutable images on the replaceable root disk with enough room for a
-    # safe rolling pull; all durable records remain on /data.
+    # safe rolling pull; PostgreSQL remains on the retained data volume.
     volume_size = 30
   }
   tags = { Name = local.prefix }
