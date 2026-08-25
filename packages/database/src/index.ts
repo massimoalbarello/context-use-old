@@ -135,6 +135,7 @@ export {
 export {
   extractObjectLinks,
   MAX_OBJECT_LINKS_PER_REVISION,
+  normalizeLegacyObjectLinks,
 } from "./links.ts";
 export {
   AutomationRegistryIdentityConflictError,

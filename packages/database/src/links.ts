@@ -1,6 +1,14 @@
 const UUID_PATTERN = "([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})";
 const FRAGMENT_PATTERN = "(#[a-z0-9][a-z0-9_-]*)?";
 const OBJECT_LINK = new RegExp(`(!?)\\[[^\\]\\n]*\\]\\(context-use:\\/\\/object\\/${UUID_PATTERN}${FRAGMENT_PATTERN}\\)`, "gi");
+const LEGACY_OBJECT_LINK = new RegExp(
+  `(!?\\[[^\\]\\n]*\\]\\()context-use:\\/\\/(?:document|page|asset)\\/${UUID_PATTERN}${FRAGMENT_PATTERN}(\\))`,
+  "gi",
+);
+const LEGACY_DASHBOARD_PAGE_LINK = new RegExp(
+  `(\\[[^\\]\\n]*\\]\\()\\/app\\/(?:documents|pages)\\/${UUID_PATTERN}${FRAGMENT_PATTERN}(\\))`,
+  "gi",
+);
 
 // Keep the application-side guard aligned with replace_document_links. Raw
 // source persistence must not fail merely because its derived graph exceeds
@@ -355,6 +363,47 @@ function mapMarkdownOutsideCode(
     plainStart = range.end;
   }
   return output + transform(value.slice(plainStart));
+}
+
+function replaceUnescapedLinks(
+  value: string,
+  pattern: RegExp,
+  replacement: (match: RegExpMatchArray) => string,
+): string {
+  let output = "";
+  let cursor = 0;
+  for (const match of value.matchAll(new RegExp(pattern.source, pattern.flags))) {
+    const start = match.index;
+    const bracket = start + match[0].indexOf("[");
+    if (escapedAt(value, bracket)) continue;
+    output += value.slice(cursor, start) + replacement(match);
+    cursor = start + match[0].length;
+  }
+  return output + value.slice(cursor);
+}
+
+/**
+ * Translate identities retained in immutable revisions to the canonical object
+ * scheme for read-time rendering. New writes still accept only object links.
+ */
+export function normalizeLegacyObjectLinks(markdown: string): string {
+  return mapMarkdownOutsideCode(markdown, (plain) => {
+    let normalized = replaceUnescapedLinks(
+      plain,
+      LEGACY_OBJECT_LINK,
+      (match) => (
+        `${match[1]}context-use://object/${match[2]!.toLowerCase()}${match[3]?.toLowerCase() ?? ""}${match[4]}`
+      ),
+    );
+    normalized = replaceUnescapedLinks(
+      normalized,
+      LEGACY_DASHBOARD_PAGE_LINK,
+      (match) => (
+        `${match[1]}context-use://object/${match[2]!.toLowerCase()}${match[3]?.toLowerCase() ?? ""}${match[4]}`
+      ),
+    );
+    return normalized;
+  });
 }
 
 export function extractObjectLinks(markdown: string): string[] {

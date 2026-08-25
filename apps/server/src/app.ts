@@ -13,6 +13,7 @@ import {
   createPool,
   extractObjectLinks,
   mapConcurrently,
+  normalizeLegacyObjectLinks,
 } from "@context-use/database";
 import {
   archivePageSchema,
@@ -695,7 +696,8 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
       preview.markdownResolvers,
     );
     const references = await Promise.all(
-      extractObjectLinks(page.body_markdown).map(preview.resolveTarget),
+      extractObjectLinks(normalizeLegacyObjectLinks(page.body_markdown))
+        .map(preview.resolveTarget),
     );
     let republication = null;
     if (status.active && status.published_revision_number !== null) {

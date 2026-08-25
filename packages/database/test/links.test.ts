@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { extractObjectLinks } from "../src/links.ts";
+import { extractObjectLinks, normalizeLegacyObjectLinks } from "../src/links.ts";
 
 const first = "11111111-1111-4111-8111-111111111111";
 const second = "22222222-2222-4222-8222-222222222222";
@@ -25,6 +25,41 @@ describe("canonical object links", () => {
     ].join("\n");
 
     expect(extractObjectLinks(markdown)).toEqual([]);
+  });
+
+  test("normalizes page identities retained in immutable revisions", () => {
+    const markdown = [
+      `[Document](context-use://document/${first}#Overview)`,
+      `[Page](context-use://page/${second})`,
+      `[Dashboard](/app/pages/${first}#Details)`,
+      `[Recent dashboard](/app/documents/${second})`,
+    ].join("\n");
+
+    expect(normalizeLegacyObjectLinks(markdown)).toBe([
+      `[Document](context-use://object/${first}#overview)`,
+      `[Page](context-use://object/${second})`,
+      `[Dashboard](context-use://object/${first}#details)`,
+      `[Recent dashboard](context-use://object/${second})`,
+    ].join("\n"));
+  });
+
+  test("does not normalize legacy examples in inert Markdown regions", () => {
+    const legacy = `[legacy](context-use://document/${first})`;
+    const markdown = [
+      `\`${legacy}\``,
+      "```md",
+      legacy,
+      "```",
+      `<!-- ${legacy} -->`,
+      `<pre>${legacy}</pre>`,
+      `\\${legacy}`,
+      `[visible](context-use://document/${second})`,
+    ].join("\n");
+
+    expect(normalizeLegacyObjectLinks(markdown)).toBe(markdown.replace(
+      `[visible](context-use://document/${second})`,
+      `[visible](context-use://object/${second})`,
+    ));
   });
 
   test("ignores canonical examples in inert Markdown regions", () => {

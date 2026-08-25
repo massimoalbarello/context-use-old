@@ -29,7 +29,7 @@ describe("safe Markdown rendering", () => {
     expect(html).toContain('<h2 id="a-useful-section-2">A Useful Section</h2>');
   });
 
-  test("scans public metadata and canonical object references", () => {
+  test("scans public metadata and canonical or retained object references", () => {
     const id = "11111111-1111-4111-8111-111111111111";
     expect(publicationWarnings("Safe body", ["Safe title", "secret = summary-canary"]))
       .toContain("Possible secret material detected; review the page carefully");
@@ -37,7 +37,11 @@ describe("safe Markdown rendering", () => {
       .toContain("1 external URL(s) will become public");
     expect(publicationWarnings(`[Related](context-use://object/${id})`))
       .toContain("1 context-use reference(s) have independent visibility");
+    expect(publicationWarnings(`[Older](context-use://document/${id})`))
+      .toContain("1 context-use reference(s) have independent visibility");
     expect(publicationWarnings(`[Old](context-use://page/${id})`))
+      .toContain("1 context-use reference(s) have independent visibility");
+    expect(publicationWarnings(`[Directory](context-use://directory/${id})`))
       .not.toContain("1 context-use reference(s) have independent visibility");
   });
 
@@ -88,6 +92,26 @@ describe("safe Markdown rendering", () => {
     expect(html).toContain(`<a href="/app/objects/${record}">Record</a>`);
     expect(html).toContain(`<img src="/api/dashboard/assets/${asset}/content" alt="Photo" loading="lazy"`);
     expect(html).toContain(`<a href="/api/dashboard/assets/${asset}/content" target="_blank" rel="noopener noreferrer">Download</a>`);
+    expect(html).not.toContain("context-use://");
+  });
+
+  test("keeps links from immutable legacy revisions clickable in dashboard previews", async () => {
+    const first = "11111111-1111-4111-8111-111111111111";
+    const second = "22222222-2222-4222-8222-222222222222";
+    const html = await renderMarkdown([
+      `[Older page](context-use://document/${first}#Details)`,
+      `[Dashboard page](/app/pages/${second})`,
+    ].join("\n\n"), {
+      object: async (id) => ({
+        available: true,
+        representation: "page",
+        href: `/app/objects/${id}`,
+      }),
+    });
+
+    expect(html).toContain(`<a href="/app/objects/${first}#details">Older page</a>`);
+    expect(html).toContain(`<a href="/app/objects/${second}">Dashboard page</a>`);
+    expect(html).not.toContain("Private reference");
     expect(html).not.toContain("context-use://");
   });
 
@@ -165,6 +189,7 @@ describe("safe Markdown rendering", () => {
     const html = await renderMarkdown([
       `![Not media](context-use://object/${page})`,
       `[Private record](context-use://object/${missing}#secret)`,
+      `[Older missing page](context-use://document/${missing})`,
     ].join("\n\n"), {
       object: async (id) => id === page
         ? { available: true, representation: "page", href: `/app/objects/${page}` }
@@ -173,19 +198,19 @@ describe("safe Markdown rendering", () => {
 
     expect(html).toContain("Private asset unavailable");
     expect(html).toContain('<span class="private-reference">Private record</span>');
+    expect(html).toContain('<span class="private-reference">Older missing page</span>');
+    expect(html).not.toContain("[Older missing page]");
     expect(html).not.toContain("#secret");
     expect(html).not.toContain(page);
     expect(html).not.toContain(missing);
   });
 
-  test("does not resolve unsupported private links", async () => {
+  test("does not resolve private identities without an object representation", async () => {
     const id = "11111111-1111-4111-8111-111111111111";
     let lookups = 0;
     const html = await renderMarkdown([
-      `[Page](context-use://page/${id})`,
-      `![Asset](context-use://asset/${id})`,
       `[Directory](context-use://directory/${id})`,
-      `[Dashboard](/app/pages/${id})`,
+      `[Dashboard](/app/directories/${id})`,
       "[[about/intro|Wiki path]]",
     ].join("\n\n"), {
       object: async () => {
