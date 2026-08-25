@@ -14,8 +14,13 @@ describeDatabase("passkey-bound full knowledge bundle exports", () => {
     max: 1,
     options: "-c role=context_use_dashboard",
   });
+  const confirmationPool = new Pool({
+    connectionString: databaseUrl,
+    max: 1,
+    options: "-c role=context_use_confirmation",
+  });
   const bundles = new KnowledgeBundleRepository(dashboardPool);
-  const confirmations = new ConfirmationRepository(pool);
+  const confirmations = new ConfirmationRepository(confirmationPool);
   const intentIds: string[] = [];
   const passkeyId = `bundle-export-${randomUUID()}`;
   let createdOwner = false;
@@ -51,6 +56,7 @@ describeDatabase("passkey-bound full knowledge bundle exports", () => {
       throw error;
     }
     await dashboardPool.end();
+    await confirmationPool.end();
     await pool.end();
   });
 
@@ -70,6 +76,10 @@ describeDatabase("passkey-bound full knowledge bundle exports", () => {
       "SELECT count(*)::int AS count FROM knowledge_bundle_exports WHERE intent_id=$1",
       [intent.id],
     )).rows[0]!.count).toBe(1);
+    expect(await confirmations.exportIntent(intent.id)).toMatchObject({
+      owner_user_id: principal.ownerUserId,
+      session_id: principal.sessionId,
+    });
 
     await confirmations.issueChallenge("knowledge_export", intent.id, randomBytes(32).toString("base64url"));
     await expect(confirmations.claimExport(intent.id, principal)).rejects.toThrow();
