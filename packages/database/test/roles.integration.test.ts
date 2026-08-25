@@ -377,6 +377,18 @@ describeDatabase("PostgreSQL security roles", () => {
         )).rows[0]?.allowed).toBe(false);
       }
     }
+    expect((await admin.query<{ allowed: boolean }>(
+      "SELECT has_table_privilege('context_use_confirmation','knowledge_bundle_exports','SELECT') AS allowed",
+    )).rows[0]?.allowed).toBe(false);
+    expect((await admin.query<{ allowed: boolean }>(
+      "SELECT has_column_privilege('context_use_confirmation','knowledge_bundle_exports','intent_id','SELECT') AS allowed",
+    )).rows[0]?.allowed).toBe(true);
+    for (const role of ["context_use_auth", "context_use_mcp", "context_use_public"]) {
+      expect((await admin.query<{ allowed: boolean }>(
+        "SELECT has_column_privilege($1,'knowledge_bundle_exports','intent_id','SELECT') AS allowed",
+        [role],
+      )).rows[0]?.allowed).toBe(false);
+    }
   });
 
   test("full knowledge bundle confirmation and restore capabilities stay separated", async () => {
