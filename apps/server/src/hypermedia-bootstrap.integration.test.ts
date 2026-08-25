@@ -90,12 +90,12 @@ describeBootstrap("fresh hypermedia bootstrap", () => {
       await expect(admin!.query(
         `UPDATE hypermedia_bootstrap_allocations
          SET document_id=gen_random_uuid()
-         WHERE object_kind='global_guide'`,
+         WHERE document_kind='global_guide'`,
       )).rejects.toMatchObject({ code: "55000" });
     } finally {
       await admin!.query("ROLLBACK");
     }
-    const documents = hypermediaBootstrapPages(defaultHypermediaBootstrapTemplate, allocations);
+    const pages = hypermediaBootstrapPages(defaultHypermediaBootstrapTemplate, allocations);
     const completedAt = await applyHypermediaBootstrap({
       allocations,
       template: defaultHypermediaBootstrapTemplate,
@@ -109,7 +109,7 @@ describeBootstrap("fresh hypermedia bootstrap", () => {
     expect(allocations).toHaveLength(5);
     expect(completedAt).toBeTruthy();
     expect(await bootstrap.begin()).toEqual([]);
-    for (const document of documents) await bootstrap.ensurePage(document);
+    for (const page of pages) await bootstrap.ensurePage(page);
     expect(await bootstrap.complete()).toEqual(completedAt);
 
     const state = await admin!.query<{
@@ -123,7 +123,7 @@ describeBootstrap("fresh hypermedia bootstrap", () => {
       entrypoint_latched: boolean;
     }>(
       `SELECT
-         (SELECT count(*)::text FROM knowledge_pages) AS documents,
+         (SELECT count(*)::text FROM knowledge_pages) AS pages,
          (SELECT count(*)::text FROM hypermedia_document_revisions) AS revisions,
          (SELECT count(*)::text FROM knowledge_revision_contracts) AS contracts,
          (SELECT count(*)::text FROM knowledge_search) AS search,
