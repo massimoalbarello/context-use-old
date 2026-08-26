@@ -11,7 +11,7 @@ export class DashboardMetadataService {
   ) {}
 
   health() {
-    return { status: "ok" as const, version: "0.1.97", service: "dashboard" as const };
+    return { status: "ok" as const, version: "0.1.98", service: "dashboard" as const };
   }
 
   mcpEndpoint() {
