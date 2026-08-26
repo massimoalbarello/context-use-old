@@ -123,10 +123,12 @@ Knowledge and source records are private by default, and an agent cannot publish
 store credentials, access tokens, access codes or recovery secrets. Keep a sensitive
 identifier or exact location only when genuinely useful, and not in a title or summary.
 
-A published revision remains owner-curated and unchanged until the owner explicitly
-republishes. When evidence requires, an agent may revise the page's private current draft
-while preserving owner-authored prose; never imply that the public revision changed. A public
-page must not rely on a private record, page or asset being visible to its reader.
+A published page is owner-curated. Do not edit its private current draft unless the owner
+explicitly asks for that exact published page to change; new evidence, routine maintenance,
+link repair and general task scope are not permission. Put new detail on a private page
+instead. An edit remains private until the owner republishes it, when it becomes public; never
+imply that the public revision already changed. A public page must not rely on a private
+record, page or asset being visible to its reader.
 
 ## Write, audit, report
 

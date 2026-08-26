@@ -961,6 +961,12 @@ describeDatabase("PostgreSQL security roles", () => {
       "SELECT has_function_privilege('context_use_dashboard',$1,'EXECUTE') AS allowed",
       [dashboardStatus],
     )).rows[0]?.allowed).toBe(true);
+    // MCP can inspect publication state before a guarded page edit, but it has
+    // no publication mutation capability.
+    expect((await admin.query<{ allowed: boolean }>(
+      "SELECT has_function_privilege('context_use_mcp',$1,'EXECUTE') AS allowed",
+      [dashboardStatus],
+    )).rows[0]?.allowed).toBe(true);
     // Corpus deliberately inherits this read-only dashboard capability.
     expect((await admin.query<{ allowed: boolean }>(
       "SELECT has_function_privilege('context_use_corpus',$1,'EXECUTE') AS allowed",
@@ -970,7 +976,6 @@ describeDatabase("PostgreSQL security roles", () => {
       "context_use_auth",
       "context_use_backup",
       "context_use_confirmation",
-      "context_use_mcp",
       "context_use_public",
       "context_use_storage",
     ]) {

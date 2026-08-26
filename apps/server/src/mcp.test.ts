@@ -75,6 +75,16 @@ function serverWith(
     pages,
     assets: {} as AssetRepository,
     objectCatalog: {} as PrivateObjectCatalogRepository,
+    publications: {
+      async status() {
+        return {
+          public_id: null,
+          published_revision_id: null,
+          published_revision_number: null,
+          active: false,
+        };
+      },
+    },
   } satisfies McpObjectRepositories;
   const objectLinks = options.objectLinks ?? {
     async revisionIndex() { return null; },
@@ -230,6 +240,16 @@ describe("MCP knowledge tools", () => {
           return { objects: [catalogItem], next_cursor: null, has_more: false };
         },
       } as unknown as PrivateObjectCatalogRepository,
+      publications: {
+        async status() {
+          return {
+            public_id: null,
+            published_revision_id: null,
+            published_revision_number: null,
+            active: false,
+          };
+        },
+      },
     } satisfies McpObjectRepositories;
     const tools = await mcpRequest(serverWith(pages, { documents }), {
       jsonrpc: "2.0",
@@ -352,6 +372,126 @@ describe("MCP knowledge tools", () => {
       reference: `context-use://object/${documentId}`,
     });
     expect(mutations).toEqual([expect.objectContaining({ entity_type: "person" })]);
+  });
+
+  test("refuses published-page edits without explicit owner acknowledgment", async () => {
+    const objectId = "77777777-7777-4777-8777-777777777777";
+    const publishedRevisionId = "88888888-8888-4888-8888-888888888888";
+    const currentRevisionId = "99999999-9999-4999-8999-999999999999";
+    const page = {
+      object_id: objectId,
+      current_revision_id: currentRevisionId,
+      revision_number: 2,
+      entity_type: null,
+      title: "Public introduction",
+      summary: "The owner's public introduction.",
+      body_markdown: "Owner-curated body",
+      archived_at: null,
+    };
+    const updates: unknown[] = [];
+    const pages = documentsWithGuidance({
+      async get(id: string) { return id === objectId ? page : null; },
+      async update(_id: string, input: unknown) {
+        updates.push(input);
+        return { ...page, current_revision_id: crypto.randomUUID(), revision_number: 3 };
+      },
+    });
+    const objects = {
+      pages,
+      assets: {} as AssetRepository,
+      objectCatalog: {
+        async get(id: string) {
+          return id === objectId ? {
+            object_id: objectId,
+            object_kind: "page",
+            authority: "knowledge",
+            representation: "markdown",
+            lifecycle: "active",
+            current_revision_id: currentRevisionId,
+            entity_type: null,
+            title: page.title,
+            summary: page.summary,
+            filename: null,
+            content_type: null,
+            operational_roles: [],
+            updated_at: "2026-08-26T12:00:00.000Z",
+          } : null;
+        },
+      } as unknown as PrivateObjectCatalogRepository,
+      publications: {
+        async status() {
+          return {
+            public_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            published_revision_id: publishedRevisionId,
+            published_revision_number: 1,
+            active: true,
+          };
+        },
+      },
+    } satisfies McpObjectRepositories;
+    const input = {
+      object_id: objectId,
+      expected_revision_number: 2,
+      title: page.title,
+      summary: page.summary,
+      body_markdown: "Unrequested agent edit",
+      commit_message: "Edit published introduction",
+      knowledge_session_receipt: rootGuidanceReceipt,
+    };
+
+    const read = await mcpRequest(serverWith(pages, { documents: objects }), {
+      jsonrpc: "2.0",
+      id: 39,
+      method: "tools/call",
+      params: { name: "read_object", arguments: { object_id: objectId } },
+    });
+    expect(JSON.parse(read.result?.content?.[0]?.text ?? "null").publication).toEqual({
+      state: "published",
+      public_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      published_revision_id: publishedRevisionId,
+      published_revision_number: 1,
+      unpublished_changes: true,
+    });
+
+    const refused = await mcpRequest(serverWith(pages, { documents: objects }), {
+      jsonrpc: "2.0",
+      id: 40,
+      method: "tools/call",
+      params: { name: "update_page", arguments: input },
+    });
+    expect(refused.result?.isError).toBe(true);
+    expect(refused.result?.content?.[0]?.text).toContain("PUBLIC_PAGE_EDIT_BLOCKED");
+    expect(refused.result?.content?.[0]?.text).toContain("NO CHANGES WERE MADE");
+    expect(refused.result?.content?.[0]?.text)
+      .toContain("Do not retry unless the user explicitly asked you to change this exact published page");
+    expect(refused.result?.content?.[0]?.text)
+      .toContain("a general request to update the knowledge base is not permission");
+    expect(updates).toHaveLength(0);
+
+    const acknowledged = await mcpRequest(serverWith(pages, { documents: objects }), {
+      jsonrpc: "2.0",
+      id: 41,
+      method: "tools/call",
+      params: {
+        name: "update_page",
+        arguments: { ...input, acknowledge_published_page: true },
+      },
+    });
+    expect(acknowledged.result?.isError).not.toBe(true);
+    expect(updates).toEqual([expect.not.objectContaining({
+      acknowledge_published_page: expect.anything(),
+    })]);
+
+    const listed = await mcpRequest(serverWith(pages, { documents: objects }), {
+      jsonrpc: "2.0",
+      id: 42,
+      method: "tools/list",
+      params: {},
+    });
+    const updateTool = listed.result?.tools?.find(({ name }) => name === "update_page");
+    expect(updateTool?.description).toContain("Never update a published page unless");
+    expect(updateTool?.inputSchema?.properties?.acknowledge_published_page?.description)
+      .toContain("only when the owner explicitly asked");
   });
 
   test("reads a fixed, deduplicated knowledge-change window with harness-owned cursors", async () => {

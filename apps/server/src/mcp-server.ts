@@ -14,7 +14,11 @@ import {
   pageEntityTypeSchema,
   updatePageSchema,
 } from "@context-use/shared";
-import type { PrivateObjectCatalogItem } from "@context-use/database";
+import type {
+  DashboardPublicationStatus,
+  PrivateObjectCatalogItem,
+  PublicationRepository,
+} from "@context-use/database";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { config } from "./config.ts";
@@ -80,7 +84,32 @@ export type McpObjectRepositories = {
   pages: KnowledgePageRepository;
   assets: AssetRepository;
   objectCatalog: PrivateObjectCatalogRepository;
+  publications: Pick<PublicationRepository, "status">;
 };
+
+type PagePublication =
+  | { state: "private" }
+  | {
+    state: "published";
+    public_id: string | null;
+    published_revision_id: string | null;
+    published_revision_number: number | null;
+    unpublished_changes: boolean;
+  };
+
+function pagePublication(
+  status: DashboardPublicationStatus,
+  currentRevisionId: string,
+): PagePublication {
+  if (!status.active) return { state: "private" };
+  return {
+    state: "published",
+    public_id: status.public_id,
+    published_revision_id: status.published_revision_id,
+    published_revision_number: status.published_revision_number,
+    unpublished_changes: status.published_revision_id !== currentRevisionId,
+  };
+}
 
 function objectCatalogSummary(object: PrivateObjectCatalogItem) {
   return {
@@ -114,6 +143,18 @@ function pageGuidanceRequired(retryTool: string) {
     "KNOWLEDGE_GUIDE_REQUIRED",
     "Call begin_knowledge_session with {}, read the returned configured global guide, and retry with its knowledge_session_receipt.",
     `Then retry ${retryTool}.`,
+  ].join("\n\n"), true);
+}
+
+function publishedPageEdit(objectId: string, publication: Extract<PagePublication, {
+  state: "published";
+}>) {
+  return textContent([
+    "PUBLIC_PAGE_EDIT_BLOCKED",
+    "NO CHANGES WERE MADE.",
+    `Page ${objectId} is currently published and serving ${publication.published_revision_number === null ? "a pinned revision" : `revision ${publication.published_revision_number}`}. An update would create a private draft that could become public the next time the owner republishes.`,
+    "Do not retry unless the user explicitly asked you to change this exact published page. New evidence, routine maintenance, link repair, or a general request to update the knowledge base is not permission.",
+    "If the user did not make that exact request, put the information on an appropriate private page instead. If they did, retry update_page with acknowledge_published_page: true.",
   ].join("\n\n"), true);
 }
 
@@ -207,7 +248,7 @@ export async function createMcpServer(
     });
 
     server.registerTool("read_object", {
-      description: "Read one private object by stable UUID. Pages and records return current Markdown and hypermedia links; assets return metadata and a short-lived checksum-bound download request. Blob keys are never exposed.",
+      description: "Read one private object by stable UUID. Pages return current Markdown, hypermedia links and publication state; records return current Markdown and links; assets return metadata and a short-lived checksum-bound download request. Blob keys are never exposed.",
       inputSchema: z.object({ object_id: z.string().uuid() }).strict(),
       annotations: { readOnlyHint: true },
     }, async ({ object_id }) => {
@@ -216,10 +257,15 @@ export async function createMcpServer(
       if (catalog.object_kind === "page") {
         const page = await objects.pages.get(object_id);
         if (!page) return jsonContent(null);
+        const publication = pagePublication(
+          await objects.publications.status("page", object_id),
+          page.current_revision_id,
+        );
         return jsonContent({
           ...objectCatalogSummary(catalog),
           revision_number: page.revision_number,
           body_markdown: page.body_markdown,
+          publication,
           hypermedia: await hypermedia(page.object_id, page.current_revision_id),
         });
       }
@@ -274,21 +320,32 @@ export async function createMcpServer(
     });
 
     server.registerTool("update_page", {
-      description: "Create a new immutable revision of an active page by stable object UUID. Read it first and pass expected_revision_number for optimistic concurrency.",
+      description: "Create a new immutable revision of an active page by stable object UUID. Read it first and pass expected_revision_number for optimistic concurrency. Never update a published page unless the owner explicitly asked for that exact page to change.",
       inputSchema: updatePageSchema.extend({
         object_id: z.string().uuid(),
         ...mutationReceiptSchemas,
+        acknowledge_published_page: z.literal(true).optional().describe(
+          "Required for a published page. Set it only when the owner explicitly asked to change this exact published page; do not infer permission from evidence, maintenance work or general task scope.",
+        ),
       }).strict(),
       annotations: { destructiveHint: false },
     }, async ({
       object_id,
       knowledge_session_receipt,
+      acknowledge_published_page,
       ...input
     }) => {
       const existing = await objects.pages.get(object_id);
       if (!existing || existing.archived_at) return unknownObject(object_id, "update_page");
       if (!await hasCurrentGuidance(knowledge_session_receipt)) {
         return pageGuidanceRequired("update_page");
+      }
+      const publication = pagePublication(
+        await objects.publications.status("page", object_id),
+        existing.current_revision_id,
+      );
+      if (publication.state === "published" && !acknowledge_published_page) {
+        return publishedPageEdit(object_id, publication);
       }
       const updated = await objects.pages.update(object_id, input, actor);
       if (!updated) return unknownObject(object_id, "update_page");
@@ -300,6 +357,10 @@ export async function createMcpServer(
         title: updated.title,
         summary: updated.summary,
         body_markdown: updated.body_markdown,
+        publication: pagePublication(
+          await objects.publications.status("page", object_id),
+          updated.current_revision_id,
+        ),
         reference: `context-use://object/${updated.object_id}`,
       });
     });

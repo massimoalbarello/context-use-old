@@ -4,6 +4,7 @@ import {
   KnowledgePageRepository,
   KnowledgeSettingsRepository,
   PrivateObjectCatalogRepository,
+  PublicationRepository,
   SourceRecordRepository,
   createPool,
 } from "@context-use/database";
@@ -28,6 +29,7 @@ const markdownBlobs = new BrokeredMarkdownBlobStore(storage);
 const pages = new KnowledgePageRepository(pool, markdownBlobs);
 const assets = new AssetRepository(pool);
 const objectCatalog = new PrivateObjectCatalogRepository(pool);
+const publications = new PublicationRepository(pool);
 const recordObjects = new SourceRecordRepository(pool, markdownBlobs);
 const knowledgeSettings = new KnowledgeSettingsRepository(pool);
 const objectLinks = new ObjectLinkRepository(pool);
@@ -43,7 +45,7 @@ const knowledgeMcp = createMcpRequestHandler(
   recordObjects,
   knowledgeSettings,
   objectLinks,
-  { pages, assets, objectCatalog },
+  { pages, assets, objectCatalog, publications },
 );
 const upload = createMcpAssetUploadHandler(assets, storage);
 const download = createMcpAssetDownloadHandler(assets, storage);
