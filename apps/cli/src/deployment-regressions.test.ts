@@ -1030,7 +1030,7 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   expect(backupService).toContain("backup-aws-credentials:/run/context-use-aws-backup:ro");
   expect(backupService).toContain("networks: [backup_data, backup_egress]");
   expect(backupService).toContain(
-    "SCHEMA_VERSION: auth/002_better_auth.sql+application/002_harden_owner_auth.sql",
+    "SCHEMA_VERSION: auth/002_better_auth.sql+application/003_grant_bootstrap_and_migration_ledgers.sql",
   );
   expect(backupService).not.toContain("RETENTION_DAYS");
   expect(backupScript).toContain("context-use-postgres-v1");

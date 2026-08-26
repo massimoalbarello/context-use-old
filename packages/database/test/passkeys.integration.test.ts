@@ -32,6 +32,7 @@ describeDatabase("owner passkey schema", () => {
     expect(applicationMigrations.rows.map(({ version }) => version)).toEqual([
       "001_application_schema.sql",
       "002_harden_owner_auth.sql",
+      "003_grant_bootstrap_and_migration_ledgers.sql",
     ]);
 
     const relations = await admin.query<{ schema_name: string; relation_name: string }>(
