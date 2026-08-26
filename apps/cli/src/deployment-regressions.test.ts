@@ -414,6 +414,7 @@ test("restore verifies the backup, keeps traffic down on failure, migrates, and 
   expect(failureHandler).toContain("up -d postgres aws-credential-broker");
   expect(failureHandler).not.toContain("aws-credential-broker backup");
   expect(script).toContain("MIGRATOR_RECONCILE_RESTORE_OWNERSHIP=true");
+  expect(script).toContain("CONTEXT_USE_ADOPT_PENDING_RESTORE=true");
   const storage = "up -d --wait storage";
   const prepare = "--exit-code-from hypermedia-bootstrap hypermedia-bootstrap";
   const publicWeb = "up -d --wait --no-deps public-web";
@@ -627,7 +628,7 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   expect(deployScript.indexOf("CONTEXT_USE_RECOVERY_BACKUP_KEY")).toBeLessThan(deployScript.indexOf(finishServices));
   expect(deployScript).toContain("psql -X --single-transaction -v ON_ERROR_STOP=1");
   expect(deployScript).toContain(
-    "DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION pg_database_owner",
+    "DROP SCHEMA IF EXISTS auth CASCADE; DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION pg_database_owner",
   );
   expect(deployScript).toContain("GRANT USAGE ON SCHEMA public TO PUBLIC");
   expect(deployScript).toContain("context_use_restore_guard_required");
@@ -637,9 +638,13 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   expect(deployScript).toContain("-f -");
   const captureRestoreOwners = "-e MIGRATOR_PREPARE_RESTORE_OWNERSHIP=true migrate";
   const restoreBackup = 'backup fetch "${CONTEXT_USE_RECOVERY_BACKUP_KEY}"';
+  const adoptRestoredSchema = "-e CONTEXT_USE_ADOPT_PENDING_RESTORE=true migrate";
   const reconcileRestoreOwners = "-e MIGRATOR_RECONCILE_RESTORE_OWNERSHIP=true migrate";
   expect(deployScript.indexOf(captureRestoreOwners)).toBeLessThan(deployScript.indexOf(restoreBackup));
   expect(deployScript.indexOf(restoreBackup)).toBeLessThan(
+    deployScript.indexOf(adoptRestoredSchema, deployScript.indexOf(restoreBackup)),
+  );
+  expect(deployScript.indexOf(adoptRestoredSchema, deployScript.indexOf(restoreBackup))).toBeLessThan(
     deployScript.indexOf(reconcileRestoreOwners, deployScript.indexOf(restoreBackup)),
   );
   expect(backupScript).toContain("--exclude-schema=context_use_deployment_internal");
@@ -653,12 +658,14 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   // release's code against a migrating schema.
   expect(deployScript).not.toContain("stop caddy");
   const stopClients = "stop \\\n  dashboard-edge app auth private-mcp public-web confirmation storage backup";
+  const adoption = "-e CONTEXT_USE_ADOPT_LEGACY_SCHEMA=v0.1.97 migrate \\\n  bun packages/database/src/run-legacy-schema-adoption.ts";
   const migration = "--profile migration run --rm migrate";
   const restoreStorage = "up -d --wait storage";
   const prepareKnowledge = "--exit-code-from hypermedia-bootstrap hypermedia-bootstrap";
   const restorePublic = "up -d --wait --no-deps public-web";
   const restoreDashboard = "up -d --wait --no-deps \\\n  dashboard-edge";
-  expect(deployScript.indexOf(stopClients)).toBeLessThan(deployScript.indexOf(migration));
+  expect(deployScript.indexOf(stopClients)).toBeLessThan(deployScript.indexOf(adoption));
+  expect(deployScript.indexOf(adoption)).toBeLessThan(deployScript.indexOf(migration));
   expect(deployScript.indexOf(migration)).toBeLessThan(deployScript.indexOf(restoreStorage));
   expect(deployScript.indexOf(restoreStorage)).toBeLessThan(deployScript.indexOf(prepareKnowledge));
   expect(deployScript.indexOf(prepareKnowledge)).toBeLessThan(deployScript.indexOf(restorePublic));
@@ -1022,7 +1029,9 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   expect(backupService).toContain("AWS_PROFILE: context-use-backup");
   expect(backupService).toContain("backup-aws-credentials:/run/context-use-aws-backup:ro");
   expect(backupService).toContain("networks: [backup_data, backup_egress]");
-  expect(backupService).toContain("SCHEMA_VERSION: 009_add_knowledge_entity_types.sql");
+  expect(backupService).toContain(
+    "SCHEMA_VERSION: auth/002_better_auth.sql+application/002_harden_owner_auth.sql",
+  );
   expect(backupService).not.toContain("RETENTION_DAYS");
   expect(backupScript).toContain("context-use-postgres-v1");
   expect(backupScript).toContain("sha256sum -c");

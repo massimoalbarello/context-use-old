@@ -10,6 +10,9 @@ export function restoreCommands(bucket: string, key: string): string[] {
   const compose = "docker compose --env-file /data/context-use/secrets/runtime.env";
   const database = `${compose} exec -T -e PGPASSWORD postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d context_use`;
   const prepareOwnership = `${compose} --profile migration run --rm -e MIGRATOR_PREPARE_RESTORE_OWNERSHIP=true migrate`;
+  const adoptRestoredSchema = `${compose} --profile migration run --rm `
+    + "-e CONTEXT_USE_ADOPT_LEGACY_SCHEMA=v0.1.97 -e CONTEXT_USE_ADOPT_PENDING_RESTORE=true "
+    + "migrate bun packages/database/src/run-legacy-schema-adoption.ts";
   const reconcileOwnership = `${compose} --profile migration run --rm -e MIGRATOR_RECONCILE_RESTORE_OWNERSHIP=true migrate`;
   const contractSnapshot = "CREATE TEMP TABLE context_use_restore_contract_snapshot AS SELECT context_use_deployment_internal.restore_contract_fingerprint() AS fingerprint; SELECT context_use_deployment_internal.reset_default_acls_for_restore(); ";
   const restoreDatabase = `${database} --single-transaction `
@@ -17,7 +20,8 @@ export function restoreCommands(bucket: string, key: string): string[] {
     + "CREATE TEMP TABLE context_use_restore_guard_required(complete boolean NOT NULL "
     + "REFERENCES context_use_restore_guard(complete) DEFERRABLE INITIALLY DEFERRED); "
     + "INSERT INTO context_use_restore_guard_required VALUES (true); "
-    + "DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION pg_database_owner; "
+    + "DROP SCHEMA IF EXISTS auth CASCADE; DROP SCHEMA public CASCADE; "
+    + "CREATE SCHEMA public AUTHORIZATION pg_database_owner; "
     + "GRANT USAGE ON SCHEMA public TO PUBLIC' -f -";
   const retainedContractCompletion = "INSERT INTO pg_temp.context_use_restore_guard SELECT true FROM pg_temp.context_use_restore_contract_snapshot AS captured WHERE captured.fingerprint=context_use_deployment_internal.restore_contract_fingerprint();";
   const clients = "caddy dashboard-edge app auth private-mcp public-web confirmation storage";
@@ -35,6 +39,7 @@ export function restoreCommands(bucket: string, key: string): string[] {
     `{ ${compose} run --rm -T -e BACKUP_BUCKET='${bucket}' backup fetch '${key}' | gunzip && `
       + `printf '%s\\n' '${retainedContractCompletion}'; `
       + `} | ${restoreDatabase}`,
+    adoptRestoredSchema,
     reconcileOwnership,
     `${compose} up -d --wait storage`,
     `${compose} up --force-recreate --no-deps --abort-on-container-exit --exit-code-from hypermedia-bootstrap hypermedia-bootstrap`,

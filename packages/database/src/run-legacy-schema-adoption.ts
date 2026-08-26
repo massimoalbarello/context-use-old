@@ -8,6 +8,8 @@ import {
 } from "./adopt-legacy-schema.ts";
 import { loadMigrationStreams } from "./migrations/catalog.ts";
 
+const ADOPT_PENDING_RESTORE_ENV = "CONTEXT_USE_ADOPT_PENDING_RESTORE";
+
 if (process.env[LEGACY_ADOPTION_ENV] !== LEGACY_ADOPTION_CONFIRMATION) {
   throw new Error(
     `Refusing legacy schema adoption without ${LEGACY_ADOPTION_ENV}=${LEGACY_ADOPTION_CONFIRMATION}`,
@@ -38,6 +40,7 @@ try {
         client,
         targetMigrationStreams,
         applicationMigrationSql: applicationMigration.sql,
+        allowPendingRestore: process.env[ADOPT_PENDING_RESTORE_ENV] === "true",
       }),
       null,
       2,

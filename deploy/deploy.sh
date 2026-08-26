@@ -251,8 +251,13 @@ docker compose --env-file "${secrets}/runtime.env" stop \
 docker compose --env-file "${secrets}/runtime.env" stop \
   nango-auth-gateway nango-public-gateway oauth2-proxy nango-sso-redis \
   nango-jobs nango-backup nango-server nango-persist nango-orchestrator nango-redis
+# Adoption is an explicit operator step outside migration SQL. It accepts only
+# the frozen v0.1.97 schema, and is a no-op for fresh or already adopted state.
+docker compose --env-file "${secrets}/runtime.env" --profile migration run --rm \
+  -e CONTEXT_USE_ADOPT_LEGACY_SCHEMA=v0.1.97 migrate \
+  bun packages/database/src/run-legacy-schema-adoption.ts
 if [ -n "${CONTEXT_USE_RECOVERY_BACKUP_KEY}" ]; then
-  # The same-version backup was created without owners. Retain this release's exact
+  # The backup was created without owners. Retain this release's exact
   # least-privilege routine/view ownership contract outside pg_dump before the
   # restore, then the explicit post-restore reconciliation pass consumes it.
   docker compose --env-file "${secrets}/runtime.env" --profile migration run --rm \
@@ -271,7 +276,11 @@ if [ -n "${CONTEXT_USE_RECOVERY_BACKUP_KEY}" ]; then
       printf '%s\n' 'INSERT INTO pg_temp.context_use_restore_guard SELECT true FROM pg_temp.context_use_restore_contract_snapshot AS captured WHERE captured.fingerprint=context_use_deployment_internal.restore_contract_fingerprint();'
   } | docker compose --env-file "${secrets}/runtime.env" exec -T -e PGPASSWORD postgres \
     psql -X --single-transaction -v ON_ERROR_STOP=1 -U postgres -d context_use \
-    -c 'CREATE TEMP TABLE context_use_restore_contract_snapshot AS SELECT context_use_deployment_internal.restore_contract_fingerprint() AS fingerprint; SELECT context_use_deployment_internal.reset_default_acls_for_restore(); CREATE TEMP TABLE context_use_restore_guard(complete boolean PRIMARY KEY); CREATE TEMP TABLE context_use_restore_guard_required(complete boolean NOT NULL REFERENCES context_use_restore_guard(complete) DEFERRABLE INITIALLY DEFERRED); INSERT INTO context_use_restore_guard_required VALUES (true); DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION pg_database_owner; GRANT USAGE ON SCHEMA public TO PUBLIC' -f -
+    -c 'CREATE TEMP TABLE context_use_restore_contract_snapshot AS SELECT context_use_deployment_internal.restore_contract_fingerprint() AS fingerprint; SELECT context_use_deployment_internal.reset_default_acls_for_restore(); CREATE TEMP TABLE context_use_restore_guard(complete boolean PRIMARY KEY); CREATE TEMP TABLE context_use_restore_guard_required(complete boolean NOT NULL REFERENCES context_use_restore_guard(complete) DEFERRABLE INITIALLY DEFERRED); INSERT INTO context_use_restore_guard_required VALUES (true); DROP SCHEMA IF EXISTS auth CASCADE; DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION pg_database_owner; GRANT USAGE ON SCHEMA public TO PUBLIC' -f -
+  docker compose --env-file "${secrets}/runtime.env" --profile migration run --rm \
+    -e CONTEXT_USE_ADOPT_LEGACY_SCHEMA=v0.1.97 \
+    -e CONTEXT_USE_ADOPT_PENDING_RESTORE=true migrate \
+    bun packages/database/src/run-legacy-schema-adoption.ts
   docker compose --env-file "${secrets}/runtime.env" --profile migration run --rm \
     -e MIGRATOR_RECONCILE_RESTORE_OWNERSHIP=true migrate
 fi

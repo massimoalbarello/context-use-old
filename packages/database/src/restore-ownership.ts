@@ -1366,9 +1366,17 @@ async function validateCurrentSchemaAndDefaultAcls(
 export async function validatePendingRestoreOwnershipForRelease(
   client: Client,
   migrations: readonly RestoreOwnershipMigration[],
+  { withinTransaction = false }: { withinTransaction?: boolean } = {},
 ): Promise<number> {
   if (!(await restoreOwnershipContractPending(client))) {
     throw new Error("No pending restore ownership contract exists for this restore phase");
+  }
+  if (withinTransaction) {
+    await lockContract(client);
+    await client.query("SET LOCAL search_path=pg_catalog");
+    const admin = await administrator(client);
+    const contract = await readAndValidateContract(client, admin, migrations);
+    return contract.objects.length;
   }
   await client.query("BEGIN");
   try {

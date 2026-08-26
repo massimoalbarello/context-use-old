@@ -94,6 +94,7 @@ test("Context Use restore captures and reconciles privileged object ownership ar
   const stop = "stop caddy dashboard-edge app auth private-mcp public-web confirmation storage";
   const capture = "-e MIGRATOR_PREPARE_RESTORE_OWNERSHIP=true migrate";
   const restore = "backup fetch 'postgres/2026-07-30T12-34-56Z.sql.gz'";
+  const adopt = "-e CONTEXT_USE_ADOPT_PENDING_RESTORE=true migrate bun packages/database/src/run-legacy-schema-adoption.ts";
   const reconcile = "-e MIGRATOR_RECONCILE_RESTORE_OWNERSHIP=true migrate";
 
   expect(script.indexOf(stopBackup)).toBeLessThan(script.indexOf(pendingCheck));
@@ -101,8 +102,11 @@ test("Context Use restore captures and reconciles privileged object ownership ar
   expect(script.indexOf(safetyBackup)).toBeLessThan(script.indexOf(stop));
   expect(script.indexOf(stop)).toBeLessThan(script.indexOf(capture));
   expect(script.indexOf(capture)).toBeLessThan(script.indexOf(restore));
-  expect(script.indexOf(restore)).toBeLessThan(script.indexOf(reconcile));
-  expect(script).toContain("DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION pg_database_owner");
+  expect(script.indexOf(restore)).toBeLessThan(script.indexOf(adopt));
+  expect(script.indexOf(adopt)).toBeLessThan(script.indexOf(reconcile));
+  expect(script).toContain(
+    "DROP SCHEMA IF EXISTS auth CASCADE; DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION pg_database_owner",
+  );
   expect(script).toContain("GRANT USAGE ON SCHEMA public TO PUBLIC");
   expect(script).toContain("context_use_restore_guard_required");
   expect(script).toContain("restore_contract_fingerprint()");
