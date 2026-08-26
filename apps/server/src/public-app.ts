@@ -1,10 +1,12 @@
 import {
   mapConcurrently,
-  PublicRepository,
   createPool,
+} from "@context-use/database";
+import {
+  PublicRepository,
   type PublicActiveAssetRoute,
   type PublicActivePageRoute,
-} from "@context-use/database";
+} from "@context-use/database/publication";
 import { publicRouteSchema } from "@context-use/shared";
 import { Elysia } from "elysia";
 import { config } from "./config.ts";

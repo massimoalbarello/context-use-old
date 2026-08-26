@@ -11,7 +11,21 @@ database integration support. It does not own HTTP behavior or cross-resource bu
 - Every query uses explicit columns and schema-qualified relations once the clean baseline lands.
 - Transactions and lock ordering are part of a repository's contract and deserve integration tests.
 
+Publication is the reference layout for a concern that spans trust domains:
+
+- `src/publication/models.ts` owns shared database projections only.
+- Each file in `src/publication/*-repository.ts` owns one caller's SQL capability.
+- `src/publication/index.ts` is the deliberate package surface exported as
+  `@context-use/database/publication`.
+
+Do not put dashboard, storage, and anonymous-public queries back into one repository class merely
+because they operate on related tables.
+
 ## Migration streams
+
+Migration orchestration is split under `src/migrations`: catalog loading, ledger verification and
+transactional application, and role-password reconciliation are separate mechanisms. The executable
+`src/migrate.ts` remains only the composition root for restore coordination and those mechanisms.
 
 The completed refactor has two independent, ordered migration streams:
 

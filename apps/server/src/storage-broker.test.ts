@@ -190,7 +190,12 @@ describe("storage broker capabilities", () => {
           }],
         },
       }),
-      finalizeIntent: async (token: string, receipt: unknown) => { finalized = { token, receipt }; },
+      finalizeIntent: async ({ claimToken: token, receipt }: {
+        claimToken: string;
+        receipt: unknown;
+      }) => {
+        finalized = { token, receipt };
+      },
     };
     const app = createStorageBrokerApp({
       storage,
@@ -263,7 +268,9 @@ describe("storage broker capabilities", () => {
           target_projection: [] as [],
         },
       }),
-      finalizeIntent: async (_token: string, receipt: unknown) => { finalizations.push(receipt); },
+      finalizeIntent: async ({ receipt }: { receipt: unknown }) => {
+        finalizations.push(receipt);
+      },
     };
     const left = createStorageBrokerApp({
       storage,
