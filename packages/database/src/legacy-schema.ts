@@ -67,7 +67,9 @@ export const BETTER_AUTH_TABLES = [
 // digest deliberately excludes row data and includes only the auth tables'
 // structural catalog surface and privileges.
 export const LEGACY_AUTH_STRUCTURE_FINGERPRINT =
-  "29896142b2cec5923a294a2c61440c8cc5e2e47f11524e280f58c09a2df0d010";
+  "c7adf4a9d73e65b5eda4429600b183998052f757434e12d80c711e28e8332764";
+export const ADOPTED_AUTH_STRUCTURE_FINGERPRINT =
+  "197fc54f51f98518a779c83becc308df070b2c361228636be9f7c07c0d2140e4";
 
 type AuthStructureRow = {
   kind: string;
@@ -78,6 +80,7 @@ type AuthStructureRow = {
 export type LegacySchemaInspection =
   | { state: "fresh" }
   | { state: "legacy-v0.1.97"; authStructureFingerprint: string }
+  | { state: "legacy-auth-adopted"; authStructureFingerprint: string }
   | { state: "unsupported"; reasons: string[] };
 
 export function legacyStateFromInspection({
@@ -117,21 +120,47 @@ export function legacyStateFromInspection({
     schemas.push(relation.schema);
     locations.set(relation.table, schemas);
   }
+  const legacyLocations: string[] = [];
+  const adoptedLocations: string[] = [];
+  let invalidLocation = false;
   for (const table of BETTER_AUTH_TABLES) {
     const schemas = locations.get(table) ?? [];
-    if (schemas.length !== 1 || schemas[0] !== "public") {
+    if (schemas.length === 1 && schemas[0] === "public") {
+      legacyLocations.push(table);
+    } else if (schemas.length === 1 && schemas[0] === "auth") {
+      adoptedLocations.push(table);
+    } else {
+      invalidLocation = true;
       reasons.push(
-        `expected public.${table} exactly once, found ${schemas.length ? schemas.join(", ") : "nothing"}`,
+        `expected ${table} exactly once in public or auth, found ${schemas.length ? schemas.join(", ") : "nothing"}`,
       );
     }
   }
-  if (hasAuthSchema) {
-    reasons.push("expected the auth schema to be absent");
+  const unexpectedAuthRelations = relations
+    .filter(
+      ({ schema, table }) =>
+        schema === "auth" && !(BETTER_AUTH_TABLES as readonly string[]).includes(table),
+    )
+    .map(({ table }) => table);
+  if (unexpectedAuthRelations.length) {
+    reasons.push(`unexpected relations in auth: ${unexpectedAuthRelations.join(", ")}`);
   }
 
-  if (authStructureFingerprint !== LEGACY_AUTH_STRUCTURE_FINGERPRINT) {
+  const legacyLocation = legacyLocations.length === BETTER_AUTH_TABLES.length && !hasAuthSchema;
+  const adoptedLocation = adoptedLocations.length === BETTER_AUTH_TABLES.length && hasAuthSchema;
+  if (!legacyLocation && !adoptedLocation && !invalidLocation) {
+    reasons.push("Better Auth tables are split between legacy and adopted schemas");
+  }
+
+  const expectedFingerprint = legacyLocation
+    ? LEGACY_AUTH_STRUCTURE_FINGERPRINT
+    : adoptedLocation
+      ? ADOPTED_AUTH_STRUCTURE_FINGERPRINT
+      : null;
+  if (expectedFingerprint && authStructureFingerprint !== expectedFingerprint) {
     reasons.push(
-      `Better Auth table structure does not match v0.1.97: expected ${LEGACY_AUTH_STRUCTURE_FINGERPRINT}, ` +
+      `Better Auth table structure does not match ${legacyLocation ? "v0.1.97" : "the adopted state"}: ` +
+        `expected ${expectedFingerprint}, ` +
         `found ${authStructureFingerprint ?? "nothing"}`,
     );
   }
@@ -141,7 +170,10 @@ export function legacyStateFromInspection({
   if (!authStructureFingerprint) {
     throw new Error("Legacy auth structure fingerprint invariant failed");
   }
-  return { state: "legacy-v0.1.97", authStructureFingerprint };
+  return {
+    state: legacyLocation ? "legacy-v0.1.97" : "legacy-auth-adopted",
+    authStructureFingerprint,
+  };
 }
 
 export async function authStructureFingerprint(client: Client): Promise<string | null> {
@@ -159,6 +191,20 @@ export async function authStructureFingerprint(client: Client): Promise<string |
     )
     SELECT kind,identity,definition
     FROM (
+      SELECT
+        'schema'::text AS kind,
+        pg_catalog.quote_ident(namespace.nspname) AS identity,
+        concat_ws('|',owner.rolname,COALESCE(namespace.nspacl::text,'')) AS definition
+      FROM pg_catalog.pg_namespace AS namespace
+      JOIN pg_catalog.pg_roles AS owner ON owner.oid=namespace.nspowner
+      WHERE namespace.oid IN (
+        SELECT relation.relnamespace
+        FROM auth_relations AS selected
+        JOIN pg_catalog.pg_class AS relation ON relation.oid=selected.oid
+      )
+
+      UNION ALL
+
       SELECT
         'relation'::text AS kind,
         format('%I.%I',namespace.nspname,relation.relname) AS identity,
@@ -261,7 +307,7 @@ export async function inspectLegacySchema(client: Client): Promise<LegacySchemaI
     SELECT namespace.nspname AS schema,relation.relname AS table
     FROM pg_catalog.pg_class AS relation
     JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid=relation.relnamespace
-    WHERE relation.relkind IN ('r','p')
+    WHERE relation.relkind IN ('r','p','v','m','S','f')
       AND namespace.nspname NOT IN ('pg_catalog','information_schema')
       AND namespace.nspname NOT LIKE 'pg_toast%'
       AND namespace.nspname NOT LIKE 'pg_temp_%'

@@ -44,6 +44,10 @@ The read-only inspector accepts only the frozen v0.1.97 ledger and Better Auth t
 unknown or manually changed states must be investigated instead of being coerced into the new
 history.
 
+The legacy adopter is a separate, explicitly confirmed administrative command. It moves the
+Better Auth tables without rewriting rows, proves table OIDs and row counts are unchanged, and
+must converge after a retry. Never invoke it from application startup or from a migration file.
+
 ## Schema-only migration rule
 
 A migration describes schema and durable database behavior. It never migrates application data.
