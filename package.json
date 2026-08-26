@@ -17,6 +17,12 @@
     "dev:web": "bun --cwd apps/web dev",
     "local": "bun scripts/local-stack.ts",
     "build": "bun run --filter '@context-use/*' build",
+    "check:all": "bun run check:types && bun run check:codestyle && bun run check:migrations && bun test apps packages",
+    "check:codestyle": "bun scripts/check-codestyle.ts",
+    "check:codestyle:all": "biome check .",
+    "check:migrations": "bun scripts/check-migrations.ts",
+    "check:types": "bun run typecheck",
+    "fix:codestyle": "bun scripts/check-codestyle.ts --write",
     "typecheck": "bun run --filter '@context-use/*' typecheck",
     "test": "bun test apps packages",
     "openclaw:mount": "node packages/openclaw-context-use/bin.js mount --link packages/openclaw-context-use",
@@ -30,6 +36,7 @@
     "db:test:roles": "bun --cwd packages/database test:roles"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.6",
     "@types/bun": "1.3.8",
     "typescript": "5.9.3",
     "zod": "4.4.3"
