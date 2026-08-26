@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "initialize": "bun src/initialize.ts",
+    "inspect:legacy": "bun src/inspect-legacy-schema.ts",
     "migrate": "bun src/migrate.ts",
     "reset:development": "bun src/reset-development.ts",
     "mark:disposable": "bun src/mark-disposable.ts",
