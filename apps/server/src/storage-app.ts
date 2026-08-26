@@ -1,670 +1,56 @@
-import { createHash, timingSafeEqual } from "node:crypto";
-import { unlink } from "node:fs/promises";
-import { chmod } from "node:fs/promises";
+import { chmod, unlink } from "node:fs/promises";
 import {
   AssetRepository,
   BlobMaintenanceRepository,
   KnowledgeBundleRepository,
-  MAX_MARKDOWN_BLOB_BYTES,
   createPool,
-  extractObjectLinks,
 } from "@context-use/database";
-import {
-  StoragePublicationRepository,
-  type PublicationObjectClaim,
-  type PublicationWriteAuthorization,
-} from "@context-use/database/publication";
-import type { PublicationArtifactReceipt } from "@context-use/shared";
-import { Elysia } from "elysia";
-import { z } from "zod";
+import { StoragePublicationRepository } from "@context-use/database/publication";
 import { config } from "./config.ts";
-import {
-  BlobAlreadyExistsError,
-  S3Storage,
-  type ByteRange,
-  type BlobStorageBackend,
-  type StoredBlob,
-} from "./storage.ts";
+import { createStorageBrokerApp } from "./routes/storage/controller.ts";
+import { reconcileDocumentLinks } from "./services/storage-maintenance-service.ts";
+import { S3Storage } from "./storage.ts";
 import { disableStreamingRequestIdleTimeout } from "./streaming-timeout.ts";
-import { projectPublicMarkdown } from "./public-markdown.ts";
 
-const blobKeySchema = z.string().regex(/^blobs\/[a-f0-9-]{36}$/);
-const legacyAssetKeySchema = z.string().regex(/^objects\/[a-f0-9-]{36}$/);
-const legacyPrivatePageKeySchema = z.string().regex(/^documents\/private\/[a-f0-9-]{36}\.md$/);
-const privateBlobKeySchema = z.union([blobKeySchema, legacyAssetKeySchema, legacyPrivatePageKeySchema]);
-const assetBlobKeySchema = z.union([blobKeySchema, legacyAssetKeySchema]);
-const pageBlobKeySchema = z.union([blobKeySchema, legacyPrivatePageKeySchema]);
-const publicPageKeySchema = z.string().regex(/^documents\/public\/[a-f0-9-]{36}\.md$/);
-const publicAssetArtifactKeySchema = z.string().regex(/^artifacts\/public\/[a-f0-9-]{36}$/);
-const bundleObjectKeySchema = z.string().regex(/^bundles\/[a-f0-9-]{36}\.cuse$/);
-const importPartKeySchema = z.string().regex(/^imports\/[a-f0-9-]{36}\/parts\/[0-9]{1,6}$/);
-const importedObjectKeySchema = z.union([
-  privateBlobKeySchema,
-  publicPageKeySchema,
-  publicAssetArtifactKeySchema,
-]);
-const verificationSchema = z.object({
-  // Public projection artifacts are verify-only through this privileged
-  // integrity endpoint. Accepting their exact key shape here does not expose
-  // either the private or public read routes to the dashboard caller.
-  blob_key: z.union([privateBlobKeySchema, publicPageKeySchema, publicAssetArtifactKeySchema]),
-  size_bytes: z.number().int().nonnegative().max(5_000_000_000),
-  content_hash: z.string().regex(/^[a-f0-9]{64}$/),
-}).strict();
+export { createStorageBrokerApp } from "./routes/storage/controller.ts";
+export { reconcileDocumentLinks } from "./services/storage-maintenance-service.ts";
+export { materializePublicationArtifact } from "./services/storage-publication-service.ts";
 
-function sameSecret(left: string, right: string): boolean {
-  if (!left || !right) return false;
-  const a = Buffer.from(left);
-  const b = Buffer.from(right);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
-function bearer(request: Request): string {
-  return request.headers.get("authorization")?.match(/^Bearer ([A-Za-z0-9_-]{32,256})$/)?.[1] ?? "";
-}
-
-type StorageBrokerTokens = { dashboard: string; mcp: string; public: string };
-
-type PrivateAssetLookup = {
-  getForStorage(id: string): Promise<{
-    object_id: string;
-    blob_key: string;
-    filename: string;
-    content_type: string;
-    size_bytes: number | string;
-    content_hash: string;
-  } | null>;
-  getDeletedForStorage(id: string): Promise<{
-    object_id: string;
-    blob_key: string;
-  } | null>;
-};
-
-function privateCapability(
-  request: Request,
-  tokens: StorageBrokerTokens,
-): "dashboard" | "mcp" | null {
-  const supplied = bearer(request);
-  if (sameSecret(supplied, tokens.dashboard)) return "dashboard";
-  if (sameSecret(supplied, tokens.mcp)) return "mcp";
-  return null;
-}
-
-function publicAuthorized(request: Request, tokens: StorageBrokerTokens): boolean {
-  const supplied = bearer(request);
-  return sameSecret(supplied, tokens.public);
-}
-
-function parseRange(value: string | null): ByteRange | undefined {
-  const match = value?.match(/^bytes=(\d+)-(\d+)$/);
-  if (!match) return undefined;
-  const start = Number(match[1]);
-  const end = Number(match[2]);
-  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start<0 || end<start) return undefined;
-  return { start, end };
-}
-
-function filenameHeader(request: Request): string {
-  const encoded = z.string().min(1).max(16_000).parse(request.headers.get("x-filename"));
-  return z.string().min(1).max(1_024).parse(decodeURIComponent(encoded));
-}
-
-const defaultStorage: BlobStorageBackend = new S3Storage(undefined, {
+const storage = new S3Storage(undefined, {
   region: config.AWS_REGION,
   bucket: config.ASSET_BUCKET,
   kmsKeyId: config.KMS_KEY_ID || null,
 });
-
-const storagePool = createPool(config.STORAGE_DATABASE_URL, { application_name: "context-use-storage-boundary" });
-const defaultPrivateAssets = new AssetRepository(storagePool);
-const defaultPublications = new StoragePublicationRepository(storagePool);
-const defaultKnowledgeBundles = new KnowledgeBundleRepository(storagePool);
-const blobMaintenance = new BlobMaintenanceRepository(storagePool);
-const defaultTokens: StorageBrokerTokens = {
-  dashboard: config.STORAGE_DASHBOARD_TOKEN,
-  mcp: config.STORAGE_MCP_TOKEN,
-  public: config.STORAGE_PUBLIC_TOKEN,
-};
-
-function denied(): Response {
-  return new Response("Not found", { status: 404, headers: { "cache-control": "no-store" } });
-}
-
-async function readBlob(
-  storage: BlobStorageBackend,
-  blobKey: string,
-  range: ByteRange | undefined,
-): Promise<Response> {
-  try {
-    const body = await storage.read(blobKey, range);
-    return new Response(body, { status: range ? 206 : 200, headers: { "cache-control": "no-store" } });
-  } catch {
-    return denied();
-  }
-}
-
-async function bundleObjectResponse(
-  request: Request,
-  storage: BlobStorageBackend,
-  blobKey: string,
-): Promise<Response> {
-  const metadata = await storage.inspectBundle(blobKey);
-  if (!metadata) return denied();
-  const range = parseRange(request.headers.get("range"));
-  if (request.headers.has("range") && !range) return denied();
-  if (range && (range.start >= metadata.sizeBytes || range.end >= metadata.sizeBytes)) return denied();
-  const body = request.method === "HEAD" ? null : await storage.read(blobKey, range);
-  const contentLength = range ? range.end - range.start + 1 : metadata.sizeBytes;
-  return new Response(body, {
-    status: range ? 206 : 200,
-    headers: {
-      "accept-ranges": "bytes",
-      "cache-control": "no-store",
-      "content-length": String(contentLength),
-      "content-type": "application/vnd.context-use.knowledge-bundle",
-      "x-content-sha256": metadata.contentHash,
-      ...(range ? { "content-range": `bytes ${range.start}-${range.end}/${metadata.sizeBytes}` } : {}),
-    },
-  });
-}
-
-type PublicationClaims = Pick<StoragePublicationRepository,
-  "claimIntent" | "finalizeIntent">
-  & Partial<Pick<StoragePublicationRepository, "resolve">>;
-
-function exactNumber(value: number | string, maximum: number): number {
-  const result = Number(value);
-  if (!Number.isSafeInteger(result) || result < 0 || result > maximum) {
-    throw new Error("Publication artifact size is not safely representable");
-  }
-  return result;
-}
-
-async function verifiedSourceBody(
-  storage: BlobStorageBackend,
-  authorization: PublicationWriteAuthorization,
-): Promise<BodyInit> {
-  const size = exactNumber(authorization.source_body_size_bytes, 5_000_000_000);
-  if (!await storage.verify(
-    authorization.source_body_object_key,
-    size,
-    authorization.source_body_content_hash,
-  )) throw new Error("Publication source bytes are unavailable or corrupt");
-  return storage.read(authorization.source_body_object_key);
-}
-
-function sameUuidSet(left: string[], right: string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
-async function writeClaimedArtifact(input: {
-  storage: BlobStorageBackend;
-  claim: PublicationObjectClaim<PublicationWriteAuthorization>;
-}): Promise<{
-  claimToken: string;
-  receipt: PublicationArtifactReceipt | null;
-}> {
-  const { storage, claim } = input;
-  if (claim.finalized) {
-    const size = exactNumber(claim.body_size_bytes, 5_000_000_000);
-    if (!await storage.verify(claim.body_object_key, size, claim.body_content_hash)) {
-      throw new Error("Finalized publication artifact is unavailable or corrupt");
-    }
-    return { claimToken: claim.claim_token, receipt: null };
-  }
-
-  const authorization = claim.authorization;
-  const page = authorization.target_kind === "page";
-  const project = page;
-  let body: ReadableStream<Uint8Array> | null;
-  let sizeBytes: number;
-  let contentHash: string;
-  let observedPublicIds: string[];
-  if (project) {
-    const source = await new Response(await verifiedSourceBody(storage, authorization)).text();
-    const projected = projectPublicMarkdown(source, authorization.target_projection);
-    observedPublicIds = projected.observedPublicIds;
-    if (!sameUuidSet(observedPublicIds, authorization.projected_target_public_ids)) {
-      throw new Error("Public projection did not observe the exact frozen UUID set");
-    }
-    const bytes = Buffer.from(projected.bodyMarkdown, "utf8");
-    sizeBytes = bytes.byteLength;
-    contentHash = createHash("sha256").update(bytes).digest("hex");
-    body = new Blob([bytes]).stream();
-  } else {
-    sizeBytes = exactNumber(authorization.source_body_size_bytes, 5_000_000_000);
-    contentHash = authorization.source_body_content_hash;
-    observedPublicIds = authorization.projected_target_public_ids;
-    const source = await verifiedSourceBody(storage, authorization);
-    body = new Response(source).body;
-  }
-  const maximum = exactNumber(authorization.max_body_size_bytes, 5_000_000_000);
-  if (sizeBytes > maximum) throw new Error("Publication artifact exceeds its frozen size limit");
-  const stored: StoredBlob = {
-    id: authorization.artifact_id,
-    blobKey: authorization.body_object_key,
-    filename: page
-      ? `${authorization.artifact_id}.md`
-      : authorization.public_filename!,
-    contentType: page
-      ? "text/markdown; charset=utf-8"
-      : authorization.public_content_type!,
-    sizeBytes,
-    contentHash,
-  };
-  try {
-    await storage.writeOnce(stored, body);
-  } catch (error) {
-    if (!(error instanceof BlobAlreadyExistsError)) throw error;
-  }
-  if (!await storage.verify(stored.blobKey, sizeBytes, contentHash)) {
-    throw new Error("Conditional publication artifact write did not retain the exact bytes");
-  }
-
-  const target = authorization;
-  const receipt: PublicationArtifactReceipt = target.target_kind === "page"
-      ? {
-        intent_id: target.intent_id,
-        target_kind: "page",
-        body_size_bytes: sizeBytes,
-        body_content_hash: contentHash,
-        public_title: target.public_title,
-        public_summary: target.public_summary,
-        public_last_edited_at: target.public_last_edited_at,
-        projected_target_public_ids: target.projected_target_public_ids,
-        observed_public_uuid_tokens: observedPublicIds,
-        projection_receipt_hash: target.projection_receipt_hash,
-      }
-      : {
-        intent_id: target.intent_id,
-        target_kind: "asset",
-        body_size_bytes: sizeBytes,
-        body_content_hash: contentHash,
-        public_filename: target.public_filename,
-        public_content_type: target.public_content_type,
-        ...(target.public_width === null ? {} : { public_width: target.public_width }),
-        ...(target.public_height === null ? {} : { public_height: target.public_height }),
-        ...(target.public_duration_seconds === null
-          ? {}
-          : { public_duration_seconds: target.public_duration_seconds }),
-      };
-  return { claimToken: claim.claim_token, receipt };
-}
-
-export async function materializePublicationArtifact(input: {
-  storage: BlobStorageBackend;
-  claims: PublicationClaims;
-  allocationId: string;
-}): Promise<void> {
-  const claim = await input.claims.claimIntent({ intentId: input.allocationId });
-  const written = await writeClaimedArtifact({
-    storage: input.storage,
-    claim,
-  });
-  if (!written.receipt) return;
-  await input.claims.finalizeIntent({
-    claimToken: written.claimToken,
-    receipt: written.receipt,
-  });
-}
-
-export function createStorageBrokerApp(input: {
-  storage: BlobStorageBackend;
-  privateAssets: PrivateAssetLookup;
-  publications?: PublicationClaims;
-  knowledgeBundles?: Pick<KnowledgeBundleRepository, "importBlobAuthorization">;
-  tokens: StorageBrokerTokens;
-}) {
-  const { storage, privateAssets, publications, knowledgeBundles, tokens } = input;
-  const activeWrites = new Set<string>();
-  return new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
-  .onError(() => denied())
-  .get("/health", () => ({ status: "ok" }))
-  .put("/private/blob", async ({ request }) => {
-    if (!privateCapability(request, tokens)) return denied();
-    const sizeBytes = Number(request.headers.get("content-length"));
-    const asset = {
-      id: z.string().uuid().parse(request.headers.get("x-asset-id")),
-      blobKey: blobKeySchema.parse(request.headers.get("x-blob-key")),
-      filename: filenameHeader(request),
-      contentType: z.string().min(1).max(255).parse(request.headers.get("x-content-type")),
-      sizeBytes: z.number().int().nonnegative().max(5_000_000_000).parse(sizeBytes),
-      contentHash: z.string().regex(/^[a-f0-9]{64}$/).parse(request.headers.get("x-content-sha256")),
-    };
-    if (asset.blobKey !== `blobs/${asset.id}`) return denied();
-    const expected = await privateAssets.getForStorage(asset.id);
-    if (!expected
-        || expected.blob_key !== asset.blobKey
-        || expected.filename !== asset.filename
-        || expected.content_type !== asset.contentType
-        || Number(expected.size_bytes) !== asset.sizeBytes
-        || expected.content_hash !== asset.contentHash) return denied();
-    if (activeWrites.has(asset.blobKey)) return denied();
-    activeWrites.add(asset.blobKey);
-    try {
-      // Asset bytes are immutable. This blocks a compromised MCP process from
-      // replacing a private or published object whose key it can read.
-      if (await storage.exists(asset.blobKey)) return denied();
-      await storage.write(asset, request.body);
-      return new Response(null, { status: 204 });
-    } finally {
-      activeWrites.delete(asset.blobKey);
-    }
-  }, { parse: "none" })
-  .put("/private/markdown-blob", async ({ request }) => {
-    if (!privateCapability(request, tokens)) return denied();
-    const revisionId = z.string().uuid().parse(request.headers.get("x-page-revision-id"));
-    const blobKey = blobKeySchema.parse(request.headers.get("x-blob-key"));
-    const sizeBytes = z.number().int().nonnegative().max(MAX_MARKDOWN_BLOB_BYTES)
-      .parse(Number(request.headers.get("content-length")));
-    const contentHash = z.string().regex(/^[a-f0-9]{64}$/)
-      .parse(request.headers.get("x-content-sha256"));
-    if (blobKey !== `blobs/${revisionId}`) return denied();
-    if (activeWrites.has(blobKey)) return denied();
-    const blob = {
-      id: revisionId,
-      blobKey,
-      filename: `${revisionId}.md`,
-      contentType: "text/markdown; charset=utf-8",
-      sizeBytes,
-      contentHash,
-    };
-    if (await storage.exists(blobKey)) {
-      return await storage.verify(blobKey, sizeBytes, contentHash)
-        ? new Response(null, { status: 204 })
-        : denied();
-    }
-    activeWrites.add(blobKey);
-    try {
-      await storage.write(blob, request.body);
-      return new Response(null, { status: 204 });
-    } finally {
-      activeWrites.delete(blobKey);
-    }
-  }, { parse: "none" })
-  .get("/private/blob", async ({ request, query }) => {
-    if (!privateCapability(request, tokens)) return denied();
-    return readBlob(storage, assetBlobKeySchema.parse(query.key), parseRange(request.headers.get("range")));
-  })
-  .get("/private/markdown-blob", async ({ request, query }) => {
-    if (!privateCapability(request, tokens)) return denied();
-    return readBlob(
-      storage,
-      pageBlobKeySchema.parse(query.key),
-      parseRange(request.headers.get("range")),
-    );
-  })
-  .get("/private/bundle-source", async ({ request, query }) => {
-    if (privateCapability(request, tokens) !== "dashboard") return denied();
-    return readBlob(
-      storage,
-      z.union([publicPageKeySchema, publicAssetArtifactKeySchema]).parse(query.key),
-      parseRange(request.headers.get("range")),
-    );
-  })
-  .put("/private/bundle", async ({ request, query }) => {
-    if (privateCapability(request, tokens) !== "dashboard") return denied();
-    const blobKey = bundleObjectKeySchema.parse(query.key);
-    const existing = await storage.inspectBundle(blobKey);
-    if (existing) return Response.json({
-      size_bytes: existing.sizeBytes,
-      content_hash: existing.contentHash,
-    }, { headers: { "cache-control": "no-store" } });
-    if (activeWrites.has(blobKey)) {
-      return new Response("Bundle already exists", { status: 409, headers: { "cache-control": "no-store" } });
-    }
-    activeWrites.add(blobKey);
-    try {
-      const metadata = await storage.writeBundle(blobKey, request.body);
-      return Response.json({
-        size_bytes: metadata.sizeBytes,
-        content_hash: metadata.contentHash,
-      }, { status: 201, headers: { "cache-control": "no-store" } });
-    } finally {
-      activeWrites.delete(blobKey);
-    }
-  }, { parse: "none" })
-  .put("/private/import-part", async ({ request }) => {
-    if (privateCapability(request, tokens) !== "dashboard") return denied();
-    const importId = z.string().uuid().parse(request.headers.get("x-import-id"));
-    const partNumber = z.number().int().nonnegative().max(99_999)
-      .parse(Number(request.headers.get("x-part-number")));
-    const blobKey = importPartKeySchema.parse(request.headers.get("x-blob-key"));
-    const sizeBytes = z.number().int().positive().max(64 * 1024 * 1024)
-      .parse(Number(request.headers.get("content-length")));
-    const contentHash = z.string().regex(/^[a-f0-9]{64}$/)
-      .parse(request.headers.get("x-content-sha256"));
-    if (blobKey !== `imports/${importId}/parts/${partNumber}`) return denied();
-    const existing = await storage.inspectImportPart(blobKey);
-    if (existing) {
-      return existing.sizeBytes === sizeBytes && existing.contentHash === contentHash
-        ? new Response(null, { status: 204 })
-        : denied();
-    }
-    if (activeWrites.has(blobKey)) return denied();
-    activeWrites.add(blobKey);
-    try {
-      await storage.writeImportPart({
-        id: importId,
-        blobKey,
-        filename: `${partNumber}.part`,
-        contentType: "application/octet-stream",
-        sizeBytes,
-        contentHash,
-      }, request.body);
-      return new Response(null, { status: 204 });
-    } finally {
-      activeWrites.delete(blobKey);
-    }
-  }, { parse: "none" })
-  .put("/private/import-blob", async ({ request }) => {
-    if (privateCapability(request, tokens) !== "dashboard" || !knowledgeBundles) return denied();
-    const importId = z.string().uuid().parse(request.headers.get("x-import-id"));
-    const blobKey = importedObjectKeySchema.parse(request.headers.get("x-blob-key"));
-    const contentType = z.string().min(1).max(255).parse(request.headers.get("x-content-type"));
-    const sizeBytes = z.number().int().nonnegative().max(5_000_000_000)
-      .parse(Number(request.headers.get("content-length")));
-    const contentHash = z.string().regex(/^[a-f0-9]{64}$/)
-      .parse(request.headers.get("x-content-sha256"));
-    const authorization = await knowledgeBundles.importBlobAuthorization(importId, blobKey);
-    if (!authorization || authorization.status !== "restoring" || !authorization.confirmed_at
-        || authorization.blob_key !== blobKey
-        || new Date(authorization.expires_at).getTime() <= Date.now()
-        || Number(authorization.size_bytes) !== sizeBytes
-        || authorization.content_hash !== contentHash
-        || authorization.content_type !== contentType) return denied();
-    if (await storage.exists(blobKey)) {
-      return await storage.verify(blobKey, sizeBytes, contentHash)
-        ? new Response(null, { status: 204 })
-        : denied();
-    }
-    if (activeWrites.has(blobKey)) return denied();
-    activeWrites.add(blobKey);
-    try {
-      try {
-        await storage.writeOnce({
-          id: importId,
-          blobKey,
-          filename: blobKey.split("/").at(-1) ?? importId,
-          contentType,
-          sizeBytes,
-          contentHash,
-        }, request.body);
-      } catch (error) {
-        if (!(error instanceof BlobAlreadyExistsError)
-            || !await storage.verify(blobKey, sizeBytes, contentHash)) throw error;
-      }
-      return new Response(null, { status: 204 });
-    } finally {
-      activeWrites.delete(blobKey);
-    }
-  }, { parse: "none" })
-  .put("/private/publication-artifact", async ({ request, query }) => {
-    if (privateCapability(request, tokens) !== "dashboard" || !publications) {
-      return denied();
-    }
-    const allocationId = z.string().uuid().parse(query.id);
-    await materializePublicationArtifact({
-      storage,
-      claims: publications,
-      allocationId,
-    });
-    return new Response(null, { status: 204 });
-  }, { parse: "none" })
-  .head("/private/bundle", async ({ request, query }) => {
-    if (privateCapability(request, tokens) !== "dashboard") return denied();
-    return bundleObjectResponse(request, storage, bundleObjectKeySchema.parse(query.key));
-  })
-  .get("/private/bundle", async ({ request, query }) => {
-    if (privateCapability(request, tokens) !== "dashboard") return denied();
-    return bundleObjectResponse(request, storage, bundleObjectKeySchema.parse(query.key));
-  })
-  .get("/private/import-part", async ({ request, query }) => {
-    if (privateCapability(request, tokens) !== "dashboard") return denied();
-    return readBlob(storage, importPartKeySchema.parse(query.key), parseRange(request.headers.get("range")));
-  })
-  .delete("/private/bundle", async ({ request, query }) => {
-    if (privateCapability(request, tokens) !== "dashboard") return denied();
-    await storage.deleteBundle(bundleObjectKeySchema.parse(query.key));
-    return new Response(null, { status: 204 });
-  })
-  .delete("/private/import-part", async ({ request, query }) => {
-    if (privateCapability(request, tokens) !== "dashboard") return denied();
-    await storage.deleteImportPart(importPartKeySchema.parse(query.key));
-    return new Response(null, { status: 204 });
-  })
-  .delete("/private/blob", async ({ request, query }) => {
-    if (privateCapability(request, tokens) !== "dashboard") return denied();
-    const blobKey = assetBlobKeySchema.parse(query.key);
-    const id = z.string().uuid().parse(blobKey.slice(blobKey.indexOf("/") + 1));
-    const deleted = await privateAssets.getDeletedForStorage(id);
-    // Metadata is the lifecycle authority. A published row cannot become
-    // deleted until passkey-confirmed unpublication clears its visibility, so
-    // a bare dashboard storage capability cannot hide public bytes.
-    if (!deleted || deleted.blob_key !== blobKey) return denied();
-    await storage.delete(blobKey);
-    return new Response(null, { status: 204 });
-  })
-  .post("/private/verify", async ({ request }) => {
-    if (privateCapability(request, tokens) !== "dashboard") return denied();
-    const input = verificationSchema.parse(await request.json());
-    return Response.json({
-      verified: await storage.verify(input.blob_key, input.size_bytes, input.content_hash),
-    }, { headers: { "cache-control": "no-store" } });
-  })
-  .head("/public/representation", async ({ request, query }) => {
-    if (!publicAuthorized(request, tokens) || !publications?.resolve) return denied();
-    const { token: representationToken } = z.object({
-      token: z.string().regex(/^[a-f0-9]{64}$/),
-    }).strict().parse(query);
-    const route = await publications.resolve(representationToken);
-    if (!route || route.representation_token !== representationToken) return denied();
-    const sizeBytes = exactNumber(route.body_size_bytes, 5_000_000_000);
-    const blobKey = route.resource_kind === "page"
-      ? publicPageKeySchema.parse(route.body_object_key)
-      : publicAssetArtifactKeySchema.parse(route.body_object_key);
-    if (!await storage.verify(blobKey, sizeBytes, route.body_content_hash)) return denied();
-    return new Response(null, {
-      headers: {
-        "cache-control": "no-store",
-        "content-length": String(sizeBytes),
-        "x-content-sha256": route.body_content_hash,
-      },
-    });
-  })
-  .get("/public/representation", async ({ request, query }) => {
-    if (!publicAuthorized(request, tokens) || !publications?.resolve) return denied();
-    const { token: representationToken } = z.object({
-      token: z.string().regex(/^[a-f0-9]{64}$/),
-    }).strict().parse(query);
-    const route = await publications.resolve(representationToken);
-    if (!route || route.representation_token !== representationToken) return denied();
-    const sizeBytes = exactNumber(route.body_size_bytes, 5_000_000_000);
-    const blobKey = route.resource_kind === "page"
-      ? publicPageKeySchema.parse(route.body_object_key)
-      : publicAssetArtifactKeySchema.parse(route.body_object_key);
-    if (!await storage.verify(blobKey, sizeBytes, route.body_content_hash)) return denied();
-    const range = parseRange(request.headers.get("range"));
-    if (request.headers.has("range") && !range) return denied();
-    if (range && (range.start >= sizeBytes || range.end >= sizeBytes)) return denied();
-    return readBlob(storage, blobKey, range);
-  });
-}
+const pool = createPool(config.STORAGE_DATABASE_URL, {
+  application_name: "context-use-storage-boundary",
+});
+const privateAssets = new AssetRepository(pool);
+const publications = new StoragePublicationRepository(pool);
+const knowledgeBundles = new KnowledgeBundleRepository(pool);
+const blobMaintenance = new BlobMaintenanceRepository(pool);
 
 export const storageApp = createStorageBrokerApp({
-  storage: defaultStorage,
-  privateAssets: defaultPrivateAssets,
-  publications: defaultPublications,
-  knowledgeBundles: defaultKnowledgeBundles,
-  tokens: defaultTokens,
+  storage,
+  privateAssets,
+  publications,
+  knowledgeBundles,
+  tokens: {
+    dashboard: config.STORAGE_DASHBOARD_TOKEN,
+    mcp: config.STORAGE_MCP_TOKEN,
+    public: config.STORAGE_PUBLIC_TOKEN,
+  },
 });
 
 let maintenanceRunning = false;
 
-export async function reconcileDocumentLinks(input: {
-  storage: BlobStorageBackend;
-  maintenance: Pick<BlobMaintenanceRepository,
-    "unindexedLinkRevisions" | "replaceRevisionLinks" | "deferRevisionLinks">;
-}): Promise<{
-  indexed: number;
-  failures: Array<{ revisionId: string; error: unknown }>;
-}> {
-  const { storage, maintenance } = input;
-  // One bounded batch keeps storage startup and the recurring maintenance tick
-  // responsive when revisions are waiting for hyperlink indexing.
-  const revisions = await maintenance.unindexedLinkRevisions();
-  let indexed = 0;
-  const failures: Array<{ revisionId: string; error: unknown }> = [];
-  const maxConcurrency = 8;
-  const maxInFlightBytes = 16 * 1024 * 1024;
-  for (let offset = 0; offset < revisions.length;) {
-    const batch: typeof revisions = [];
-    let batchBytes = 0;
-    while (offset < revisions.length && batch.length < maxConcurrency) {
-      const revision = revisions[offset]!;
-      const declaredBytes = Number.isSafeInteger(revision.body_size_bytes)
-          && revision.body_size_bytes >= 0
-        ? revision.body_size_bytes
-        : maxInFlightBytes + 1;
-      if (batch.length > 0 && batchBytes + declaredBytes > maxInFlightBytes) break;
-      batch.push(revision);
-      batchBytes += declaredBytes;
-      offset += 1;
-      // One large raw record is allowed to exceed the byte budget only when it
-      // owns the batch. Never overlap it with another body in memory.
-      if (declaredBytes > maxInFlightBytes) break;
-    }
-    await Promise.all(batch.map(async (revision) => {
-      try {
-        if (!await storage.verify(
-          revision.body_object_key,
-          Number(revision.body_size_bytes),
-          revision.body_content_hash,
-        )) throw new Error("Stored revision bytes are unavailable or corrupt");
-        const markdown = await new Response(await storage.read(revision.body_object_key)).text();
-        await maintenance.replaceRevisionLinks(
-          revision.revision_id,
-          extractObjectLinks(markdown),
-        );
-        indexed += 1;
-      } catch (error) {
-        await maintenance.deferRevisionLinks(revision.revision_id);
-        failures.push({ revisionId: revision.revision_id, error });
-      }
-    }));
-  }
-  return { indexed, failures };
-}
-
 export async function maintainDocumentObjects(): Promise<void> {
-  if (maintenanceRunning) return;
+  if (maintenanceRunning) {
+    return;
+  }
   maintenanceRunning = true;
   try {
-    const linkResult = await reconcileDocumentLinks({
-      storage: defaultStorage,
-      maintenance: blobMaintenance,
-    });
-    for (const failure of linkResult.failures) {
+    const result = await reconcileDocumentLinks({ storage, maintenance: blobMaintenance });
+    for (const failure of result.failures) {
       console.error("object_link_index_failed", {
         revisionId: failure.revisionId,
         ...(failure.error instanceof Error
@@ -684,11 +70,18 @@ export async function listenStorageSocket(): Promise<void> {
     unix: socketPath,
     maxRequestBodySize: 5_500_000_000,
     fetch(request, server) {
-      if (["GET", "PUT"].includes(request.method)
-          && ["/private/blob", "/private/markdown-blob", "/private/bundle",
-            "/private/import-part", "/private/import-blob", "/private/bundle-source",
-            "/private/publication-artifact"]
-            .includes(new URL(request.url).pathname)) {
+      if (
+        ["GET", "PUT"].includes(request.method) &&
+        [
+          "/private/blob",
+          "/private/markdown-blob",
+          "/private/bundle",
+          "/private/import-part",
+          "/private/import-blob",
+          "/private/bundle-source",
+          "/private/publication-artifact",
+        ].includes(new URL(request.url).pathname)
+      ) {
         disableStreamingRequestIdleTimeout(server, request);
       }
       return storageApp.handle(request);
@@ -696,16 +89,17 @@ export async function listenStorageSocket(): Promise<void> {
   });
   await chmod(socketPath, 0o660);
   console.info("context-use storage broker listening on unix socket");
+  void runMaintenance();
+  setInterval(runMaintenance, 1_000).unref();
+}
+
+function runMaintenance(): void {
   void maintainDocumentObjects().catch((error: unknown) => {
-    console.error("blob_maintenance_failed", error instanceof Error
-      ? { name: error.name, message: error.message }
-      : { type: typeof error });
-  });
-  setInterval(() => {
-    void maintainDocumentObjects().catch((error: unknown) => {
-      console.error("blob_maintenance_failed", error instanceof Error
+    console.error(
+      "blob_maintenance_failed",
+      error instanceof Error
         ? { name: error.name, message: error.message }
-        : { type: typeof error });
-    });
-  }, 1_000).unref();
+        : { type: typeof error },
+    );
+  });
 }
