@@ -1,9 +1,12 @@
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Client } from "pg";
 import {
   adoptLegacySchema,
   LEGACY_ADOPTION_CONFIRMATION,
   LEGACY_ADOPTION_ENV,
 } from "./adopt-legacy-schema.ts";
+import { loadMigrationStreams } from "./migrations/catalog.ts";
 
 if (process.env[LEGACY_ADOPTION_ENV] !== LEGACY_ADOPTION_CONFIRMATION) {
   throw new Error(
@@ -19,9 +22,27 @@ const client = new Client({
   connectionString: databaseUrl,
   application_name: "context-use-legacy-schema-adopter",
 });
+const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
+const targetMigrationStreams = await loadMigrationStreams({ directory: migrationsDirectory });
+const applicationMigration = targetMigrationStreams.application.find(
+  ({ version }) => version === "001_application_schema.sql",
+);
+if (!applicationMigration) {
+  throw new Error("Target migration catalog has no application schema");
+}
 await client.connect();
 try {
-  console.info(JSON.stringify(await adoptLegacySchema({ client }), null, 2));
+  console.info(
+    JSON.stringify(
+      await adoptLegacySchema({
+        client,
+        targetMigrationStreams,
+        applicationMigrationSql: applicationMigration.sql,
+      }),
+      null,
+      2,
+    ),
+  );
 } finally {
   await client.end();
 }

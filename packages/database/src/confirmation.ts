@@ -44,7 +44,7 @@ export class ConfirmationRepository {
   async passkeys(ownerUserId: string): Promise<ConfirmationPasskey[]> {
     const result = await this.pool.query<ConfirmationPasskey>(
       `SELECT id,name,"publicKey","userId","credentialID",counter,transports,"createdAt"
-       FROM passkey WHERE "userId"=$1 ORDER BY "createdAt"`,
+       FROM auth.passkey WHERE "userId"=$1 ORDER BY "createdAt"`,
       [ownerUserId],
     );
     return result.rows;

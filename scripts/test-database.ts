@@ -44,6 +44,10 @@ function mark(url: string): void {
   run(["bun", "--cwd", "packages/database", "mark:disposable"], { TEST_DATABASE_URL: url });
 }
 
+function seed(url: string): void {
+  run(["bun", "--cwd", "packages/database", "seed:test"], { TEST_DATABASE_URL: url });
+}
+
 const command = process.argv[2] ?? "up";
 if (command === "down") {
   compose("down", "--remove-orphans");
@@ -58,6 +62,7 @@ if (command === "down") {
     MIGRATOR_DATABASE_URL: TEST_DATABASE.url,
   });
   mark(TEST_DATABASE.url);
+  seed(TEST_DATABASE.url);
   console.info(`\nRun the integration suites against it:\n  TEST_DATABASE_URL=${TEST_DATABASE.url} bun test apps packages`);
 } else {
   console.error("Usage: bun run db:test <up|mark|down>");

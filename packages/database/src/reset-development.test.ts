@@ -12,7 +12,13 @@ describe("development data reset", () => {
     expect(DEVELOPMENT_RESET_TABLES).toContain("public_resources");
 
     const sql = developmentResetSql().toLowerCase();
-    for (const protectedTable of ["user", "session", "account", "passkey", "oauthclient"]) {
+    for (const protectedTable of [
+      "auth.user",
+      "auth.session",
+      "auth.account",
+      "auth.passkey",
+      "auth.oauthclient",
+    ]) {
       expect(sql).not.toContain(`truncate table ${protectedTable}`);
       expect(DEVELOPMENT_RESET_TABLES).not.toContain(protectedTable as never);
     }

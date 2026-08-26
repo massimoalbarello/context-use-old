@@ -1,5 +1,3 @@
-export const LEGACY_MIGRATION_MAX = 10;
-
 const FORBIDDEN_STATEMENT_STARTS = new Set([
   "CALL",
   "COPY",
