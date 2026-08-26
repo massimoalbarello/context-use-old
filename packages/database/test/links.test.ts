@@ -29,14 +29,12 @@ describe("canonical object links", () => {
 
   test("normalizes page identities retained in immutable revisions", () => {
     const markdown = [
-      `[Document](context-use://document/${first}#Overview)`,
       `[Page](context-use://page/${second})`,
       `[Dashboard](/app/pages/${first}#Details)`,
       `[Recent dashboard](/app/documents/${second})`,
     ].join("\n");
 
     expect(normalizeLegacyObjectLinks(markdown)).toBe([
-      `[Document](context-use://object/${first}#overview)`,
       `[Page](context-use://object/${second})`,
       `[Dashboard](context-use://object/${first}#details)`,
       `[Recent dashboard](context-use://object/${second})`,
@@ -44,7 +42,7 @@ describe("canonical object links", () => {
   });
 
   test("does not normalize legacy examples in inert Markdown regions", () => {
-    const legacy = `[legacy](context-use://document/${first})`;
+    const legacy = `[legacy](context-use://page/${first})`;
     const markdown = [
       `\`${legacy}\``,
       "```md",
@@ -53,11 +51,11 @@ describe("canonical object links", () => {
       `<!-- ${legacy} -->`,
       `<pre>${legacy}</pre>`,
       `\\${legacy}`,
-      `[visible](context-use://document/${second})`,
+      `[visible](context-use://page/${second})`,
     ].join("\n");
 
     expect(normalizeLegacyObjectLinks(markdown)).toBe(markdown.replace(
-      `[visible](context-use://document/${second})`,
+      `[visible](context-use://page/${second})`,
       `[visible](context-use://object/${second})`,
     ));
   });

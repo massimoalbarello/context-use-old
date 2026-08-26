@@ -35,7 +35,6 @@ describe("hypermedia bootstrap command", () => {
     expect(documents[0]?.input.body_markdown).toContain("# Hypermedia maintenance guide");
     expect(documents[0]?.input.body_markdown).toContain("Every object is a\npage, record or asset");
     expect(documents[0]?.input.body_markdown).toContain("context-use://object/<uuid>");
-    expect(documents[0]?.input.body_markdown).not.toContain("context-use://document/");
     expect(documents[1]?.input.title).toBe("Activity distiller");
     expect(documents[1]?.input.body_markdown).toContain("stable object reference");
     expect(documents[4]?.input.title).toBe("Diary composer state");

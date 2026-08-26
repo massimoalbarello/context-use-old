@@ -226,7 +226,7 @@ export async function renderMarkdown(markdown: string, resolvers: MarkdownResolv
   // Historical source remains immutable, but obsolete private identities are
   // inert. Canonical routes produced by successful object resolvers remain.
   source = source.replace(
-    /context-use:\/\/(?:document|page|directory|asset)\/[0-9a-f-]{36}|\/app\/(?:pages|directories)\/[0-9a-f-]{36}/gi,
+    /context-use:\/\/(?:page|directory|asset)\/[0-9a-f-]{36}|\/app\/(?:pages|directories)\/[0-9a-f-]{36}/gi,
     '<span class="private-reference">Private reference</span>',
   );
 
