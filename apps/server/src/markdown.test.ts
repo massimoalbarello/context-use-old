@@ -37,8 +37,6 @@ describe("safe Markdown rendering", () => {
       .toContain("1 external URL(s) will become public");
     expect(publicationWarnings(`[Related](context-use://object/${id})`))
       .toContain("1 context-use reference(s) have independent visibility");
-    expect(publicationWarnings(`[Older](context-use://document/${id})`))
-      .toContain("1 context-use reference(s) have independent visibility");
     expect(publicationWarnings(`[Old](context-use://page/${id})`))
       .toContain("1 context-use reference(s) have independent visibility");
     expect(publicationWarnings(`[Directory](context-use://directory/${id})`))
@@ -99,7 +97,7 @@ describe("safe Markdown rendering", () => {
     const first = "11111111-1111-4111-8111-111111111111";
     const second = "22222222-2222-4222-8222-222222222222";
     const html = await renderMarkdown([
-      `[Older page](context-use://document/${first}#Details)`,
+      `[Older page](context-use://page/${first}#Details)`,
       `[Dashboard page](/app/pages/${second})`,
     ].join("\n\n"), {
       object: async (id) => ({
@@ -189,7 +187,6 @@ describe("safe Markdown rendering", () => {
     const html = await renderMarkdown([
       `![Not media](context-use://object/${page})`,
       `[Private record](context-use://object/${missing}#secret)`,
-      `[Older missing page](context-use://document/${missing})`,
     ].join("\n\n"), {
       object: async (id) => id === page
         ? { available: true, representation: "page", href: `/app/objects/${page}` }
@@ -198,8 +195,6 @@ describe("safe Markdown rendering", () => {
 
     expect(html).toContain("Private asset unavailable");
     expect(html).toContain('<span class="private-reference">Private record</span>');
-    expect(html).toContain('<span class="private-reference">Older missing page</span>');
-    expect(html).not.toContain("[Older missing page]");
     expect(html).not.toContain("#secret");
     expect(html).not.toContain(page);
     expect(html).not.toContain(missing);

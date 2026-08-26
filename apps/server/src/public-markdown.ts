@@ -64,7 +64,7 @@ export function projectPublicMarkdown(
   );
 
   projected = projected
-    .replace(new RegExp(`context-use://(?:document|page|directory|asset)/${UUID_SOURCE}`, "gi"), "[private reference]")
+    .replace(new RegExp(`context-use://(?:page|directory|asset)/${UUID_SOURCE}`, "gi"), "[private reference]")
     .replace(new RegExp(`/app/(?:documents|pages|directories)/${UUID_SOURCE}`, "gi"), "[private reference]")
     .replace(new RegExp(`/api/(?:dashboard|mcp|public)/assets/${UUID_SOURCE}(?:/(?:content|status))?`, "gi"), "[private asset reference]")
     .replace(UUID_GLOBAL, "[private identifier]")

@@ -2,7 +2,7 @@ const UUID_PATTERN = "([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const FRAGMENT_PATTERN = "(#[a-z0-9][a-z0-9_-]*)?";
 const OBJECT_LINK = new RegExp(`(!?)\\[[^\\]\\n]*\\]\\(context-use:\\/\\/object\\/${UUID_PATTERN}${FRAGMENT_PATTERN}\\)`, "gi");
 const LEGACY_OBJECT_LINK = new RegExp(
-  `(!?\\[[^\\]\\n]*\\]\\()context-use:\\/\\/(?:document|page|asset)\\/${UUID_PATTERN}${FRAGMENT_PATTERN}(\\))`,
+  `(!?\\[[^\\]\\n]*\\]\\()context-use:\\/\\/(?:page|asset)\\/${UUID_PATTERN}${FRAGMENT_PATTERN}(\\))`,
   "gi",
 );
 const LEGACY_DASHBOARD_PAGE_LINK = new RegExp(
