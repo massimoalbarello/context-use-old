@@ -1876,6 +1876,7 @@ button:disabled {
 }
 
 .change-kind.created { background: var(--green-soft); color: var(--green); }
+.change-kind.updated { background: var(--blue-soft); color: var(--blue); }
 .change-kind.archived { background: #ece7dd; color: #766b57; }
 .change-kind.deleted { background: #f2dfdc; color: #913d31; }
 
