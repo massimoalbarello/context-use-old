@@ -39,6 +39,11 @@ schema automatically at application startup.
 The current flat `001`–`010` history is legacy input to the refactor. Do not add another flat
 migration without an explicit decision about the clean-baseline work.
 
+Before adopting that history, run `bun run inspect:legacy` with the migration administrator URL.
+The read-only inspector accepts only the frozen v0.1.97 ledger and Better Auth table structure;
+unknown or manually changed states must be investigated instead of being coerced into the new
+history.
+
 ## Schema-only migration rule
 
 A migration describes schema and durable database behavior. It never migrates application data.
