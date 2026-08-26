@@ -35,13 +35,28 @@ describe("source record page", () => {
   });
 
   test("shows rendered Markdown as a read-only page instead of a metadata card", () => {
-    const html = renderToStaticMarkup(createElement(SourceRecordContents, { record }));
-    expect(html).toContain("Connected source · Read-only");
+    const html = renderToStaticMarkup(createElement(SourceRecordContents, {
+      record,
+      onArchive: () => undefined,
+    }));
+    expect(html).toContain("Connected source · Content read-only");
     expect(html).toContain("granola · Granola Meeting");
     expect(html).toContain("Product review");
     expect(html).toContain("Decisions and notes.");
     expect(html).toContain("class=\"rendered\"");
     expect(html).not.toContain("Private reference");
     expect(html).not.toContain("Representation");
+    expect(html).toContain("Archive</button>");
+    expect(html).not.toContain("Delete permanently");
+  });
+
+  test("offers permanent deletion only after a record is archived", () => {
+    const html = renderToStaticMarkup(createElement(SourceRecordContents, {
+      record: { ...record, deleted_at: "2026-08-26T10:00:00.000Z" },
+      onDelete: () => undefined,
+    }));
+    expect(html).toContain("Archived");
+    expect(html).toContain("Delete permanently");
+    expect(html).not.toContain(">Archive</button>");
   });
 });

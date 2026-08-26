@@ -656,12 +656,55 @@ describeDatabase("hypermedia document substrate", () => {
       `SELECT has_column_privilege(
          'context_use_mcp','source_records','connection_instance_id','UPDATE'
        ) AS allowed`,
-    )).rows[0]?.allowed).toBe(false);
+    )).rows[0]?.allowed).toBe(true);
     expect((await admin.query<{ allowed: boolean }>(
       `SELECT has_column_privilege(
          'context_use_mcp','source_records','connection_instance_id','INSERT'
        ) AS allowed`,
     )).rows[0]?.allowed).toBe(true);
+    for (const role of ["context_use_dashboard", "context_use_mcp"]) {
+      expect((await admin.query<{ allowed: boolean }>(
+        "SELECT has_function_privilege($1,'archive_source_record(uuid,uuid)','EXECUTE') AS allowed",
+        [role],
+      )).rows[0]?.allowed).toBe(true);
+    }
+    expect((await admin.query<{ allowed: boolean }>(
+      `SELECT has_function_privilege(
+         'context_use_dashboard','delete_archived_source_record(uuid,uuid)','EXECUTE'
+       ) AS allowed`,
+    )).rows[0]?.allowed).toBe(true);
+    expect((await admin.query<{ allowed: boolean }>(
+      `SELECT has_function_privilege(
+         'context_use_mcp','delete_archived_source_record(uuid,uuid)','EXECUTE'
+       ) AS allowed`,
+    )).rows[0]?.allowed).toBe(false);
+    for (const role of [
+      "context_use_auth",
+      "context_use_public",
+      "context_use_confirmation",
+      "context_use_storage",
+      "context_use_backup",
+    ]) {
+      for (const signature of [
+        "archive_source_record(uuid,uuid)",
+        "delete_archived_source_record(uuid,uuid)",
+      ]) {
+        expect((await admin.query<{ allowed: boolean }>(
+          "SELECT has_function_privilege($1,$2,'EXECUTE') AS allowed",
+          [role, signature],
+        )).rows[0]?.allowed).toBe(false);
+      }
+    }
+    for (const role of ["context_use_dashboard", "context_use_mcp"]) {
+      expect((await admin.query<{ allowed: boolean }>(
+        "SELECT has_table_privilege($1,'source_records','DELETE') AS allowed",
+        [role],
+      )).rows[0]?.allowed).toBe(false);
+      expect((await admin.query<{ allowed: boolean }>(
+        "SELECT has_table_privilege($1,'hypermedia_documents','DELETE') AS allowed",
+        [role],
+      )).rows[0]?.allowed).toBe(false);
+    }
     expect((await admin.query<{ allowed: boolean }>(
       `SELECT has_column_privilege(
        'context_use_reset_owner','knowledge_settings','global_guide_document_id','SELECT'

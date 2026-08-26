@@ -221,6 +221,17 @@ export const archiveAssetSchema = z.object({
   object_id: UUID,
 }).strict();
 
+export const archiveSourceRecordSchema = z.object({
+  object_id: UUID,
+  expected_revision_id: UUID.nullable(),
+}).strict();
+
+export const deleteSourceRecordSchema = archiveSourceRecordSchema.extend({
+  confirm: z.literal(true).describe(
+    "Explicit confirmation that this archived source record and every retained revision should be permanently deleted.",
+  ),
+}).strict();
+
 export type PublicationIntentInput = z.infer<typeof publicationIntentSchema>;
 export type PublicationArtifactReceipt = z.infer<
   typeof publicationArtifactReceiptSchema
@@ -234,6 +245,8 @@ export type UpdatePageInput = z.infer<typeof updatePageSchema>;
 export type ArchivePageInput = z.infer<typeof archivePageSchema>;
 export type CreateAssetInput = z.infer<typeof createAssetSchema>;
 export type ArchiveAssetInput = z.infer<typeof archiveAssetSchema>;
+export type ArchiveSourceRecordInput = z.infer<typeof archiveSourceRecordSchema>;
+export type DeleteSourceRecordInput = z.infer<typeof deleteSourceRecordSchema>;
 
 export const dashboardObjectKindSchema = z.enum(["page", "record", "asset"]);
 export const dashboardObjectLifecycleSchema = z.enum(["active", "archived", "deleted"]);

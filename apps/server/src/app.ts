@@ -16,8 +16,10 @@ import {
   normalizeLegacyObjectLinks,
 } from "@context-use/database";
 import {
+  archiveSourceRecordSchema,
   archivePageSchema,
   createPageSchema,
+  deleteSourceRecordSchema,
   publicationEntrypointSchema,
   publicationIntentSchema,
   updatePageSchema,
@@ -668,6 +670,36 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
       ? ""
       : await renderMarkdown(record.body_markdown, privateObjectResolvers());
     return json(dashboardSourceRecord(record, renderedHtml));
+  })
+  .post("/api/dashboard/source-records/:id/archive", async ({ request, params }) => {
+    await ownerRequest(request, true);
+    const objectId = z.string().uuid().parse(params.id);
+    const input = archiveSourceRecordSchema.omit({ object_id: true }).parse(await bodyJson(request));
+    const result = await dashboardSourceRecords.archive(objectId, input.expected_revision_id);
+    if (result === "not_found") return problem("Source record not found", 404, "not_found");
+    if (result === "revision_conflict") {
+      return problem("Source record changed; reload it before archiving", 409, "revision_conflict");
+    }
+    const record = await dashboardSourceRecords.get(objectId);
+    if (!record) return problem("Source record not found", 404, "not_found");
+    const renderedHtml = record.body_markdown === null
+      ? ""
+      : await renderMarkdown(record.body_markdown, privateObjectResolvers());
+    return json(dashboardSourceRecord(record, renderedHtml));
+  })
+  .delete("/api/dashboard/source-records/:id", async ({ request, params }) => {
+    await ownerRequest(request, true);
+    const objectId = z.string().uuid().parse(params.id);
+    const input = deleteSourceRecordSchema.omit({ object_id: true }).parse(await bodyJson(request));
+    const result = await dashboardSourceRecords.delete(objectId, input.expected_revision_id);
+    if (result === "not_found") return problem("Source record not found", 404, "not_found");
+    if (result === "revision_conflict") {
+      return problem("Source record changed; reload it before deleting", 409, "revision_conflict");
+    }
+    if (result === "not_archived") {
+      return problem("Archive the source record before permanently deleting it", 409, "record_not_archived");
+    }
+    return json({ object_id: objectId, deleted: true });
   })
   .get("/api/dashboard/objects/:id/neighborhood", async ({ request, params, query }) => {
     await ownerRequest(request);

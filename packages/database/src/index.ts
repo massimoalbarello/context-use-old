@@ -75,6 +75,8 @@ export {
   type SourceRecord,
   type SourceRecordIdentity,
   type SourceRecordMetadata,
+  type SourceRecordArchiveResult,
+  type SourceRecordDeleteResult,
   type SourceRecordWrite,
   type SourceRecordWriter,
 } from "./source-records.ts";

@@ -7,6 +7,7 @@ import {
   SourceRecordRepository,
 } from "@context-use/database";
 import {
+  archiveSourceRecordSchema,
   archiveAssetSchema,
   archivePageSchema,
   createAssetSchema,
@@ -39,7 +40,7 @@ const BASE_SERVER_INSTRUCTIONS = "Use Context Use proactively when the user stat
 
 const SERVER_INSTRUCTIONS = BASE_SERVER_INSTRUCTIONS
   + "Use the stable-ID object tools (search_objects, read_object, create_page, "
-  + "update_page, archive_page, create_asset_upload, archive_asset). "
+  + "update_page, archive_page, archive_record, create_asset_upload, archive_asset). "
   + "Navigate knowledge through search results, stable object identities and hyperlinks.";
 
 const MCP_BACKLINK_LIMIT = 100;
@@ -106,6 +107,21 @@ function unknownObject(objectId: string, retryTool: string) {
     "OBJECT_NOT_FOUND",
     `No active page has object id ${objectId}, so nothing was changed.`,
     `Use search_objects, copy the stable object_id exactly, and retry ${retryTool}.`,
+  ].join("\n\n"), true);
+}
+
+function sourceRecordLifecycleError(
+  result: "not_found" | "revision_conflict",
+  objectId: string,
+  retryTool: string,
+) {
+  if (result === "not_found") {
+    return textContent(`SOURCE_RECORD_NOT_FOUND\n\nNo source record has object id ${objectId}.`, true);
+  }
+  return textContent([
+    "SOURCE_RECORD_REVISION_CONFLICT",
+    "The source record changed after it was read, so nothing was changed.",
+    `Call read_record again and retry ${retryTool} with its current_revision_id.`,
   ].join("\n\n"), true);
 }
 
@@ -398,7 +414,7 @@ export async function createMcpServer(
 
   if (recordObjects) {
     server.registerTool("search_records", {
-      description: "Search connector-controlled private records by full text; every normalized query term must occur somewhere in the record. Returns ranked metadata and canonical object references only; use read_record to load one exact Markdown body. Records are evidence owned by their connector, cannot be edited by agents, and cannot be published.",
+      description: "Search connector-controlled private records by full text; every normalized query term must occur somewhere in the record. Returns ranked metadata and canonical object references only; use read_record to load one exact Markdown body. Record content is evidence owned by its connector and cannot be edited, published, or permanently deleted through MCP; use archive_record to retire it from active discovery.",
       inputSchema: z.object({
         query: z.string().min(1).max(500),
         limit: z.number().int().min(1).max(100).default(30),
@@ -424,7 +440,7 @@ export async function createMcpServer(
     });
 
     server.registerTool("read_record", {
-      description: "Read one connector-controlled private record by its stable object ID. Returns its exact current Markdown (or a deletion tombstone), canonical object reference, indexed outbound links, and bounded live backlinks without exposing blob keys. backlinks_has_more only reports pagination; backlinks_complete is false while any active current page or record revision remains unindexed, so undiscovered backlinks may still exist. Records cannot be edited by agents or published.",
+      description: "Read one connector-controlled private record by its stable object ID. Returns its exact current Markdown (or a deletion tombstone), canonical object reference, indexed outbound links, and bounded live backlinks without exposing blob keys. backlinks_has_more only reports pagination; backlinks_complete is false while any active current page or record revision remains unindexed, so undiscovered backlinks may still exist. Record content cannot be edited, published, or permanently deleted through MCP; use archive_record to retire it from active discovery.",
       inputSchema: z.object({ object_id: z.string().uuid() }).strict(),
       annotations: { readOnlyHint: true },
     }, async ({ object_id }) => {
@@ -448,6 +464,26 @@ export async function createMcpServer(
         hypermedia: await hypermedia(record.object_id, record.current_revision_id),
       });
     });
+
+    server.registerTool("archive_record", {
+      description: "Archive one connector-controlled record by stable object UUID and exact current revision. This removes it from active search and navigation but retains its revisions. A later connector sync may restore a source record that still exists upstream.",
+      inputSchema: archiveSourceRecordSchema,
+      annotations: { destructiveHint: true },
+    }, async ({ object_id, expected_revision_id }) => {
+      const result = await recordObjects.archive(object_id, expected_revision_id);
+      if (result !== "archived") {
+        return sourceRecordLifecycleError(result, object_id, "archive_record");
+      }
+      const record = await recordObjects.metadata(object_id);
+      if (!record) return sourceRecordLifecycleError("not_found", object_id, "archive_record");
+      return jsonObjectContent({
+        object_id: record.object_id,
+        current_revision_id: record.current_revision_id,
+        deleted_at: record.deleted_at,
+        reference: record.reference,
+      });
+    });
+
   }
 
 

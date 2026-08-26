@@ -85,6 +85,7 @@ describe("Granola MCP meeting sync", () => {
     const batch = fake.savedBatches.find((saved) => saved.model === "GranolaMeeting");
     expect(batch?.records).toHaveLength(1);
     const record = sync.models.GranolaMeeting.parse(batch?.records[0]);
+    expect(record.id).toBe("meeting-123");
     expect(Object.keys(record).sort()).toEqual(["body", "created_at", "id", "participants", "updated_at"]);
     expect(record.participants).toEqual(["ada@example.com", "max@example.com"]);
     expect(record.body).toContain("# Product & roadmap");
@@ -99,6 +100,39 @@ describe("Granola MCP meeting sync", () => {
     expect(record.body).not.toContain("<transcript");
     expect(record.body).not.toContain("Provider-only private sentinel");
     expect(record.body).not.toContain("Provider-only debug sentinel");
+  });
+
+  it("extracts and formats JSON transcript responses", async () => {
+    const fake = new FakeNango();
+    const meeting = `<meeting id="json-transcript" title="Catch-up" date="Aug 2, 2026 9:00 AM">
+      <known_participants>Max &lt;max@example.com&gt;, Jad &lt;jad@example.com&gt;</known_participants>
+      <summary>Discussed the early product and its benchmarks.</summary>
+    </meeting>`;
+    fake.setResponse("mcp:tools/call:list_meetings", toolResponse(`<meetings_data>${meeting}</meetings_data>`));
+    fake.setResponse("mcp:tools/call:get_meetings", toolResponse(`<meetings_data>${meeting}</meetings_data>`));
+    const transcriptResponse = JSON.stringify({
+      id: "json-transcript",
+      title: "Max and Jad",
+      transcript: "Me: Hey, Jad. Them: Hey, how's it going? Me: All good. I'm testing the benchmarks.",
+    }).replaceAll("'", "\\u0027");
+    fake.setResponse("mcp:tools/call:get_meeting_transcript", toolResponse(transcriptResponse));
+
+    await sync.exec(asNango(fake));
+
+    const batch = fake.savedBatches.find((saved) => saved.model === "GranolaMeeting");
+    const record = sync.models.GranolaMeeting.parse(batch?.records[0]);
+    expect(record.body).toContain([
+      "## Transcript",
+      "",
+      "**Me:** Hey, Jad.",
+      "",
+      "**Them:** Hey, how's it going?",
+      "",
+      "**Me:** All good. I'm testing the benchmarks.",
+    ].join("\n"));
+    expect(record.body).not.toContain('"transcript"');
+    expect(record.body).not.toContain("\\u0027");
+    expect(record.body).not.toContain("json-transcript\",\"title");
   });
 
   it("still saves the summary when the paid-tier transcript tool is unavailable", async () => {
