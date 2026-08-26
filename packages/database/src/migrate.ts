@@ -56,7 +56,11 @@ try {
       );
     }
 
-    await validateMigrationLedger({ client, migrations, baseline: "001_baseline.sql" });
+    await validateMigrationLedger({
+      client,
+      migrations,
+      baseline: "001_create_auth_schema.sql",
+    });
     await applyPendingMigrations({
       client,
       migrations,

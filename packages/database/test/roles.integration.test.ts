@@ -67,12 +67,12 @@ describeDatabase("PostgreSQL security roles", () => {
 
   async function ensureOwnerPasskey(counter = 0): Promise<void> {
     await admin.query(
-      `INSERT INTO "user"(id,name,email,"emailVerified")
+      `INSERT INTO auth."user"(id,name,email,"emailVerified")
        VALUES ('context-use-owner','Owner','owner@example.invalid',true)
        ON CONFLICT (id) DO NOTHING`,
     );
     await admin.query(
-      `INSERT INTO passkey(
+      `INSERT INTO auth.passkey(
          id,name,"publicKey","userId","credentialID",counter,"deviceType","backedUp",transports,"createdAt",aaguid
        ) VALUES (
          'test-passkey','Owner passkey','test-public-key','context-use-owner',
@@ -835,7 +835,7 @@ describeDatabase("PostgreSQL security roles", () => {
       ["confirmation_challenges", "challenge"],
       ["knowledge_pages", "archived_at"],
       ["knowledge_export_intents", "expires_at"],
-      ["passkey", "counter"],
+      ["auth.passkey", "counter"],
     ]) {
       expect((await admin.query<{ allowed: boolean }>(
         "SELECT has_column_privilege('context_use_boundary_owner',$1,$2,'SELECT') AS allowed",
@@ -1218,7 +1218,7 @@ describeDatabase("PostgreSQL security roles", () => {
       expect((await admin.query("SELECT 1 FROM knowledge_pages WHERE id=$1", [pageId])).rowCount).toBe(0);
       expect((await admin.query("SELECT 1 FROM knowledge_page_versions WHERE page_id=$1", [pageId])).rowCount).toBe(0);
       expect((await admin.query("SELECT 1 FROM page_deletion_intents WHERE id=$1", [intentId])).rowCount).toBe(0);
-      expect((await admin.query("SELECT counter FROM passkey WHERE id='test-passkey'")).rows[0]?.counter).toBe(1);
+      expect((await admin.query("SELECT counter FROM auth.passkey WHERE id='test-passkey'")).rows[0]?.counter).toBe(1);
       expect((await admin.query<{ change_kind: string }>(
         `SELECT change_kind FROM knowledge_page_changes
          WHERE page_id=$1 AND change_kind='deleted'`,
@@ -1447,21 +1447,21 @@ describeDatabase("PostgreSQL security roles", () => {
       await ensureOwnerPasskey();
       await admin.query("SET LOCAL ROLE context_use_auth");
 
-      await admin.query("UPDATE passkey SET counter=1 WHERE id='test-passkey'");
-      await admin.query("UPDATE \"user\" SET name='Updated owner' WHERE id='context-use-owner'");
-      await expectDenied("UPDATE passkey SET counter=0 WHERE id='test-passkey'");
-      await expectDenied("UPDATE passkey SET \"publicKey\"='attacker-key' WHERE id='test-passkey'");
-      await expectDenied("UPDATE passkey SET \"credentialID\"='attacker-credential' WHERE id='test-passkey'");
-      await expectDenied("UPDATE passkey SET \"userId\"='attacker' WHERE id='test-passkey'");
-      await expectDenied("DELETE FROM passkey WHERE id='test-passkey'");
-      await expectDenied("UPDATE \"user\" SET email='attacker@example.invalid' WHERE id='context-use-owner'");
-      await expectDenied("UPDATE \"user\" SET \"emailVerified\"=false WHERE id='context-use-owner'");
-      await expectDenied("DELETE FROM \"user\" WHERE id='context-use-owner'");
+      await admin.query("UPDATE auth.passkey SET counter=1 WHERE id='test-passkey'");
+      await admin.query("UPDATE auth.\"user\" SET name='Updated owner' WHERE id='context-use-owner'");
+      await expectDenied("UPDATE auth.passkey SET counter=0 WHERE id='test-passkey'");
+      await expectDenied("UPDATE auth.passkey SET \"publicKey\"='attacker-key' WHERE id='test-passkey'");
+      await expectDenied("UPDATE auth.passkey SET \"credentialID\"='attacker-credential' WHERE id='test-passkey'");
+      await expectDenied("UPDATE auth.passkey SET \"userId\"='attacker' WHERE id='test-passkey'");
+      await expectDenied("DELETE FROM auth.passkey WHERE id='test-passkey'");
+      await expectDenied("UPDATE auth.\"user\" SET email='attacker@example.invalid' WHERE id='context-use-owner'");
+      await expectDenied("UPDATE auth.\"user\" SET \"emailVerified\"=false WHERE id='context-use-owner'");
+      await expectDenied("DELETE FROM auth.\"user\" WHERE id='context-use-owner'");
       await admin.query("RESET ROLE");
 
       expect((await admin.query(
         `SELECT "publicKey","credentialID","userId",counter
-         FROM passkey WHERE id='test-passkey'`,
+         FROM auth.passkey WHERE id='test-passkey'`,
       )).rows[0]).toEqual({
         publicKey: "test-public-key",
         credentialID: "test-credential",
@@ -1481,7 +1481,7 @@ describeDatabase("PostgreSQL security roles", () => {
       "SELECT has_function_privilege('context_use_auth','remove_owner_passkey(text,text)','EXECUTE') AS allowed",
     )).rows[0]?.allowed).toBe(true);
     expect((await admin.query<{ allowed: boolean }>(
-      "SELECT has_table_privilege('context_use_auth','passkey','DELETE') AS allowed",
+      "SELECT has_table_privilege('context_use_auth','auth.passkey','DELETE') AS allowed",
     )).rows[0]?.allowed).toBe(false);
     for (const role of ["context_use_dashboard", "context_use_mcp", "context_use_public", "context_use_confirmation", "context_use_storage"]) {
       expect((await admin.query<{ allowed: boolean }>(

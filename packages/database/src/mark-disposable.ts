@@ -15,7 +15,7 @@ const client = new Client({ connectionString: url, application_name: "context-us
 await client.connect();
 try {
   const live = await client.query<{ registered: boolean }>(
-    "SELECT EXISTS (SELECT 1 FROM passkey) AS registered WHERE to_regclass('public.passkey') IS NOT NULL",
+    "SELECT EXISTS (SELECT 1 FROM auth.passkey) AS registered WHERE to_regclass('auth.passkey') IS NOT NULL",
   );
   if (live.rows[0]?.registered) {
     throw new Error(

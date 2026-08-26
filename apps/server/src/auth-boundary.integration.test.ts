@@ -50,7 +50,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
     if (!databaseUrl) return;
     const client = new Client({ connectionString: databaseUrl });
     await client.connect();
-    for (const clientId of createdClients) await client.query(`DELETE FROM "oauthClient" WHERE "clientId"=$1`, [clientId]);
+    for (const clientId of createdClients) await client.query(`DELETE FROM auth."oauthClient" WHERE "clientId"=$1`, [clientId]);
     await client.end();
     delete (globalThis as typeof globalThis & {
       __contextUseStorageHandler?: (request: Request) => Promise<Response> | Response;
@@ -709,7 +709,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
     let createdOwner = false;
     try {
       const owner = await client.query(
-        `INSERT INTO "user"(id,name,email,"emailVerified")
+        `INSERT INTO auth."user"(id,name,email,"emailVerified")
          VALUES ('context-use-owner','Owner',$1,true)
          ON CONFLICT (id) DO NOTHING
          RETURNING id`,
@@ -717,7 +717,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       );
       createdOwner = Boolean(owner.rowCount);
       await client.query(
-        `INSERT INTO "oauthRefreshToken"(
+        `INSERT INTO auth."oauthRefreshToken"(
            id,token,"clientId","userId","expiresAt","createdAt",scopes,resources
          ) VALUES ($1,$2,$3,'context-use-owner',now()+interval '30 days',now(),$4::jsonb,$5::jsonb)`,
         [
@@ -766,12 +766,12 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       expect(replacement.refresh_token).not.toBe(first.refresh_token);
     } finally {
       try {
-        await client.query(`DELETE FROM "oauthClient" WHERE "clientId"=$1`, [registered.client_id]);
+        await client.query(`DELETE FROM auth."oauthClient" WHERE "clientId"=$1`, [registered.client_id]);
         if (createdOwner) {
           await client.query("BEGIN");
           try {
             await client.query("SET LOCAL session_replication_role=replica");
-            await client.query(`DELETE FROM "user" WHERE id='context-use-owner'`);
+            await client.query(`DELETE FROM auth."user" WHERE id='context-use-owner'`);
             await client.query("COMMIT");
           } catch (error) {
             await client.query("ROLLBACK");
@@ -816,7 +816,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
     await client.connect();
     try {
       const owner = await client.query(
-        `INSERT INTO "user"(id,name,email,"emailVerified")
+        `INSERT INTO auth."user"(id,name,email,"emailVerified")
          VALUES ('context-use-owner','Owner',$1,true)
          ON CONFLICT (id) DO NOTHING
          RETURNING id`,
@@ -825,7 +825,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       createdOwner = Boolean(owner.rowCount);
       for (const session of sessions) {
         await client.query(
-          `INSERT INTO "session"(
+          `INSERT INTO auth."session"(
              id,"expiresAt",token,"createdAt","updatedAt","userId"
            ) VALUES (
              $1,now()+$2::interval,$3,now()+$4::interval,now()+$5::interval,'context-use-owner'
@@ -837,7 +837,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       for (const session of sessions) {
         const signature = await makeSignature(session.token, config.BETTER_AUTH_SECRET);
         const before = await client.query<{ updatedAt: Date; expiresAt: Date }>(
-          `SELECT "updatedAt","expiresAt" FROM "session" WHERE id=$1`,
+          `SELECT "updatedAt","expiresAt" FROM auth."session" WHERE id=$1`,
           [session.id],
         );
         const response = await application!.handle(new Request("http://localhost:3000/api/dashboard/session", {
@@ -845,7 +845,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
         }));
         expect(response.status).toBe(session.expectedStatus);
         const after = await client.query<{ updatedAt: Date; expiresAt: Date }>(
-          `SELECT "updatedAt","expiresAt" FROM "session" WHERE id=$1`,
+          `SELECT "updatedAt","expiresAt" FROM auth."session" WHERE id=$1`,
           [session.id],
         );
         expect(after.rows[0]!.expiresAt.getTime()).toBe(before.rows[0]!.expiresAt.getTime());
@@ -857,19 +857,19 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       }
     } finally {
       await client.query(
-        `DELETE FROM "session" WHERE id=ANY($1::text[])`,
+        `DELETE FROM auth."session" WHERE id=ANY($1::text[])`,
         [sessions.map(({ id }) => id)],
       ).catch(() => undefined);
       if (createdOwner) {
-        await client.query('ALTER TABLE "user" DISABLE TRIGGER user_protect_owner_identity');
+        await client.query('ALTER TABLE auth."user" DISABLE TRIGGER user_protect_owner_identity');
         try {
           await client.query(
-            `DELETE FROM "user"
+            `DELETE FROM auth."user"
              WHERE id='context-use-owner'
-               AND NOT EXISTS (SELECT 1 FROM passkey WHERE "userId"='context-use-owner')`,
+               AND NOT EXISTS (SELECT 1 FROM auth.passkey WHERE "userId"='context-use-owner')`,
           );
         } finally {
-          await client.query('ALTER TABLE "user" ENABLE TRIGGER user_protect_owner_identity');
+          await client.query('ALTER TABLE auth."user" ENABLE TRIGGER user_protect_owner_identity');
         }
       }
       await client.end();
@@ -916,7 +916,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
         `SELECT "clientId","clientSecret",disabled,"skipConsent",scopes,
                 "redirectUris","tokenEndpointAuthMethod","grantTypes",
                 "responseTypes",public,type,"requirePKCE"
-         FROM "oauthClient" WHERE "clientId"=$1`,
+         FROM auth."oauthClient" WHERE "clientId"=$1`,
         [config.NANGO_OAUTH_CLIENT_ID],
       );
       expect(provisioned.rows[0]).toMatchObject({
@@ -935,7 +935,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       });
 
       const owner = await client.query(
-        `INSERT INTO "user"(id,name,email,"emailVerified")
+        `INSERT INTO auth."user"(id,name,email,"emailVerified")
          VALUES ('context-use-owner','Owner',$1,true)
          ON CONFLICT (id) DO NOTHING
          RETURNING id`,
@@ -943,12 +943,12 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       );
       createdOwner = Boolean(owner.rowCount);
       await client.query(
-        `INSERT INTO "session"(id,"expiresAt",token,"createdAt","updatedAt","userId")
+        `INSERT INTO auth."session"(id,"expiresAt",token,"createdAt","updatedAt","userId")
          VALUES ($1,now()+interval '1 day',$2,now()-interval '1 hour',now()-interval '1 minute','context-use-owner')`,
         [sessionId, sessionToken],
       );
       await client.query(
-        `INSERT INTO "oauthAccessToken"(
+        `INSERT INTO auth."oauthAccessToken"(
            id,token,"clientId","sessionId","userId","expiresAt","createdAt",scopes
          ) VALUES
            ($1,$2,$3,$4,'context-use-owner',now()+interval '10 minutes',now(),$5::jsonb),
@@ -980,26 +980,26 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       expect((await authorize(accessToken)).status).toBe(204);
 
       await client.query(
-        `UPDATE "session" SET "updatedAt"=now()-interval '13 hours' WHERE id=$1`,
+        `UPDATE auth."session" SET "updatedAt"=now()-interval '13 hours' WHERE id=$1`,
         [sessionId],
       );
       expect((await authorize(accessToken)).status).toBe(401);
     } finally {
       await client.query(
-        `DELETE FROM "oauthAccessToken" WHERE id=ANY($1::text[])`,
+        `DELETE FROM auth."oauthAccessToken" WHERE id=ANY($1::text[])`,
         [[accessTokenId, unboundAccessTokenId]],
       ).catch(() => undefined);
-      await client.query(`DELETE FROM "session" WHERE id=$1`, [sessionId]).catch(() => undefined);
+      await client.query(`DELETE FROM auth."session" WHERE id=$1`, [sessionId]).catch(() => undefined);
       if (createdOwner) {
-        await client.query('ALTER TABLE "user" DISABLE TRIGGER user_protect_owner_identity');
+        await client.query('ALTER TABLE auth."user" DISABLE TRIGGER user_protect_owner_identity');
         try {
           await client.query(
-            `DELETE FROM "user"
+            `DELETE FROM auth."user"
              WHERE id='context-use-owner'
-               AND NOT EXISTS (SELECT 1 FROM passkey WHERE "userId"='context-use-owner')`,
+               AND NOT EXISTS (SELECT 1 FROM auth.passkey WHERE "userId"='context-use-owner')`,
           );
         } finally {
-          await client.query('ALTER TABLE "user" ENABLE TRIGGER user_protect_owner_identity');
+          await client.query('ALTER TABLE auth."user" ENABLE TRIGGER user_protect_owner_identity');
         }
       }
       await client.end();
@@ -1038,7 +1038,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
     await client.connect();
     try {
       const owner = await client.query(
-        `INSERT INTO "user"(id,name,email,"emailVerified")
+        `INSERT INTO auth."user"(id,name,email,"emailVerified")
          VALUES ('context-use-owner','Owner',$1,true)
          ON CONFLICT (id) DO NOTHING
          RETURNING id`,
@@ -1046,12 +1046,12 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       );
       createdOwner = Boolean(owner.rowCount);
       await client.query(
-        `INSERT INTO "session"(id,"expiresAt",token,"createdAt","updatedAt","userId")
+        `INSERT INTO auth."session"(id,"expiresAt",token,"createdAt","updatedAt","userId")
          VALUES ($1,now()+interval '1 day',$2,now()-interval '1 hour',now()-interval '1 minute','context-use-owner')`,
         [sessionId, sessionToken],
       );
       await client.query(
-        `INSERT INTO "oauthConsent"(
+        `INSERT INTO auth."oauthConsent"(
            id,"clientId","userId",scopes,resources,"createdAt","updatedAt"
          ) VALUES ($1,$2,'context-use-owner',$3::jsonb,$4::jsonb,now(),now())`,
         [
@@ -1062,7 +1062,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
         ],
       );
       await client.query(
-        `INSERT INTO "oauthRefreshToken"(
+        `INSERT INTO auth."oauthRefreshToken"(
            id,token,"clientId","sessionId","userId","expiresAt","createdAt",scopes,resources
          ) VALUES ($1,$2,$3,$4,'context-use-owner',now()+interval '30 days',now(),$5::jsonb,$6::jsonb)`,
         [
@@ -1091,7 +1091,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       const issued = await tokenResponse.json() as { access_token: string };
       expect(issued.access_token.split(".")).toHaveLength(3);
       const opaqueRows = await client.query(
-        `SELECT 1 FROM "oauthAccessToken" WHERE "clientId"=$1`,
+        `SELECT 1 FROM auth."oauthAccessToken" WHERE "clientId"=$1`,
         [registered.client_id],
       );
       expect(opaqueRows.rowCount).toBe(0);
@@ -1123,10 +1123,10 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       expect(await active.json()).toEqual({ client_id: registered.client_id });
       expect((await authorizeLineage()).status).toBe(204);
 
-      await client.query(`UPDATE "session" SET "updatedAt"=now()-interval '13 hours' WHERE id=$1`, [sessionId]);
+      await client.query(`UPDATE auth."session" SET "updatedAt"=now()-interval '13 hours' WHERE id=$1`, [sessionId]);
       expect((await authorize(issued.access_token)).status).toBe(401);
       expect((await authorizeLineage()).status).toBe(401);
-      await client.query(`UPDATE "session" SET "updatedAt"=now() WHERE id=$1`, [sessionId]);
+      await client.query(`UPDATE auth."session" SET "updatedAt"=now() WHERE id=$1`, [sessionId]);
       expect((await authorize(issued.access_token)).status).toBe(200);
       expect((await authorizeLineage()).status).toBe(204);
 
@@ -1153,23 +1153,23 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       expect((await authorize(issued.access_token)).status).toBe(401);
       expect((await authorizeLineage()).status).toBe(401);
       const removedClient = await client.query(
-        `SELECT 1 FROM "oauthClient" WHERE "clientId"=$1`,
+        `SELECT 1 FROM auth."oauthClient" WHERE "clientId"=$1`,
         [registered.client_id],
       );
       expect(removedClient.rowCount).toBe(0);
     } finally {
-      await client.query(`DELETE FROM "oauthClient" WHERE "clientId"=$1`, [registered.client_id]).catch(() => undefined);
-      await client.query(`DELETE FROM "session" WHERE id=$1`, [sessionId]).catch(() => undefined);
+      await client.query(`DELETE FROM auth."oauthClient" WHERE "clientId"=$1`, [registered.client_id]).catch(() => undefined);
+      await client.query(`DELETE FROM auth."session" WHERE id=$1`, [sessionId]).catch(() => undefined);
       if (createdOwner) {
-        await client.query('ALTER TABLE "user" DISABLE TRIGGER user_protect_owner_identity');
+        await client.query('ALTER TABLE auth."user" DISABLE TRIGGER user_protect_owner_identity');
         try {
           await client.query(
-            `DELETE FROM "user"
+            `DELETE FROM auth."user"
              WHERE id='context-use-owner'
-               AND NOT EXISTS (SELECT 1 FROM passkey WHERE "userId"='context-use-owner')`,
+               AND NOT EXISTS (SELECT 1 FROM auth.passkey WHERE "userId"='context-use-owner')`,
           );
         } finally {
-          await client.query('ALTER TABLE "user" ENABLE TRIGGER user_protect_owner_identity');
+          await client.query('ALTER TABLE auth."user" ENABLE TRIGGER user_protect_owner_identity');
         }
       }
       await client.end();

@@ -87,7 +87,7 @@ export async function authorizeOwnerAuthenticationRequest(request: Request): Pro
 
     const database = lockClient ?? authPool;
     const passkeyCount = await database.query<{ count: string }>(
-      "SELECT count(*)::text AS count FROM passkey WHERE \"userId\"=$1",
+      "SELECT count(*)::text AS count FROM auth.passkey WHERE \"userId\"=$1",
       [ownerUserId],
     );
     const count = Number(passkeyCount.rows[0]?.count ?? 0);

@@ -5,40 +5,40 @@ import {
 } from "../src/migration-state.ts";
 
 const files = [
-  { version: "001_baseline.sql", checksum: "baseline-checksum" },
-  { version: "002_normalize.sql", checksum: "forward-checksum" },
+  { version: "001_create_auth_schema.sql", checksum: "schema-checksum" },
+  { version: "002_better_auth.sql", checksum: "auth-checksum" },
 ];
 
 describe("forward migration state", () => {
   test("accepts a fresh database and an exactly matching applied prefix", () => {
     expect(() => assertMigrationState(files, [], [])).not.toThrow();
     expect(() => assertMigrationState(files, [
-      { version: "001_baseline.sql", checksum: "baseline-checksum" },
-    ], ["knowledge_pages"])).not.toThrow();
+      { version: "001_create_auth_schema.sql", checksum: "schema-checksum" },
+    ], ["auth.user"])).not.toThrow();
     expect(() => assertMigrationState(files, [
-      { version: "001_baseline.sql", checksum: "baseline-checksum" },
-      { version: "002_normalize.sql", checksum: "forward-checksum" },
-    ], ["knowledge_pages"])).not.toThrow();
+      { version: "001_create_auth_schema.sql", checksum: "schema-checksum" },
+      { version: "002_better_auth.sql", checksum: "auth-checksum" },
+    ], ["auth.user"])).not.toThrow();
   });
 
   test("fails closed for an unrecognized migration", () => {
     expect(() => assertMigrationState(files, [
-      { version: "001_baseline.sql", checksum: "baseline-checksum" },
+      { version: "001_create_auth_schema.sql", checksum: "schema-checksum" },
       { version: "002_unknown.sql", checksum: "unknown-checksum" },
     ], ["knowledge_pages"])).toThrow("not part of this schema");
   });
 
   test("fails closed for an old or modified baseline", () => {
     expect(() => assertMigrationState(files, [
-      { version: "001_baseline.sql", checksum: null },
-    ], ["knowledge_pages"])).toThrow("no recorded checksum");
+      { version: "001_create_auth_schema.sql", checksum: null },
+    ], ["auth.user"])).toThrow("no recorded checksum");
     expect(() => assertMigrationState(files, [
-      { version: "001_baseline.sql", checksum: "old-checksum" },
-    ], ["knowledge_pages"])).toThrow("does not match this release");
+      { version: "001_create_auth_schema.sql", checksum: "old-checksum" },
+    ], ["auth.user"])).toThrow("does not match this release");
   });
 
   test("does not baseline over untracked relations", () => {
-    expect(() => assertMigrationState(files, [], ["knowledge_pages"]))
+    expect(() => assertMigrationState(files, [], ["auth.user"]))
       .toThrow("can only be applied to a fresh database");
   });
 });

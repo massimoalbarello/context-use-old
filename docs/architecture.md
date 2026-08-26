@@ -42,11 +42,10 @@ than being copied into the dashboard.
 
 ## Database evolution
 
-Better Auth owns an `auth` schema and a Better Auth migration stream. Context Use owns a separate
-application stream. Better Auth migrations run first on a fresh database and both streams keep their
-own immutable ledger.
+Better Auth owns an `auth` schema and generated migration files. Context Use owns separate
+application migration files in the same transactional ledger. Better Auth migrations run first on a
+fresh database, followed by application schema and hardening.
 
 Schema migrations never transform application rows. Existing data moves through explicit,
-observable jobs between additive and contract schema releases. The final clean baseline is cut only
-after every application query is modular, schema-qualified, and covered by the relevant permission
-and behavior invariants.
+observable jobs between additive and contract schema releases. Cross-schema references are explicit
+and protected by the relevant permission and behavior invariants.

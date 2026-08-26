@@ -24,12 +24,19 @@ export async function validateMigrationLedger({
     "SELECT version,checksum FROM schema_migrations ORDER BY version",
   );
   const existingRelations = await client.query<{ relation: string }>(
-    `SELECT relname AS relation
-     FROM pg_class
-     WHERE relnamespace='public'::regnamespace
-       AND relkind IN ('r','p','v','m','S')
-       AND relname<>'schema_migrations'
-     ORDER BY relname`,
+    `SELECT format('%I.%I',namespace.nspname,relation.relname) AS relation
+     FROM pg_catalog.pg_class AS relation
+     JOIN pg_catalog.pg_namespace AS namespace
+       ON namespace.oid=relation.relnamespace
+     WHERE namespace.nspname NOT IN ('pg_catalog','information_schema')
+       AND namespace.nspname NOT LIKE 'pg_toast%'
+       AND namespace.nspname NOT LIKE 'pg_temp_%'
+       AND relation.relkind IN ('r','p','v','m','S')
+       AND NOT (
+         namespace.nspname='public'
+         AND relation.relname='schema_migrations'
+       )
+     ORDER BY namespace.nspname,relation.relname`,
   );
   assertMigrationState(
     migrations,

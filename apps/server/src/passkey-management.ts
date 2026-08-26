@@ -54,7 +54,7 @@ function transports(value: string | null): AuthenticatorTransportFuture[] | unde
 async function ownerPasskeys(database: Queryable): Promise<PasskeyRow[]> {
   const result = await database.query<PasskeyRow>(
     `SELECT id,name,"publicKey","credentialID",counter,transports
-     FROM passkey WHERE "userId"=$1 ORDER BY "createdAt",id`,
+     FROM auth.passkey WHERE "userId"=$1 ORDER BY "createdAt",id`,
     [ownerUserId],
   );
   return result.rows;
@@ -91,7 +91,7 @@ export async function revokeOwnerAuthentication(database: Queryable, userId: str
   // compatibility. Revoke OAuth credentials first so deleting a bound session
   // can never turn its token into an unbound, still-active credential.
   await database.query(
-    `UPDATE "oauthRefreshToken"
+    `UPDATE auth."oauthRefreshToken"
      SET revoked=coalesce(revoked,now()),
          "rotationReplayResponse"=NULL,
          "rotationReplayExpiresAt"=NULL
@@ -99,12 +99,12 @@ export async function revokeOwnerAuthentication(database: Queryable, userId: str
     [userId],
   );
   await database.query(
-    `UPDATE "oauthAccessToken"
+    `UPDATE auth."oauthAccessToken"
      SET revoked=coalesce(revoked,now())
      WHERE "userId"=$1`,
     [userId],
   );
-  await database.query(`DELETE FROM "session" WHERE "userId"=$1`, [userId]);
+  await database.query(`DELETE FROM auth."session" WHERE "userId"=$1`, [userId]);
 }
 
 export async function createEnrollmentIntent(
@@ -138,7 +138,7 @@ export async function createRemovalIntent(
   await cleanupIntents(database);
   const target = await database.query<{ id: string; name: string | null; total: string }>(
     `SELECT key.id,key.name,count(*) OVER ()::text AS total
-     FROM passkey key
+     FROM auth.passkey key
      WHERE key."userId"=$1
      ORDER BY key."createdAt",key.id`,
     [principal.userId],
@@ -201,7 +201,7 @@ async function verifyAssertion(
 ): Promise<{ key: PasskeyRow; newCounter: number }> {
   const result = await client.query<PasskeyRow>(
     `SELECT id,name,"publicKey","credentialID",counter,transports
-     FROM passkey
+     FROM auth.passkey
      WHERE "userId"=$1 AND "credentialID"=$2
      FOR UPDATE`,
     [ownerUserId, response.id],
@@ -246,7 +246,7 @@ export async function confirmEnrollmentIntent(
     await client.query("BEGIN");
     const intent = await lockedIntent(client, intentId, principal, "enroll");
     const verified = await verifyAssertion(client, response, intent.challenge);
-    await client.query("UPDATE passkey SET counter=$1 WHERE id=$2", [verified.newCounter, verified.key.id]);
+    await client.query("UPDATE auth.passkey SET counter=$1 WHERE id=$2", [verified.newCounter, verified.key.id]);
     const token = randomBytes(32).toString("base64url");
     const tokenHash = createHash("sha256").update(token).digest("hex");
     await client.query(
@@ -287,7 +287,7 @@ export async function confirmRemovalIntent(
       throw new SecurityError("Passkey management request not found", 404);
     }
     const verified = await verifyAssertion(client, response, intent.challenge);
-    await client.query("UPDATE passkey SET counter=$1 WHERE id=$2", [verified.newCounter, verified.key.id]);
+    await client.query("UPDATE auth.passkey SET counter=$1 WHERE id=$2", [verified.newCounter, verified.key.id]);
     await client.query(
       `UPDATE passkey_management_intents
        SET confirmed_at=now(),consumed_at=now(),authorizing_credential_id=$2

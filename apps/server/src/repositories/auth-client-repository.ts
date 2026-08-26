@@ -18,11 +18,11 @@ export class AuthClientRepository {
   }): Promise<boolean> {
     const lineage = await this.pool.query(
       `SELECT 1
-       FROM "oauthClient" client
-       JOIN "oauthConsent" consent
+       FROM auth."oauthClient" client
+       JOIN auth."oauthConsent" consent
          ON consent."clientId"=client."clientId"
         AND consent."userId"=$2
-       JOIN "session" owner_session
+       JOIN auth."session" owner_session
          ON owner_session.id=$3
         AND owner_session."userId"=$2
        WHERE client."clientId"=$1
@@ -44,7 +44,7 @@ export class AuthClientRepository {
       backedUp: boolean;
     }>(
       `SELECT id,name,"createdAt","deviceType","backedUp"
-       FROM passkey WHERE "userId"=$1 ORDER BY "createdAt",id`,
+       FROM auth.passkey WHERE "userId"=$1 ORDER BY "createdAt",id`,
       [ownerUserId],
     );
     return passkeys.rows;
@@ -65,11 +65,11 @@ export class AuthClientRepository {
         `SELECT client."clientId" AS client_id,client.name,client.uri,
                 client."softwareVersion" AS version,client."createdAt" AS created_at,
                 consent."updatedAt" AS approved_at,tokens.last_connected_at
-         FROM "oauthConsent" consent
-         JOIN "oauthClient" client ON client."clientId"=consent."clientId"
+         FROM auth."oauthConsent" consent
+         JOIN auth."oauthClient" client ON client."clientId"=consent."clientId"
          LEFT JOIN (
            SELECT "clientId","userId",max("createdAt") AS last_connected_at
-           FROM "oauthAccessToken"
+           FROM auth."oauthAccessToken"
            GROUP BY "clientId","userId"
          ) tokens ON tokens."clientId"=client."clientId" AND tokens."userId"=consent."userId"
          WHERE consent."userId"=$1
@@ -78,7 +78,7 @@ export class AuthClientRepository {
         [ownerUserId, pageSize, offset],
       ),
       this.pool.query<{ total: string }>(
-        `SELECT count(*) AS total FROM "oauthConsent" WHERE "userId"=$1`,
+        `SELECT count(*) AS total FROM auth."oauthConsent" WHERE "userId"=$1`,
         [ownerUserId],
       ),
     ]);
@@ -96,7 +96,7 @@ export class AuthClientRepository {
     const result = await this.pool.query(
       `SELECT "clientId" AS client_id,name,uri,"redirectUris" AS redirect_uris,
               "softwareId" AS software_id,"softwareVersion" AS software_version
-       FROM "oauthClient" WHERE "clientId"=$1 AND coalesce(disabled,false)=false`,
+       FROM auth."oauthClient" WHERE "clientId"=$1 AND coalesce(disabled,false)=false`,
       [clientId],
     );
     return result.rows[0] ?? null;
@@ -104,8 +104,8 @@ export class AuthClientRepository {
 
   async revokeClient({ clientId, ownerUserId }: { clientId: string; ownerUserId: string }) {
     const removed = await this.pool.query(
-      `DELETE FROM "oauthClient" oauth_client
-       USING "oauthConsent" consent
+      `DELETE FROM auth."oauthClient" oauth_client
+       USING auth."oauthConsent" consent
        WHERE oauth_client."clientId"=$1
          AND consent."clientId"=oauth_client."clientId"
          AND consent."userId"=$2
