@@ -181,7 +181,7 @@ async function seedActiveAssetPublication(
 
 async function ensureFixtureOwner(client: Client): Promise<void> {
   const insertedOwner = await client.query<{ id: string }>(
-    `INSERT INTO "user"(id,name,email,"emailVerified")
+    `INSERT INTO auth."user"(id,name,email,"emailVerified")
      VALUES ('context-use-owner','Canonical owner',$1,true)
      ON CONFLICT (id) DO NOTHING
      RETURNING id`,
@@ -197,7 +197,7 @@ async function seedOwnerPasskey(
   const credentialId = `credential-${randomUUID()}`;
   await ensureFixtureOwner(client);
   await client.query(
-    `INSERT INTO passkey(
+    `INSERT INTO auth.passkey(
        id,"publicKey","userId","credentialID",counter,"deviceType","backedUp"
      ) VALUES ($1,'public-key','context-use-owner',$2,$3,'singleDevice',false)`,
     [randomUUID(), credentialId, counter],
@@ -654,7 +654,7 @@ describeDatabase("checked publication planning and staging", () => {
       await client.query("SET session_replication_role=origin");
     }
     await client.query(
-      `UPDATE passkey SET counter=9
+      `UPDATE auth.passkey SET counter=9
        WHERE "userId"='context-use-owner' AND "credentialID"=$1`,
       [credentialId],
     );
@@ -662,7 +662,7 @@ describeDatabase("checked publication planning and staging", () => {
       first.intentId, firstSession, credentialId, 0, 1,
     );
     expect((await client.query(
-      `SELECT counter FROM passkey
+      `SELECT counter FROM auth.passkey
        WHERE "userId"='context-use-owner' AND "credentialID"=$1`,
       [credentialId],
     )).rows[0]?.counter).toBe(9);
@@ -814,7 +814,7 @@ describeDatabase("checked publication planning and staging", () => {
       staged.intentId, sessionId, credentialId, 0, 1,
     ))).toBe("23505");
     expect((await client.query(
-      `SELECT counter FROM passkey
+      `SELECT counter FROM auth.passkey
        WHERE "userId"='context-use-owner' AND "credentialID"=$1`,
       [credentialId],
     )).rows[0]?.counter).toBe(0);
@@ -837,7 +837,7 @@ describeDatabase("checked publication planning and staging", () => {
     const credentialId = `credential-${randomUUID()}`;
     await ensureFixtureOwner(client);
     await client.query(
-      `INSERT INTO passkey(
+      `INSERT INTO auth.passkey(
          id,"publicKey","userId","credentialID",counter,"deviceType","backedUp"
        ) VALUES ($1,'public-key','context-use-owner',$2,0,'singleDevice',false)`,
       [randomUUID(), credentialId],

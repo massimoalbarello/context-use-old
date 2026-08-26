@@ -1,9 +1,8 @@
--- Context Use hypermedia database baseline.
+-- Context Use application schema snapshot.
 --
--- This migration creates the complete current schema for a new PostgreSQL 17
--- database. Existing installations move to this ledger entry only after the
--- migrator verifies the exact completed predecessor ledger; the SQL below is
--- never replayed over their documents, public artifacts, or object metadata.
+-- This migration contains schema and access-control definitions only. Runtime
+-- bootstrap owns the initial singleton rows and all future data transitions
+-- must run outside schema migrations.
 
 DO $$
 DECLARE
@@ -29,7 +28,11 @@ BEGIN
         role_name
       );
     END IF;
-    EXECUTE format('ALTER ROLE %I SET search_path TO pg_catalog, public', role_name);
+    IF role_name='context_use_auth' THEN
+      EXECUTE format('ALTER ROLE %I SET search_path TO pg_catalog, auth, public', role_name);
+    ELSE
+      EXECUTE format('ALTER ROLE %I SET search_path TO pg_catalog, public', role_name);
+    END IF;
   END LOOP;
 
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='context_use_corpus') THEN
@@ -44,6 +47,7 @@ BEGIN
   FOREACH role_name IN ARRAY ARRAY[
     'context_use_boundary_owner',
     'context_use_document_history_owner',
+    'context_use_import_owner',
     'context_use_projection_owner',
     'context_use_publication_lock_owner',
     'context_use_storage_owner'
@@ -84,10 +88,6 @@ $$;
 
 GRANT context_use_dashboard TO context_use_corpus;
 
-
--- Dumped from database version 17.11
--- Dumped by pg_dump version 17.11
-
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
@@ -100,9 +100,13 @@ SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
 
+ALTER SCHEMA public OWNER TO pg_database_owner;
+
 --
--- Name: pgcrypto; Type: EXTENSION; Schema: -; Owner: -
+-- Name: SCHEMA public; Type: COMMENT; Schema: -; Owner: pg_database_owner
 --
+
+COMMENT ON SCHEMA public IS 'standard public schema';
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
 
@@ -156,6 +160,21 @@ CREATE TYPE public.hypermedia_document_representation AS ENUM (
 
 
 ALTER TYPE public.hypermedia_document_representation OWNER TO postgres;
+
+--
+-- Name: knowledge_entity_type; Type: TYPE; Schema: public; Owner: postgres
+--
+
+CREATE TYPE public.knowledge_entity_type AS ENUM (
+    'person',
+    'organization',
+    'place',
+    'event',
+    'thing'
+);
+
+
+ALTER TYPE public.knowledge_entity_type OWNER TO postgres;
 
 --
 -- Name: knowledge_revision_contract_provenance; Type: TYPE; Schema: public; Owner: postgres
@@ -213,8 +232,7 @@ ALTER TYPE public.private_document_lifecycle OWNER TO postgres;
 CREATE TYPE public.private_document_operational_role AS ENUM (
     'global_guide',
     'automation_instructions',
-    'automation_state',
-    'directory_hub'
+    'automation_state'
 );
 
 
@@ -309,6 +327,41 @@ CREATE TYPE public.retained_public_artifact_kind AS ENUM (
 
 
 ALTER TYPE public.retained_public_artifact_kind OWNER TO postgres;
+
+--
+-- Name: archive_source_record(uuid, uuid); Type: FUNCTION; Schema: public; Owner: context_use_boundary_owner
+--
+
+CREATE FUNCTION public.archive_source_record(p_document_id uuid, p_expected_revision_id uuid) RETURNS text
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'public'
+    AS $$
+DECLARE target record;
+BEGIN
+  IF p_document_id IS NULL THEN
+    RAISE EXCEPTION 'source record document ID is required' USING ERRCODE='22023';
+  END IF;
+
+  SELECT record.current_revision_id,record.deleted_at INTO target
+  FROM source_records record
+  WHERE record.document_id=p_document_id
+  FOR UPDATE;
+  IF NOT FOUND THEN RETURN 'not_found'; END IF;
+  IF target.current_revision_id IS DISTINCT FROM p_expected_revision_id THEN
+    RETURN 'revision_conflict';
+  END IF;
+  IF target.deleted_at IS NOT NULL THEN RETURN 'archived'; END IF;
+
+  UPDATE source_records
+  SET deleted_at=now(),search_vector=''::tsvector
+  WHERE document_id=p_document_id;
+  DELETE FROM source_record_search_chunks WHERE document_id=p_document_id;
+  RETURN 'archived';
+END;
+$$;
+
+
+ALTER FUNCTION public.archive_source_record(p_document_id uuid, p_expected_revision_id uuid) OWNER TO context_use_boundary_owner;
 
 --
 -- Name: assert_private_uuid_available(uuid); Type: FUNCTION; Schema: public; Owner: context_use_boundary_owner
@@ -756,6 +809,17 @@ BEGIN
   PERFORM pg_advisory_xact_lock(
     hashtextextended('context-use:hypermedia-bootstrap',0)
   );
+  IF NOT EXISTS (SELECT 1 FROM knowledge_bundle_import_policy WHERE singleton) THEN
+    INSERT INTO knowledge_bundle_import_policy(singleton,state)
+    VALUES (true,'pending');
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM knowledge_settings WHERE singleton) THEN
+    INSERT INTO knowledge_settings(singleton) VALUES (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM publication_settings WHERE singleton) THEN
+    INSERT INTO publication_settings(singleton,entrypoint_public_id,updated_at)
+    VALUES (true,NULL,NULL);
+  END IF;
   IF EXISTS (
     SELECT 1 FROM hypermedia_bootstrap_allocations
     WHERE completed_at IS NOT NULL
@@ -1440,6 +1504,123 @@ $$;
 ALTER FUNCTION public.capture_deleted_current_page_version() OWNER TO postgres;
 
 --
+-- Name: capture_full_knowledge_bundle(uuid, text, text); Type: FUNCTION; Schema: public; Owner: context_use_import_owner
+--
+
+CREATE FUNCTION public.capture_full_knowledge_bundle(p_intent_id uuid, p_owner_user_id text, p_session_id text) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'public'
+    SET jit TO 'off'
+    AS $$
+DECLARE intent record; record_count bigint; object_count bigint; byte_count bigint;
+BEGIN
+  PERFORM pg_advisory_xact_lock_shared(
+    hashtextextended('context-use:knowledge-lifecycle',0)
+  );
+  SELECT export_intent.id,export_intent.owner_user_id,export_intent.session_id,
+    export_intent.expires_at,export_intent.confirmed_at
+  INTO intent
+  FROM knowledge_export_intents export_intent
+  JOIN knowledge_bundle_exports bundle ON bundle.intent_id=export_intent.id
+  WHERE export_intent.id=p_intent_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'full knowledge export intent not found' USING ERRCODE='P0002';
+  END IF;
+  IF intent.owner_user_id IS DISTINCT FROM p_owner_user_id
+     OR intent.session_id IS DISTINCT FROM p_session_id THEN
+    RAISE EXCEPTION 'full knowledge export principal mismatch' USING ERRCODE='42501';
+  END IF;
+  IF intent.confirmed_at IS NULL OR intent.expires_at<=now() THEN
+    RAISE EXCEPTION 'full knowledge export confirmation required' USING ERRCODE='42501';
+  END IF;
+
+  INSERT INTO knowledge_bundle_exports(intent_id,status,phase)
+  VALUES (p_intent_id,'snapshotting','catalog')
+  ON CONFLICT (intent_id) DO UPDATE SET
+    status='snapshotting',phase='catalog',error_code=NULL,error_message=NULL,
+    records_completed=0,objects_completed=0,bytes_completed=0,updated_at=now();
+  DELETE FROM knowledge_bundle_export_records WHERE intent_id=p_intent_id;
+  DELETE FROM knowledge_bundle_export_objects WHERE intent_id=p_intent_id;
+
+  INSERT INTO knowledge_bundle_export_records(intent_id,dataset,ordinal,record)
+  SELECT p_intent_id,dataset,row_number() OVER (PARTITION BY dataset ORDER BY sort_key),record
+  FROM (
+    SELECT 'hypermedia_documents' dataset,id::text sort_key,to_jsonb(row) record FROM hypermedia_documents row
+    UNION ALL SELECT 'knowledge_pages',id::text,to_jsonb(row) FROM knowledge_pages row
+    UNION ALL SELECT 'assets',id::text,to_jsonb(row) FROM assets row
+    UNION ALL SELECT 'hypermedia_document_revisions',id::text,to_jsonb(row) FROM hypermedia_document_revisions row
+    UNION ALL SELECT 'knowledge_page_versions',id::text,to_jsonb(row) FROM knowledge_page_versions row
+    UNION ALL SELECT 'source_records',document_id::text,to_jsonb(row) FROM source_records row
+    UNION ALL SELECT 'knowledge_page_changes',lpad(change_sequence::text,24,'0'),to_jsonb(row) FROM knowledge_page_changes row
+    UNION ALL SELECT 'knowledge_revision_contracts',revision_id::text,to_jsonb(row) FROM knowledge_revision_contracts row
+    UNION ALL SELECT 'document_links',source_revision_id::text||':'||target_document_id::text,to_jsonb(row) FROM document_links row
+    UNION ALL SELECT 'knowledge_asset_links',source_version_id::text||':'||target_asset_id::text,to_jsonb(row) FROM knowledge_asset_links row
+    UNION ALL SELECT 'knowledge_search',document_id::text,to_jsonb(row) FROM knowledge_search row
+    UNION ALL SELECT 'knowledge_search_chunks',document_id::text||':'||lpad(chunk_number::text,12,'0'),to_jsonb(row) FROM knowledge_search_chunks row
+    UNION ALL SELECT 'source_record_search_chunks',document_id::text||':'||lpad(chunk_number::text,12,'0'),to_jsonb(row) FROM source_record_search_chunks row
+    UNION ALL SELECT 'knowledge_settings',singleton::text,to_jsonb(row) FROM knowledge_settings row
+    UNION ALL SELECT 'automation_registry',id::text,to_jsonb(row) FROM automation_registry row
+    UNION ALL SELECT 'hypermedia_bootstrap_allocations',document_kind::text,to_jsonb(row) FROM hypermedia_bootstrap_allocations row
+    UNION ALL SELECT 'publication_intent_id_reservations',intent_id::text,to_jsonb(row) FROM publication_intent_id_reservations row
+    UNION ALL SELECT 'public_artifact_id_reservations',artifact_id::text,to_jsonb(row) FROM public_artifact_id_reservations row
+    UNION ALL SELECT 'public_representation_token_reservations',representation_token,to_jsonb(row) FROM public_representation_token_reservations row
+    UNION ALL SELECT 'publication_intents',id::text,to_jsonb(row) FROM publication_intents row
+    UNION ALL SELECT 'publication_artifact_staging',intent_id::text,to_jsonb(row) FROM publication_artifact_staging row
+    UNION ALL SELECT 'publication_object_claims',claim_token::text,to_jsonb(row) FROM publication_object_claims row
+    UNION ALL SELECT 'public_resources',public_id::text,to_jsonb(row) FROM public_resources row
+    UNION ALL SELECT 'retained_page_artifacts',page_id::text||':'||version_id::text||':'||projection_generation::text,to_jsonb(row) FROM retained_page_artifacts row
+    UNION ALL SELECT 'public_page_artifacts',artifact_id::text,to_jsonb(row) FROM public_page_artifacts row
+    UNION ALL SELECT 'public_asset_artifacts',artifact_id::text,to_jsonb(row) FROM public_asset_artifacts row
+    UNION ALL SELECT 'page_publications',public_id::text,to_jsonb(row) FROM page_publications row
+    UNION ALL SELECT 'asset_publications',public_id::text,to_jsonb(row) FROM asset_publications row
+    UNION ALL SELECT 'public_route_aliases',alias_path,to_jsonb(row) FROM public_route_aliases row
+    UNION ALL SELECT 'public_visibility_generations',public_id::text,to_jsonb(row) FROM public_visibility_generations row
+    UNION ALL SELECT 'publication_target_generations',target_kind::text||':'||target_document_id::text,to_jsonb(row) FROM publication_target_generations row
+    UNION ALL SELECT 'public_namespace_conflicts',namespace_uuid::text,to_jsonb(row) FROM public_namespace_conflicts row
+    UNION ALL SELECT 'publication_settings',singleton::text,to_jsonb(row) FROM publication_settings row
+  ) snapshot;
+
+  INSERT INTO knowledge_bundle_export_objects(
+    intent_id,ordinal,object_kind,object_key,size_bytes,content_hash,content_type
+  )
+  SELECT p_intent_id,row_number() OVER (ORDER BY object_key),object_kind,
+    object_key,size_bytes,content_hash,content_type
+  FROM (
+    SELECT DISTINCT ON (object_key) object_kind,object_key,size_bytes,content_hash,content_type
+    FROM (
+      SELECT 'private_revision'::text object_kind,body_object_key object_key,
+        body_size_bytes::bigint size_bytes,body_content_hash content_hash,
+        'text/markdown; charset=utf-8'::text content_type
+      FROM hypermedia_document_revisions
+      UNION ALL SELECT 'asset',s3_object_key,size_bytes,content_hash,content_type
+        FROM assets WHERE deleted_at IS NULL
+      UNION ALL SELECT 'retained_page',body_object_key,body_size_bytes,body_content_hash,
+        'text/markdown; charset=utf-8' FROM retained_page_artifacts
+      UNION ALL SELECT 'public_page',body_object_key,body_size_bytes,body_content_hash,
+        'text/markdown; charset=utf-8' FROM public_page_artifacts
+      UNION ALL SELECT 'public_asset',body_object_key,body_size_bytes,body_content_hash,
+        public_content_type FROM public_asset_artifacts
+    ) referenced_objects
+    ORDER BY object_key,object_kind
+  ) objects;
+
+  SELECT count(*),coalesce(sum(octet_length(record::text)),0)
+  INTO record_count,byte_count FROM knowledge_bundle_export_records
+  WHERE intent_id=p_intent_id;
+  SELECT count(*),byte_count+coalesce(sum(size_bytes),0)
+  INTO object_count,byte_count FROM knowledge_bundle_export_objects
+  WHERE intent_id=p_intent_id;
+  UPDATE knowledge_bundle_exports SET status='processing',phase='bundle',
+    records_total=record_count,objects_total=object_count,bytes_total=byte_count,
+    updated_at=now() WHERE intent_id=p_intent_id;
+  RETURN jsonb_build_object('records',record_count,'objects',object_count,'bytes',byte_count);
+END;
+$$;
+
+
+ALTER FUNCTION public.capture_full_knowledge_bundle(p_intent_id uuid, p_owner_user_id text, p_session_id text) OWNER TO context_use_import_owner;
+
+--
 -- Name: capture_inserted_current_page_version(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -1599,6 +1780,54 @@ $$;
 ALTER FUNCTION public.claim_publication_artifact(p_intent_id uuid, p_claim_token uuid) OWNER TO context_use_storage_owner;
 
 --
+-- Name: close_full_knowledge_import(); Type: FUNCTION; Schema: public; Owner: context_use_import_owner
+--
+
+CREATE FUNCTION public.close_full_knowledge_import() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'public'
+    AS $$
+BEGIN
+  UPDATE knowledge_bundle_import_policy
+  SET state='closed',changed_at=clock_timestamp()
+  WHERE singleton AND state='available';
+  RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+END;
+$$;
+
+
+ALTER FUNCTION public.close_full_knowledge_import() OWNER TO context_use_import_owner;
+
+--
+-- Name: close_full_knowledge_import_for_page_change(); Type: FUNCTION; Schema: public; Owner: context_use_import_owner
+--
+
+CREATE FUNCTION public.close_full_knowledge_import_for_page_change() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'public'
+    AS $$
+BEGIN
+  -- Release-managed guide synchronization is still part of the untouched
+  -- default template. Every owner/agent page change closes the window.
+  IF NEW.change_kind='updated' AND NEW.actor_kind='dashboard'
+     AND NEW.actor_subject='context-use-managed-global-guide/v1'
+     AND NEW.page_id=(
+       SELECT document_id FROM hypermedia_bootstrap_allocations
+       WHERE document_kind='global_guide'
+     ) THEN
+    RETURN NEW;
+  END IF;
+  UPDATE knowledge_bundle_import_policy
+  SET state='closed',changed_at=clock_timestamp()
+  WHERE singleton AND state='available';
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.close_full_knowledge_import_for_page_change() OWNER TO context_use_import_owner;
+
+--
 -- Name: complete_hypermedia_bootstrap(); Type: FUNCTION; Schema: public; Owner: context_use_boundary_owner
 --
 
@@ -1722,6 +1951,66 @@ $$;
 
 
 ALTER FUNCTION public.complete_hypermedia_bootstrap() OWNER TO context_use_boundary_owner;
+
+--
+-- Name: confirm_knowledge_bundle_import(uuid, text, text, text, integer, integer); Type: FUNCTION; Schema: public; Owner: context_use_boundary_owner
+--
+
+CREATE FUNCTION public.confirm_knowledge_bundle_import(p_import_id uuid, p_owner_user_id text, p_session_id text, p_credential_id text, p_expected_counter integer, p_new_counter integer) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'public'
+    AS $$
+BEGIN
+  IF NOT full_knowledge_import_available() THEN
+    RAISE EXCEPTION 'full knowledge imports require an initialization-stage Context Use instance'
+      USING ERRCODE='55000';
+  END IF;
+  PERFORM confirm_knowledge_bundle_import_unchecked(
+    p_import_id,p_owner_user_id,p_session_id,p_credential_id,
+    p_expected_counter,p_new_counter
+  );
+END;
+$$;
+
+
+ALTER FUNCTION public.confirm_knowledge_bundle_import(p_import_id uuid, p_owner_user_id text, p_session_id text, p_credential_id text, p_expected_counter integer, p_new_counter integer) OWNER TO context_use_boundary_owner;
+
+--
+-- Name: confirm_knowledge_bundle_import_unchecked(uuid, text, text, text, integer, integer); Type: FUNCTION; Schema: public; Owner: context_use_boundary_owner
+--
+
+CREATE FUNCTION public.confirm_knowledge_bundle_import_unchecked(p_import_id uuid, p_owner_user_id text, p_session_id text, p_credential_id text, p_expected_counter integer, p_new_counter integer) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'public'
+    AS $$
+DECLARE job record; stored_challenge text;
+BEGIN
+  SELECT * INTO job FROM knowledge_bundle_imports WHERE id=p_import_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'knowledge import not found' USING ERRCODE='P0002'; END IF;
+  IF job.owner_user_id IS DISTINCT FROM p_owner_user_id
+     OR job.session_id IS DISTINCT FROM p_session_id THEN
+    RAISE EXCEPTION 'knowledge import principal mismatch' USING ERRCODE='42501';
+  END IF;
+  IF job.status<>'awaiting_confirmation' OR job.confirmed_at IS NOT NULL
+     OR job.expires_at<=now() THEN
+    RAISE EXCEPTION 'knowledge import is inactive' USING ERRCODE='22023';
+  END IF;
+  SELECT challenge INTO stored_challenge FROM confirmation_challenges
+  WHERE intent_kind='knowledge_import' AND intent_id=p_import_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'knowledge import challenge not issued' USING ERRCODE='42501'; END IF;
+  PERFORM consume_confirmation_challenge(
+    'knowledge_import',p_import_id,stored_challenge,p_owner_user_id,
+    p_credential_id,p_expected_counter,p_new_counter
+  );
+  UPDATE knowledge_bundle_imports SET confirmed_at=now(),status='restoring',
+    phase='objects',bytes_completed=0,records_completed=0,objects_completed=0,
+    updated_at=now(),expires_at=now()+interval '24 hours'
+  WHERE id=p_import_id;
+END;
+$$;
+
+
+ALTER FUNCTION public.confirm_knowledge_bundle_import_unchecked(p_import_id uuid, p_owner_user_id text, p_session_id text, p_credential_id text, p_expected_counter integer, p_new_counter integer) OWNER TO context_use_boundary_owner;
 
 --
 -- Name: confirm_knowledge_export_intent(uuid, text, text, text, integer, integer); Type: FUNCTION; Schema: public; Owner: context_use_boundary_owner
@@ -2093,7 +2382,7 @@ BEGIN
   END IF;
 
   SELECT counter INTO stored_counter
-  FROM passkey
+  FROM auth.passkey
   WHERE "userId"=p_owner_user_id AND "credentialID"=p_credential_id
   FOR UPDATE;
   IF NOT FOUND OR stored_counter IS DISTINCT FROM p_expected_counter THEN
@@ -2111,7 +2400,7 @@ BEGIN
     RAISE EXCEPTION 'confirmation challenge is missing or consumed' USING ERRCODE='23505';
   END IF;
 
-  UPDATE passkey SET counter=p_new_counter
+  UPDATE auth.passkey SET counter=p_new_counter
   WHERE "userId"=p_owner_user_id AND "credentialID"=p_credential_id;
 END;
 $$;
@@ -2136,6 +2425,40 @@ $$;
 
 
 ALTER FUNCTION public.defer_document_link_index(p_source_revision_id uuid) OWNER TO context_use_boundary_owner;
+
+--
+-- Name: delete_archived_source_record(uuid, uuid); Type: FUNCTION; Schema: public; Owner: context_use_boundary_owner
+--
+
+CREATE FUNCTION public.delete_archived_source_record(p_document_id uuid, p_expected_revision_id uuid) RETURNS text
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'public'
+    AS $$
+DECLARE target record;
+BEGIN
+  IF p_document_id IS NULL THEN
+    RAISE EXCEPTION 'source record document ID is required' USING ERRCODE='22023';
+  END IF;
+
+  SELECT record.current_revision_id,record.deleted_at INTO target
+  FROM source_records record
+  WHERE record.document_id=p_document_id
+  FOR UPDATE;
+  IF NOT FOUND THEN RETURN 'not_found'; END IF;
+  IF target.current_revision_id IS DISTINCT FROM p_expected_revision_id THEN
+    RETURN 'revision_conflict';
+  END IF;
+  IF target.deleted_at IS NULL THEN RETURN 'not_archived'; END IF;
+
+  DELETE FROM source_records WHERE document_id=p_document_id;
+  DELETE FROM hypermedia_documents
+  WHERE id=p_document_id AND authority='source';
+  RETURN 'deleted';
+END;
+$$;
+
+
+ALTER FUNCTION public.delete_archived_source_record(p_document_id uuid, p_expected_revision_id uuid) OWNER TO context_use_boundary_owner;
 
 --
 -- Name: document_search_vector(text, text, text); Type: FUNCTION; Schema: public; Owner: postgres
@@ -2220,6 +2543,65 @@ $$;
 
 
 ALTER FUNCTION public.finalize_publication_artifact_claim(p_claim_token uuid, p_intent_id uuid, p_target_kind public.publication_target, p_body_size_bytes bigint, p_body_content_hash text, p_public_title text, p_public_summary text, p_public_last_edited_at timestamp with time zone, p_public_filename text, p_public_content_type text, p_public_width integer, p_public_height integer, p_public_duration_seconds text, p_projected_target_public_ids uuid[], p_observed_public_uuid_tokens uuid[], p_projection_receipt_hash text) OWNER TO context_use_storage_owner;
+
+--
+-- Name: full_knowledge_bundle_summary(); Type: FUNCTION; Schema: public; Owner: context_use_import_owner
+--
+
+CREATE FUNCTION public.full_knowledge_bundle_summary() RETURNS TABLE(page_count bigint, asset_count bigint, estimated_bytes bigint)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'public'
+    AS $$
+  SELECT
+    (SELECT count(*) FROM knowledge_pages WHERE archived_at IS NULL),
+    (SELECT count(*) FROM assets WHERE deleted_at IS NULL),
+    coalesce((SELECT sum(size_bytes) FROM (
+      SELECT DISTINCT ON (object_key) object_key,size_bytes
+      FROM (
+        SELECT body_object_key object_key,body_size_bytes::bigint size_bytes
+          FROM hypermedia_document_revisions
+        UNION ALL SELECT s3_object_key,size_bytes FROM assets WHERE deleted_at IS NULL
+        UNION ALL SELECT body_object_key,body_size_bytes FROM retained_page_artifacts
+        UNION ALL SELECT body_object_key,body_size_bytes FROM public_page_artifacts
+        UNION ALL SELECT body_object_key,body_size_bytes FROM public_asset_artifacts
+      ) referenced_objects
+      ORDER BY object_key,size_bytes
+    ) unique_objects),0)::bigint;
+$$;
+
+
+ALTER FUNCTION public.full_knowledge_bundle_summary() OWNER TO context_use_import_owner;
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: knowledge_bundle_import_policy; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.knowledge_bundle_import_policy (
+    singleton boolean DEFAULT true NOT NULL,
+    state text NOT NULL,
+    changed_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT knowledge_bundle_import_policy_singleton_check CHECK (singleton),
+    CONSTRAINT knowledge_bundle_import_policy_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'available'::text, 'closed'::text])))
+);
+
+
+ALTER TABLE public.knowledge_bundle_import_policy OWNER TO postgres;
+
+--
+-- Name: full_knowledge_import_available(); Type: FUNCTION; Schema: public; Owner: context_use_import_owner
+--
+
+CREATE FUNCTION public.full_knowledge_import_available() RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'public'
+    RETURN COALESCE((SELECT (knowledge_bundle_import_policy.state = 'available'::text) FROM public.knowledge_bundle_import_policy WHERE knowledge_bundle_import_policy.singleton), false);
+
+
+ALTER FUNCTION public.full_knowledge_import_available() OWNER TO context_use_import_owner;
 
 --
 -- Name: get_dashboard_publication_status(public.publication_target, uuid); Type: FUNCTION; Schema: public; Owner: context_use_boundary_owner
@@ -2938,6 +3320,36 @@ $_$;
 ALTER FUNCTION public.issue_confirmation_challenge(p_intent_kind public.confirmation_intent_kind, p_intent_id uuid, p_challenge text) OWNER TO context_use_boundary_owner;
 
 --
+-- Name: issue_knowledge_bundle_import_challenge(uuid, text); Type: FUNCTION; Schema: public; Owner: context_use_boundary_owner
+--
+
+CREATE FUNCTION public.issue_knowledge_bundle_import_challenge(p_import_id uuid, p_challenge text) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'public'
+    AS $_$
+DECLARE job record;
+BEGIN
+  IF p_challenge IS NULL OR p_challenge !~ '^[A-Za-z0-9_-]{43,128}$' THEN
+    RAISE EXCEPTION 'valid confirmation challenge required' USING ERRCODE='22023';
+  END IF;
+  SELECT id,status,expires_at,confirmed_at INTO job
+  FROM knowledge_bundle_imports WHERE id=p_import_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'knowledge import not found' USING ERRCODE='P0002'; END IF;
+  IF job.status<>'awaiting_confirmation' OR job.confirmed_at IS NOT NULL
+     OR job.expires_at<=now() THEN
+    RAISE EXCEPTION 'knowledge import is inactive' USING ERRCODE='22023';
+  END IF;
+  DELETE FROM confirmation_challenges
+  WHERE intent_kind='knowledge_import' AND intent_id=p_import_id;
+  INSERT INTO confirmation_challenges(intent_kind,intent_id,challenge)
+  VALUES ('knowledge_import',p_import_id,p_challenge);
+END;
+$_$;
+
+
+ALTER FUNCTION public.issue_knowledge_bundle_import_challenge(p_import_id uuid, p_challenge text) OWNER TO context_use_boundary_owner;
+
+--
 -- Name: keep_asset_document_identity_stable(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -3188,6 +3600,29 @@ $$;
 ALTER FUNCTION public.lock_publication_context(p_target_kind public.publication_target, p_target_document_id uuid, p_expected_revision_id uuid) OWNER TO context_use_boundary_owner;
 
 --
+-- Name: open_full_knowledge_import_after_bootstrap(); Type: FUNCTION; Schema: public; Owner: context_use_import_owner
+--
+
+CREATE FUNCTION public.open_full_knowledge_import_after_bootstrap() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'public'
+    AS $$
+BEGIN
+  UPDATE knowledge_bundle_import_policy
+  SET state='available',changed_at=clock_timestamp()
+  WHERE singleton AND state='pending'
+    AND (SELECT count(*) FROM hypermedia_bootstrap_allocations)=5
+    AND NOT EXISTS (
+      SELECT 1 FROM hypermedia_bootstrap_allocations WHERE completed_at IS NULL
+    );
+  RETURN NULL;
+END;
+$$;
+
+
+ALTER FUNCTION public.open_full_knowledge_import_after_bootstrap() OWNER TO context_use_import_owner;
+
+--
 -- Name: prevent_automation_document_role_reuse(); Type: FUNCTION; Schema: public; Owner: context_use_boundary_owner
 --
 
@@ -3362,7 +3797,7 @@ BEGIN
   IF TG_OP='DELETE' THEN
     PERFORM pg_advisory_xact_lock(hashtextextended(OLD."userId",0));
     IF (
-      SELECT count("userId") FROM passkey WHERE "userId"=OLD."userId"
+      SELECT count("userId") FROM auth.passkey WHERE "userId"=OLD."userId"
     )<=1 THEN
       RAISE EXCEPTION 'at least one owner passkey is required' USING ERRCODE='22023';
     END IF;
@@ -4118,12 +4553,12 @@ BEGIN
 
   PERFORM pg_advisory_xact_lock(hashtextextended(p_owner_user_id,0));
   IF (
-    SELECT count("userId") FROM passkey WHERE "userId"=p_owner_user_id
+    SELECT count("userId") FROM auth.passkey WHERE "userId"=p_owner_user_id
   )<=1 THEN
     RAISE EXCEPTION 'at least one owner passkey is required' USING ERRCODE='22023';
   END IF;
 
-  DELETE FROM passkey
+  DELETE FROM auth.passkey
   WHERE id=p_passkey_id AND "userId"=p_owner_user_id;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'owner passkey not found' USING ERRCODE='P0002';
@@ -4181,13 +4616,6 @@ BEGIN
   FOR UPDATE OF revision;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'source revision not found' USING ERRCODE='P0002';
-  END IF;
-  IF source_authority='source' THEN
-    -- Compatibility with the immediately preceding application release: its
-    -- connector writer still submitted links extracted from source bytes. Raw
-    -- evidence never defines semantic graph edges, so discard them rather than
-    -- wedging ingestion during a rolling deploy or application rollback.
-    p_target_document_ids := '{}'::uuid[];
   END IF;
 
   DELETE FROM document_links WHERE source_revision_id=p_source_revision_id;
@@ -4722,10 +5150,175 @@ $_$;
 ALTER FUNCTION public.resolve_storage_route(p_representation_token text) OWNER TO context_use_storage_owner;
 
 --
--- Name: search_private_document_catalog(text, real, bigint, uuid, boolean, integer, public.hypermedia_document_authority, public.hypermedia_document_representation, public.private_document_kind, public.private_document_lifecycle, text, public.private_document_operational_role); Type: FUNCTION; Schema: public; Owner: context_use_projection_owner
+-- Name: restore_full_knowledge_bundle(uuid, text, text); Type: FUNCTION; Schema: public; Owner: context_use_import_owner
 --
 
-CREATE FUNCTION public.search_private_document_catalog(p_query text, p_after_rank real, p_after_updated_at_epoch_micros bigint, p_after_document_id uuid, p_include_retired boolean, p_limit integer, p_authority public.hypermedia_document_authority, p_representation public.hypermedia_document_representation, p_document_kind public.private_document_kind, p_lifecycle public.private_document_lifecycle, p_integration text, p_operational_role public.private_document_operational_role) RETURNS TABLE(document jsonb, search_rank real, search_updated_at_epoch_micros text, search_document_id uuid)
+CREATE FUNCTION public.restore_full_knowledge_bundle(p_import_id uuid, p_owner_user_id text, p_session_id text) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'public'
+    SET jit TO 'off'
+    AS $$
+DECLARE restored jsonb;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtextextended('context-use:knowledge-lifecycle',0));
+  IF NOT full_knowledge_import_available() THEN
+    RAISE EXCEPTION 'full knowledge imports require an initialization-stage Context Use instance'
+      USING ERRCODE='55000';
+  END IF;
+  restored:=restore_full_knowledge_bundle_unchecked(
+    p_import_id,p_owner_user_id,p_session_id
+  );
+  UPDATE knowledge_bundle_import_policy
+  SET state='closed',changed_at=clock_timestamp()
+  WHERE singleton;
+  RETURN restored;
+END;
+$$;
+
+
+ALTER FUNCTION public.restore_full_knowledge_bundle(p_import_id uuid, p_owner_user_id text, p_session_id text) OWNER TO context_use_import_owner;
+
+--
+-- Name: restore_full_knowledge_bundle_unchecked(uuid, text, text); Type: FUNCTION; Schema: public; Owner: context_use_import_owner
+--
+
+CREATE FUNCTION public.restore_full_knowledge_bundle_unchecked(p_import_id uuid, p_owner_user_id text, p_session_id text) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'public'
+    SET jit TO 'off'
+    AS $_$
+DECLARE job record; mapping record; constraint_row record; dangling boolean;
+  restored_records bigint:=0; maximum_change_sequence bigint;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtextextended('context-use:knowledge-lifecycle',0));
+  SELECT * INTO job FROM knowledge_bundle_imports WHERE id=p_import_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'knowledge import not found' USING ERRCODE='P0002'; END IF;
+  IF job.owner_user_id IS DISTINCT FROM p_owner_user_id
+     OR job.session_id IS DISTINCT FROM p_session_id THEN
+    RAISE EXCEPTION 'knowledge import principal mismatch' USING ERRCODE='42501';
+  END IF;
+  IF job.confirmed_at IS NULL OR job.status<>'restoring' OR job.expires_at<=now() THEN
+    RAISE EXCEPTION 'confirmed knowledge import required' USING ERRCODE='42501';
+  END IF;
+  IF EXISTS (SELECT 1 FROM knowledge_bundle_import_objects
+    WHERE import_id=p_import_id AND materialized_at IS NULL) THEN
+    RAISE EXCEPTION 'knowledge import objects are incomplete' USING ERRCODE='55000';
+  END IF;
+  IF EXISTS (SELECT 1 FROM source_records) OR EXISTS (SELECT 1 FROM assets)
+     OR EXISTS (SELECT 1 FROM public_resources)
+     OR EXISTS (
+       SELECT 1 FROM hypermedia_documents document
+       WHERE NOT EXISTS (SELECT 1 FROM hypermedia_bootstrap_allocations allocation
+         WHERE allocation.document_id=document.id)
+     ) THEN
+    RAISE EXCEPTION 'full knowledge imports require a fresh Context Use instance'
+      USING ERRCODE='55000';
+  END IF;
+
+  PERFORM set_config('session_replication_role','replica',true);
+  TRUNCATE TABLE
+    page_deletion_intents,
+    page_publications,asset_publications,public_page_artifacts,public_asset_artifacts,
+    public_representation_token_reservations,publication_object_claims,
+    publication_artifact_staging,publication_intents,publication_intent_id_reservations,
+    public_artifact_id_reservations,hypermedia_bootstrap_allocations,publication_settings,
+    public_visibility_generations,publication_target_generations,public_namespace_conflicts,
+    knowledge_search_chunks,knowledge_search,knowledge_revision_contracts,
+    automation_registry,retained_page_artifacts,public_route_aliases,public_resources,
+    knowledge_settings,document_links,source_record_search_chunks,source_records,
+    hypermedia_document_revisions,hypermedia_documents,knowledge_asset_links,
+    knowledge_page_changes,knowledge_page_versions,knowledge_pages,assets;
+
+  FOR mapping IN SELECT * FROM (VALUES
+    (1,'hypermedia_documents'),(2,'knowledge_pages'),(3,'assets'),
+    (4,'hypermedia_document_revisions'),(5,'knowledge_page_versions'),
+    (6,'source_records'),(7,'knowledge_page_changes'),
+    (8,'knowledge_revision_contracts'),(9,'document_links'),
+    (10,'knowledge_asset_links'),(11,'knowledge_search'),
+    (12,'knowledge_search_chunks'),(13,'source_record_search_chunks'),
+    (14,'knowledge_settings'),(15,'automation_registry'),
+    (16,'hypermedia_bootstrap_allocations'),
+    (17,'publication_intent_id_reservations'),
+    (18,'public_artifact_id_reservations'),
+    (19,'public_representation_token_reservations'),(20,'publication_intents'),
+    (21,'publication_artifact_staging'),(22,'publication_object_claims'),
+    (23,'public_resources'),(24,'retained_page_artifacts'),
+    (25,'public_page_artifacts'),(26,'public_asset_artifacts'),
+    (27,'page_publications'),(28,'asset_publications'),
+    (29,'public_route_aliases'),(30,'public_visibility_generations'),
+    (31,'publication_target_generations'),(32,'public_namespace_conflicts'),
+    (33,'publication_settings')
+  ) AS ordered(position,dataset) ORDER BY position
+  LOOP
+    EXECUTE format(
+      'INSERT INTO %I OVERRIDING SYSTEM VALUE SELECT (jsonb_populate_record(NULL::%I,record)).* '
+      'FROM knowledge_bundle_import_records WHERE import_id=$1 AND dataset=$2 ORDER BY ordinal',
+      mapping.dataset,mapping.dataset
+    ) USING p_import_id,mapping.dataset;
+    restored_records:=restored_records+(
+      SELECT count(*) FROM knowledge_bundle_import_records
+      WHERE import_id=p_import_id AND dataset=mapping.dataset
+    );
+  END LOOP;
+  PERFORM set_config('session_replication_role','origin',true);
+
+  -- Validate every current foreign key after the replica-mode bulk load. This
+  -- is generic so future physical FK additions cannot silently weaken restore.
+  FOR constraint_row IN
+    SELECT con.oid,con.conrelid::regclass child,con.confrelid::regclass parent,
+      array_agg(child_attribute.attname ORDER BY key.position) child_columns,
+      array_agg(parent_attribute.attname ORDER BY key.position) parent_columns
+    FROM pg_constraint con
+    CROSS JOIN LATERAL unnest(con.conkey,con.confkey) WITH ORDINALITY
+      AS key(child_number,parent_number,position)
+    JOIN pg_attribute child_attribute
+      ON child_attribute.attrelid=con.conrelid AND child_attribute.attnum=key.child_number
+    JOIN pg_attribute parent_attribute
+      ON parent_attribute.attrelid=con.confrelid AND parent_attribute.attnum=key.parent_number
+    WHERE con.contype='f' AND con.connamespace='public'::regnamespace
+      AND con.conrelid::regclass::text IN (
+        SELECT DISTINCT dataset FROM knowledge_bundle_import_records
+        WHERE import_id=p_import_id
+      )
+    GROUP BY con.oid,con.conrelid,con.confrelid
+  LOOP
+    EXECUTE format(
+      'SELECT EXISTS (SELECT 1 FROM %s child WHERE (%s) IS NOT NULL AND NOT EXISTS '
+      '(SELECT 1 FROM %s parent WHERE %s))',
+      constraint_row.child,
+      array_to_string(ARRAY(SELECT format('child.%I',name)
+        FROM unnest(constraint_row.child_columns) name),','),
+      constraint_row.parent,
+      array_to_string(ARRAY(SELECT format('child.%I IS NOT DISTINCT FROM parent.%I',
+        constraint_row.child_columns[index],constraint_row.parent_columns[index])
+        FROM generate_subscripts(constraint_row.child_columns,1) index),' AND ')
+    ) INTO dangling;
+    IF dangling THEN
+      RAISE EXCEPTION 'knowledge bundle contains a dangling relationship in %',
+        constraint_row.child USING ERRCODE='23503';
+    END IF;
+  END LOOP;
+
+  SELECT max(change_sequence) INTO maximum_change_sequence FROM knowledge_page_changes;
+  IF maximum_change_sequence IS NOT NULL THEN
+    PERFORM setval(pg_get_serial_sequence('knowledge_page_changes','change_sequence'),
+      maximum_change_sequence,true);
+  END IF;
+  UPDATE knowledge_bundle_imports SET status='complete',phase='complete',
+    consumed_at=now(),records_completed=records_total,objects_completed=objects_total,
+    bytes_completed=bytes_total,updated_at=now() WHERE id=p_import_id;
+  RETURN jsonb_build_object('records',restored_records,'objects',job.objects_total);
+END;
+$_$;
+
+
+ALTER FUNCTION public.restore_full_knowledge_bundle_unchecked(p_import_id uuid, p_owner_user_id text, p_session_id text) OWNER TO context_use_import_owner;
+
+--
+-- Name: search_private_document_catalog(text, real, bigint, uuid, boolean, integer, public.hypermedia_document_authority, public.hypermedia_document_representation, public.private_document_kind, public.private_document_lifecycle, text, public.private_document_operational_role, text[], public.knowledge_entity_type[]); Type: FUNCTION; Schema: public; Owner: context_use_projection_owner
+--
+
+CREATE FUNCTION public.search_private_document_catalog(p_query text, p_after_rank real, p_after_updated_at_epoch_micros bigint, p_after_document_id uuid, p_include_retired boolean, p_limit integer, p_authority public.hypermedia_document_authority, p_representation public.hypermedia_document_representation, p_document_kind public.private_document_kind, p_lifecycle public.private_document_lifecycle, p_integration text, p_operational_role public.private_document_operational_role, p_catalog_types text[], p_entity_types public.knowledge_entity_type[]) RETURNS TABLE(document jsonb, search_rank real, search_updated_at_epoch_micros text, search_document_id uuid)
     LANGUAGE plpgsql STABLE SECURITY DEFINER
     SET search_path TO 'pg_catalog', 'public'
     AS $$
@@ -4743,6 +5336,43 @@ BEGIN
      )) THEN
     RAISE EXCEPTION 'private document search cursor is invalid' USING ERRCODE='22023';
   END IF;
+  IF p_catalog_types IS NOT NULL AND (
+    cardinality(p_catalog_types)<1
+    OR cardinality(p_catalog_types)>5
+    OR array_position(p_catalog_types,NULL) IS NOT NULL
+    OR EXISTS (
+      SELECT 1 FROM unnest(p_catalog_types) entry(value)
+      WHERE entry.value<>ALL(ARRAY[
+        'knowledge','record','asset','public','archived'
+      ]::text[])
+    )
+    OR cardinality(p_catalog_types)<>(
+      SELECT count(DISTINCT entry.value)
+      FROM unnest(p_catalog_types) entry(value)
+    )
+  ) THEN
+    RAISE EXCEPTION 'private document catalog types are invalid' USING ERRCODE='22023';
+  END IF;
+  IF p_entity_types IS NOT NULL AND (
+    cardinality(p_entity_types)<1
+    OR cardinality(p_entity_types)>5
+    OR array_position(p_entity_types,NULL) IS NOT NULL
+    OR cardinality(p_entity_types)<>(
+      SELECT count(DISTINCT entry.value)
+      FROM unnest(p_entity_types) entry(value)
+    )
+  ) THEN
+    RAISE EXCEPTION 'knowledge entity types are invalid' USING ERRCODE='22023';
+  END IF;
+  IF p_entity_types IS NOT NULL AND (
+    p_document_kind IS NOT NULL AND p_document_kind<>'knowledge'
+    OR p_catalog_types IS NOT NULL AND EXISTS (
+      SELECT 1 FROM unnest(p_catalog_types) entry(value)
+      WHERE entry.value IN ('record','asset')
+    )
+  ) THEN
+    RAISE EXCEPTION 'knowledge entity types apply only to pages' USING ERRCODE='22023';
+  END IF;
 
   RETURN QUERY
   WITH query AS (
@@ -4752,9 +5382,6 @@ BEGIN
       plainto_tsquery('simple',regexp_replace(
         p_query,'[[:punct:]]+',' ','g'
       )) AS simple,
-      -- Keep the unstemmed query terms so the all-terms fallback can match a
-      -- simple-config title term and an English-config body term on the same
-      -- document even when neither vector contains the whole query.
       tsvector_to_array(to_tsvector('simple',regexp_replace(
         p_query,'[[:punct:]]+',' ','g'
       ))) AS terms
@@ -4846,7 +5473,9 @@ BEGIN
       (extract(epoch FROM catalog.updated_at)*1000000)::bigint
         AS updated_at_epoch_micros,
       CASE catalog.document_kind
-        WHEN 'knowledge' THEN knowledge.rank
+        WHEN 'knowledge' THEN (
+          knowledge.rank * CASE WHEN catalog.entity_type IS NULL THEN 1.0 ELSE 1.2 END
+        )::real
         WHEN 'record' THEN record.rank
         WHEN 'asset' THEN ts_rank(
           to_tsvector('simple',regexp_replace(concat_ws(' ',
@@ -4862,22 +5491,37 @@ BEGIN
     LEFT JOIN record_candidates record ON record.document_id=catalog.document_id
     WHERE btrim(coalesce(p_query,''))<>''
       AND (
-        p_lifecycle IS NOT NULL AND catalog.lifecycle=p_lifecycle::text
-        OR p_lifecycle IS NULL AND (p_include_retired OR catalog.lifecycle='active')
+        p_catalog_types IS NULL AND (
+          p_lifecycle IS NOT NULL AND catalog.lifecycle=p_lifecycle::text
+          OR p_lifecycle IS NULL AND (p_include_retired OR catalog.lifecycle='active')
+        )
+        OR p_catalog_types IS NOT NULL AND (
+          ('knowledge'=ANY(p_catalog_types)
+            AND catalog.document_kind='knowledge' AND catalog.lifecycle='active')
+          OR ('record'=ANY(p_catalog_types)
+            AND catalog.document_kind='record' AND catalog.lifecycle='active')
+          OR ('asset'=ANY(p_catalog_types)
+            AND catalog.document_kind='asset' AND catalog.lifecycle='active')
+          OR ('archived'=ANY(p_catalog_types) AND catalog.lifecycle='archived')
+          OR ('public'=ANY(p_catalog_types)
+            AND catalog.document_kind='knowledge' AND catalog.lifecycle='active'
+            AND EXISTS (
+              SELECT 1 FROM page_publications publication
+              WHERE publication.public_id=catalog.public_id
+            ))
+        )
       )
       AND (p_authority IS NULL OR catalog.authority=p_authority)
       AND (p_representation IS NULL OR catalog.representation=p_representation)
       AND (p_document_kind IS NULL OR catalog.document_kind=p_document_kind::text)
+      AND (p_entity_types IS NULL OR catalog.entity_type=ANY(p_entity_types))
       AND (p_integration IS NULL OR catalog.integration=p_integration)
       AND (
         p_operational_role IS NULL
         OR p_operational_role::text=ANY(catalog.operational_roles)
       )
       AND (
-        (
-          catalog.document_kind='knowledge'
-          AND knowledge.document_id IS NOT NULL
-        )
+        (catalog.document_kind='knowledge' AND knowledge.document_id IS NOT NULL)
         OR (catalog.document_kind='record' AND record.document_id IS NOT NULL)
         OR (
           catalog.document_kind='asset'
@@ -4899,23 +5543,23 @@ BEGIN
   FROM scored
   JOIN private_document_catalog catalog USING (document_id)
   WHERE (
-      p_after_document_id IS NULL
-      OR (
-        p_after_rank IS NOT NULL AND p_after_updated_at_epoch_micros IS NOT NULL
-        AND scored.document_id<>p_after_document_id AND (
-          scored.rank<p_after_rank
-          OR (
-            scored.rank=p_after_rank
-            AND scored.updated_at_epoch_micros<p_after_updated_at_epoch_micros
-          )
-          OR (
-            scored.rank=p_after_rank
-            AND scored.updated_at_epoch_micros=p_after_updated_at_epoch_micros
-            AND scored.document_id::text COLLATE "C"
-              >p_after_document_id::text COLLATE "C"
-          )
+    p_after_document_id IS NULL
+    OR (
+      p_after_rank IS NOT NULL AND p_after_updated_at_epoch_micros IS NOT NULL
+      AND scored.document_id<>p_after_document_id AND (
+        scored.rank<p_after_rank
+        OR (
+          scored.rank=p_after_rank
+          AND scored.updated_at_epoch_micros<p_after_updated_at_epoch_micros
+        )
+        OR (
+          scored.rank=p_after_rank
+          AND scored.updated_at_epoch_micros=p_after_updated_at_epoch_micros
+          AND scored.document_id::text COLLATE "C"
+            >p_after_document_id::text COLLATE "C"
         )
       )
+    )
   )
   ORDER BY scored.rank DESC,scored.updated_at DESC,
     scored.document_id::text COLLATE "C"
@@ -4924,7 +5568,7 @@ END;
 $$;
 
 
-ALTER FUNCTION public.search_private_document_catalog(p_query text, p_after_rank real, p_after_updated_at_epoch_micros bigint, p_after_document_id uuid, p_include_retired boolean, p_limit integer, p_authority public.hypermedia_document_authority, p_representation public.hypermedia_document_representation, p_document_kind public.private_document_kind, p_lifecycle public.private_document_lifecycle, p_integration text, p_operational_role public.private_document_operational_role) OWNER TO context_use_projection_owner;
+ALTER FUNCTION public.search_private_document_catalog(p_query text, p_after_rank real, p_after_updated_at_epoch_micros bigint, p_after_document_id uuid, p_include_retired boolean, p_limit integer, p_authority public.hypermedia_document_authority, p_representation public.hypermedia_document_representation, p_document_kind public.private_document_kind, p_lifecycle public.private_document_lifecycle, p_integration text, p_operational_role public.private_document_operational_role, p_catalog_types text[], p_entity_types public.knowledge_entity_type[]) OWNER TO context_use_projection_owner;
 
 --
 -- Name: set_publication_entrypoint(uuid); Type: FUNCTION; Schema: public; Owner: context_use_boundary_owner
@@ -5507,31 +6151,6 @@ $$;
 
 ALTER FUNCTION public.validate_source_record_document_identity() OWNER TO postgres;
 
-SET default_table_access_method = heap;
-
---
--- Name: account; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.account (
-    id text NOT NULL,
-    "accountId" text NOT NULL,
-    "providerId" text NOT NULL,
-    "userId" text NOT NULL,
-    "accessToken" text,
-    "refreshToken" text,
-    "idToken" text,
-    "accessTokenExpiresAt" timestamp with time zone,
-    "refreshTokenExpiresAt" timestamp with time zone,
-    scope text,
-    password text,
-    "createdAt" timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    "updatedAt" timestamp with time zone NOT NULL
-);
-
-
-ALTER TABLE public.account OWNER TO postgres;
-
 --
 -- Name: asset_publications; Type: TABLE; Schema: public; Owner: postgres
 --
@@ -5568,7 +6187,7 @@ CREATE TABLE public.assets (
     CONSTRAINT assets_duration_seconds_check CHECK (((duration_seconds IS NULL) OR (duration_seconds >= (0)::numeric))),
     CONSTRAINT assets_filename_check CHECK (((length(filename) >= 1) AND (length(filename) <= 1024))),
     CONSTRAINT assets_height_check CHECK (((height IS NULL) OR (height > 0))),
-    CONSTRAINT assets_s3_object_key_check CHECK ((s3_object_key ~ '^objects/[a-f0-9-]+$'::text)),
+    CONSTRAINT assets_s3_object_key_check CHECK (((s3_object_key ~ '^blobs/[0-9a-f-]{36}$'::text) OR (s3_object_key ~ '^objects/[a-f0-9-]+$'::text))),
     CONSTRAINT assets_size_bytes_check CHECK ((size_bytes >= 0)),
     CONSTRAINT assets_width_check CHECK (((width IS NULL) OR (width > 0)))
 );
@@ -5698,7 +6317,7 @@ CREATE TABLE public.hypermedia_document_revisions (
     links_indexed_at timestamp with time zone,
     links_index_attempted_at timestamp with time zone,
     CONSTRAINT hypermedia_document_revisions_body_content_hash_check CHECK ((body_content_hash ~ '^[a-f0-9]{64}$'::text)),
-    CONSTRAINT hypermedia_document_revisions_body_object_key_check CHECK ((body_object_key ~ '^documents/private/[0-9a-f-]{36}\.md$'::text)),
+    CONSTRAINT hypermedia_document_revisions_body_object_key_check CHECK (((body_object_key ~ '^blobs/[0-9a-f-]{36}$'::text) OR (body_object_key ~ '^documents/private/[0-9a-f-]{36}\.md$'::text))),
     CONSTRAINT hypermedia_document_revisions_body_size_bytes_check CHECK (((body_size_bytes >= 0) AND (body_size_bytes <= 67108864))),
     CONSTRAINT hypermedia_document_revisions_revision_number_check CHECK ((revision_number > 0))
 );
@@ -5723,23 +6342,6 @@ CREATE TABLE public.hypermedia_documents (
 ALTER TABLE public.hypermedia_documents OWNER TO postgres;
 
 --
--- Name: jwks; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.jwks (
-    id text NOT NULL,
-    "publicKey" text NOT NULL,
-    "privateKey" text NOT NULL,
-    "createdAt" timestamp with time zone NOT NULL,
-    "expiresAt" timestamp with time zone,
-    alg text,
-    crv text
-);
-
-
-ALTER TABLE public.jwks OWNER TO postgres;
-
---
 -- Name: knowledge_asset_links; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -5751,6 +6353,189 @@ CREATE TABLE public.knowledge_asset_links (
 
 
 ALTER TABLE public.knowledge_asset_links OWNER TO postgres;
+
+--
+-- Name: knowledge_bundle_export_objects; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.knowledge_bundle_export_objects (
+    intent_id uuid NOT NULL,
+    ordinal bigint NOT NULL,
+    object_kind text NOT NULL,
+    object_key text NOT NULL,
+    size_bytes bigint NOT NULL,
+    content_hash text NOT NULL,
+    content_type text NOT NULL,
+    CONSTRAINT knowledge_bundle_export_objects_content_hash_check CHECK ((content_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT knowledge_bundle_export_objects_content_type_check CHECK (((length(content_type) >= 1) AND (length(content_type) <= 255))),
+    CONSTRAINT knowledge_bundle_export_objects_object_kind_check CHECK ((object_kind = ANY (ARRAY['private_revision'::text, 'asset'::text, 'retained_page'::text, 'public_page'::text, 'public_asset'::text]))),
+    CONSTRAINT knowledge_bundle_export_objects_ordinal_check CHECK ((ordinal > 0)),
+    CONSTRAINT knowledge_bundle_export_objects_size_bytes_check CHECK ((size_bytes >= 0))
+);
+
+
+ALTER TABLE public.knowledge_bundle_export_objects OWNER TO postgres;
+
+--
+-- Name: knowledge_bundle_export_records; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.knowledge_bundle_export_records (
+    intent_id uuid NOT NULL,
+    dataset text NOT NULL,
+    ordinal bigint NOT NULL,
+    record jsonb NOT NULL,
+    CONSTRAINT knowledge_bundle_export_records_dataset_check CHECK ((dataset ~ '^[a-z][a-z0-9_]{0,79}$'::text)),
+    CONSTRAINT knowledge_bundle_export_records_ordinal_check CHECK ((ordinal > 0)),
+    CONSTRAINT knowledge_bundle_export_records_record_check CHECK ((jsonb_typeof(record) = 'object'::text))
+);
+
+
+ALTER TABLE public.knowledge_bundle_export_records OWNER TO postgres;
+
+--
+-- Name: knowledge_bundle_exports; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.knowledge_bundle_exports (
+    intent_id uuid NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    phase text DEFAULT 'authorization'::text NOT NULL,
+    records_completed bigint DEFAULT 0 NOT NULL,
+    records_total bigint DEFAULT 0 NOT NULL,
+    objects_completed bigint DEFAULT 0 NOT NULL,
+    objects_total bigint DEFAULT 0 NOT NULL,
+    bytes_completed bigint DEFAULT 0 NOT NULL,
+    bytes_total bigint DEFAULT 0 NOT NULL,
+    bundle_size_bytes bigint,
+    bundle_sha256 text,
+    error_code text,
+    error_message text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT knowledge_bundle_exports_bundle_sha256_check CHECK (((bundle_sha256 IS NULL) OR (bundle_sha256 ~ '^[a-f0-9]{64}$'::text))),
+    CONSTRAINT knowledge_bundle_exports_bundle_size_bytes_check CHECK (((bundle_size_bytes IS NULL) OR (bundle_size_bytes > 0))),
+    CONSTRAINT knowledge_bundle_exports_bytes_completed_check CHECK ((bytes_completed >= 0)),
+    CONSTRAINT knowledge_bundle_exports_bytes_total_check CHECK ((bytes_total >= 0)),
+    CONSTRAINT knowledge_bundle_exports_objects_completed_check CHECK ((objects_completed >= 0)),
+    CONSTRAINT knowledge_bundle_exports_objects_total_check CHECK ((objects_total >= 0)),
+    CONSTRAINT knowledge_bundle_exports_records_completed_check CHECK ((records_completed >= 0)),
+    CONSTRAINT knowledge_bundle_exports_records_total_check CHECK ((records_total >= 0)),
+    CONSTRAINT knowledge_bundle_exports_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'snapshotting'::text, 'processing'::text, 'ready'::text, 'failed'::text])))
+);
+
+
+ALTER TABLE public.knowledge_bundle_exports OWNER TO postgres;
+
+--
+-- Name: knowledge_bundle_import_objects; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.knowledge_bundle_import_objects (
+    import_id uuid NOT NULL,
+    ordinal bigint NOT NULL,
+    object_kind text NOT NULL,
+    object_key text NOT NULL,
+    size_bytes bigint NOT NULL,
+    content_hash text NOT NULL,
+    content_type text NOT NULL,
+    materialized_at timestamp with time zone,
+    CONSTRAINT knowledge_bundle_import_objects_content_hash_check CHECK ((content_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT knowledge_bundle_import_objects_content_type_check CHECK (((length(content_type) >= 1) AND (length(content_type) <= 255))),
+    CONSTRAINT knowledge_bundle_import_objects_object_kind_check CHECK ((object_kind = ANY (ARRAY['private_revision'::text, 'asset'::text, 'retained_page'::text, 'public_page'::text, 'public_asset'::text]))),
+    CONSTRAINT knowledge_bundle_import_objects_ordinal_check CHECK ((ordinal > 0)),
+    CONSTRAINT knowledge_bundle_import_objects_size_bytes_check CHECK ((size_bytes >= 0))
+);
+
+
+ALTER TABLE public.knowledge_bundle_import_objects OWNER TO postgres;
+
+--
+-- Name: knowledge_bundle_import_parts; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.knowledge_bundle_import_parts (
+    import_id uuid NOT NULL,
+    part_number integer NOT NULL,
+    object_key text NOT NULL,
+    size_bytes integer NOT NULL,
+    content_hash text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT knowledge_bundle_import_parts_content_hash_check CHECK ((content_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT knowledge_bundle_import_parts_part_number_check CHECK ((part_number >= 0)),
+    CONSTRAINT knowledge_bundle_import_parts_size_bytes_check CHECK ((size_bytes > 0))
+);
+
+
+ALTER TABLE public.knowledge_bundle_import_parts OWNER TO postgres;
+
+--
+-- Name: knowledge_bundle_import_records; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.knowledge_bundle_import_records (
+    import_id uuid NOT NULL,
+    dataset text NOT NULL,
+    ordinal bigint NOT NULL,
+    record jsonb NOT NULL,
+    CONSTRAINT knowledge_bundle_import_records_dataset_check CHECK ((dataset ~ '^[a-z][a-z0-9_]{0,79}$'::text)),
+    CONSTRAINT knowledge_bundle_import_records_ordinal_check CHECK ((ordinal > 0)),
+    CONSTRAINT knowledge_bundle_import_records_record_check CHECK ((jsonb_typeof(record) = 'object'::text))
+);
+
+
+ALTER TABLE public.knowledge_bundle_import_records OWNER TO postgres;
+
+--
+-- Name: knowledge_bundle_imports; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.knowledge_bundle_imports (
+    id uuid NOT NULL,
+    owner_user_id text NOT NULL,
+    session_id text NOT NULL,
+    filename text NOT NULL,
+    total_bytes bigint NOT NULL,
+    part_size integer NOT NULL,
+    total_parts integer NOT NULL,
+    status text DEFAULT 'uploading'::text NOT NULL,
+    phase text DEFAULT 'upload'::text NOT NULL,
+    parts_completed integer DEFAULT 0 NOT NULL,
+    records_completed bigint DEFAULT 0 NOT NULL,
+    records_total bigint DEFAULT 0 NOT NULL,
+    objects_completed bigint DEFAULT 0 NOT NULL,
+    objects_total bigint DEFAULT 0 NOT NULL,
+    bytes_completed bigint DEFAULT 0 NOT NULL,
+    bytes_total bigint DEFAULT 0 NOT NULL,
+    manifest jsonb,
+    error_code text,
+    error_message text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone DEFAULT (now() + '7 days'::interval) NOT NULL,
+    confirmed_at timestamp with time zone,
+    consumed_at timestamp with time zone,
+    CONSTRAINT knowledge_bundle_imports_bytes_completed_check CHECK ((bytes_completed >= 0)),
+    CONSTRAINT knowledge_bundle_imports_bytes_total_check CHECK ((bytes_total >= 0)),
+    CONSTRAINT knowledge_bundle_imports_check CHECK ((expires_at > created_at)),
+    CONSTRAINT knowledge_bundle_imports_check1 CHECK (((consumed_at IS NULL) OR (confirmed_at IS NOT NULL))),
+    CONSTRAINT knowledge_bundle_imports_filename_check CHECK (((length(filename) >= 1) AND (length(filename) <= 1024))),
+    CONSTRAINT knowledge_bundle_imports_manifest_check CHECK (((manifest IS NULL) OR (jsonb_typeof(manifest) = 'object'::text))),
+    CONSTRAINT knowledge_bundle_imports_objects_completed_check CHECK ((objects_completed >= 0)),
+    CONSTRAINT knowledge_bundle_imports_objects_total_check CHECK ((objects_total >= 0)),
+    CONSTRAINT knowledge_bundle_imports_owner_user_id_check CHECK ((owner_user_id = 'context-use-owner'::text)),
+    CONSTRAINT knowledge_bundle_imports_part_size_check CHECK (((part_size >= 1048576) AND (part_size <= 67108864))),
+    CONSTRAINT knowledge_bundle_imports_parts_completed_check CHECK ((parts_completed >= 0)),
+    CONSTRAINT knowledge_bundle_imports_records_completed_check CHECK ((records_completed >= 0)),
+    CONSTRAINT knowledge_bundle_imports_records_total_check CHECK ((records_total >= 0)),
+    CONSTRAINT knowledge_bundle_imports_session_id_check CHECK (((length(session_id) >= 1) AND (length(session_id) <= 512))),
+    CONSTRAINT knowledge_bundle_imports_status_check CHECK ((status = ANY (ARRAY['uploading'::text, 'validating'::text, 'awaiting_confirmation'::text, 'restoring'::text, 'complete'::text, 'failed'::text]))),
+    CONSTRAINT knowledge_bundle_imports_total_bytes_check CHECK ((total_bytes > 0)),
+    CONSTRAINT knowledge_bundle_imports_total_parts_check CHECK (((total_parts >= 1) AND (total_parts <= 100000)))
+);
+
+
+ALTER TABLE public.knowledge_bundle_imports OWNER TO postgres;
 
 --
 -- Name: knowledge_export_intents; Type: TABLE; Schema: public; Owner: postgres
@@ -5823,9 +6608,10 @@ CREATE TABLE public.knowledge_page_versions (
     actor_kind public.actor_kind NOT NULL,
     actor_subject text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    entity_type public.knowledge_entity_type,
     CONSTRAINT knowledge_page_versions_actor_subject_check CHECK (((length(actor_subject) >= 1) AND (length(actor_subject) <= 512))),
     CONSTRAINT knowledge_page_versions_commit_message_check CHECK (((length(TRIM(BOTH FROM commit_message)) >= 3) AND (length(TRIM(BOTH FROM commit_message)) <= 240))),
-    CONSTRAINT knowledge_page_versions_summary_check CHECK ((((length(TRIM(BOTH FROM summary)) >= 1) AND (length(TRIM(BOTH FROM summary)) <= 320)) AND (summary !~ E'[\r\n]'::text))),
+    CONSTRAINT knowledge_page_versions_summary_check CHECK (((length(TRIM(BOTH FROM summary)) >= 1) AND (length(TRIM(BOTH FROM summary)) <= 320) AND (summary !~ E'[\r\n]'::text))),
     CONSTRAINT knowledge_page_versions_title_check CHECK (((length(title) >= 1) AND (length(title) <= 240))),
     CONSTRAINT knowledge_page_versions_version_number_check CHECK ((version_number > 0))
 );
@@ -5974,11 +6760,11 @@ CREATE VIEW public.live_public_namespace_conflicts WITH (security_barrier='true'
             hypermedia_documents.id
            FROM public.hypermedia_documents
         UNION ALL
-         SELECT 'revision'::text,
+         SELECT 'revision'::text AS text,
             hypermedia_document_revisions.id
            FROM public.hypermedia_document_revisions
         UNION ALL
-         SELECT 'historical_document'::text,
+         SELECT 'historical_document'::text AS text,
             public_resources.original_document_id
            FROM public.public_resources
           WHERE (public_resources.original_document_id IS NOT NULL)
@@ -6007,26 +6793,26 @@ CREATE VIEW public.live_public_namespace_conflicts WITH (security_barrier='true'
         UNION
          SELECT DISTINCT (('public:resource:'::text || (candidate.public_id)::text) || ':artifact'::text),
             candidate.public_id,
-            'public_id_artifact_id'::text,
+            'public_id_artifact_id'::text AS text,
             candidate.public_id,
             NULL::text AS text,
-            'public_artifact'::text
+            'public_artifact'::text AS text
            FROM (public_candidate candidate
              JOIN public.public_artifact_id_reservations artifact ON ((artifact.artifact_id = candidate.public_id)))
         UNION
          SELECT DISTINCT ((('public:resource:'::text || (candidate.public_id)::text) || ':alias:'::text) || alias.alias_path),
             candidate.public_id,
-            'public_id_alias_token'::text,
+            'public_id_alias_token'::text AS text,
             candidate.public_id,
             alias.alias_path,
-            'legacy_alias_token'::text
+            'legacy_alias_token'::text AS text
            FROM (public_candidate candidate
              JOIN alias_token alias ON ((alias.token = candidate.public_id)))
           WHERE ((alias.public_id <> candidate.public_id) OR (alias.route_kind <> alias.expected_route_kind) OR ((candidate.resource_kind = 'page'::public.publication_target) AND (alias.route_kind <> ALL (ARRAY['page'::public.public_route_kind, 'markdown'::public.public_route_kind]))) OR ((candidate.resource_kind = 'asset'::public.publication_target) AND (alias.route_kind <> 'asset'::public.public_route_kind)))
         UNION
          SELECT DISTINCT ((('alias:'::text || alias.alias_path) || ':private:'::text) || private.kind),
             alias.token,
-            'alias_token_private_id'::text,
+            'alias_token_private_id'::text AS text,
             alias.public_id,
             alias.alias_path,
             private.kind
@@ -6035,16 +6821,16 @@ CREATE VIEW public.live_public_namespace_conflicts WITH (security_barrier='true'
         UNION
          SELECT DISTINCT (('alias:'::text || alias.alias_path) || ':artifact'::text),
             alias.token,
-            'alias_token_artifact_id'::text,
+            'alias_token_artifact_id'::text AS text,
             alias.public_id,
             alias.alias_path,
-            'public_artifact'::text
+            'public_artifact'::text AS text
            FROM (alias_token alias
              JOIN public.public_artifact_id_reservations artifact ON ((artifact.artifact_id = alias.token)))
         UNION
          SELECT DISTINCT ((('artifact:'::text || (artifact.artifact_id)::text) || ':private:'::text) || private.kind),
             artifact.artifact_id,
-            'artifact_id_private_id'::text,
+            'artifact_id_private_id'::text AS text,
             NULL::uuid AS uuid,
             NULL::text AS text,
             private.kind
@@ -6053,10 +6839,10 @@ CREATE VIEW public.live_public_namespace_conflicts WITH (security_barrier='true'
         UNION
          SELECT DISTINCT (('alias:'::text || alias.alias_path) || ':mapping'::text),
             alias.token,
-            'alias_token_public_mapping'::text,
+            'alias_token_public_mapping'::text AS text,
             alias.public_id,
             alias.alias_path,
-            'public_resource'::text
+            'public_resource'::text AS text
            FROM (alias_token alias
              LEFT JOIN public.public_resources resource ON ((resource.public_id = alias.token)))
           WHERE ((resource.public_id IS NULL) OR (alias.public_id <> alias.token) OR (alias.route_kind <> alias.expected_route_kind) OR ((resource.resource_kind = 'page'::public.publication_target) AND (alias.route_kind <> ALL (ARRAY['page'::public.public_route_kind, 'markdown'::public.public_route_kind]))) OR ((resource.resource_kind = 'asset'::public.publication_target) AND (alias.route_kind <> 'asset'::public.public_route_kind)))
@@ -6072,171 +6858,6 @@ CREATE VIEW public.live_public_namespace_conflicts WITH (security_barrier='true'
 
 
 ALTER VIEW public.live_public_namespace_conflicts OWNER TO context_use_projection_owner;
-
---
--- Name: oauthAccessToken; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public."oauthAccessToken" (
-    id text NOT NULL,
-    token text NOT NULL,
-    "clientId" text NOT NULL,
-    "sessionId" text,
-    "userId" text,
-    "referenceId" text,
-    "refreshId" text,
-    "expiresAt" timestamp with time zone NOT NULL,
-    "createdAt" timestamp with time zone NOT NULL,
-    scopes jsonb NOT NULL,
-    "authorizationCodeId" text,
-    resources jsonb,
-    "requestedUserInfoClaims" jsonb,
-    revoked timestamp with time zone,
-    confirmation jsonb
-);
-
-
-ALTER TABLE public."oauthAccessToken" OWNER TO postgres;
-
---
--- Name: oauthClient; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public."oauthClient" (
-    id text NOT NULL,
-    "clientId" text NOT NULL,
-    "clientSecret" text,
-    disabled boolean,
-    "skipConsent" boolean,
-    "enableEndSession" boolean,
-    "subjectType" text,
-    scopes jsonb,
-    "userId" text,
-    "createdAt" timestamp with time zone,
-    "updatedAt" timestamp with time zone,
-    name text,
-    uri text,
-    icon text,
-    contacts jsonb,
-    tos text,
-    policy text,
-    "softwareId" text,
-    "softwareVersion" text,
-    "softwareStatement" text,
-    "redirectUris" jsonb NOT NULL,
-    "postLogoutRedirectUris" jsonb,
-    "tokenEndpointAuthMethod" text,
-    "grantTypes" jsonb,
-    "responseTypes" jsonb,
-    public boolean,
-    type text,
-    "requirePKCE" boolean,
-    "referenceId" text,
-    metadata jsonb,
-    "dpopBoundAccessTokens" boolean DEFAULT false NOT NULL
-);
-
-
-ALTER TABLE public."oauthClient" OWNER TO postgres;
-
---
--- Name: oauthClientAssertion; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public."oauthClientAssertion" (
-    id text NOT NULL,
-    "expiresAt" timestamp with time zone NOT NULL
-);
-
-
-ALTER TABLE public."oauthClientAssertion" OWNER TO postgres;
-
---
--- Name: oauthClientResource; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public."oauthClientResource" (
-    id text NOT NULL,
-    "clientId" text NOT NULL,
-    "resourceId" text NOT NULL,
-    metadata jsonb,
-    "createdAt" timestamp with time zone
-);
-
-
-ALTER TABLE public."oauthClientResource" OWNER TO postgres;
-
---
--- Name: oauthConsent; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public."oauthConsent" (
-    id text NOT NULL,
-    "clientId" text NOT NULL,
-    "userId" text,
-    "referenceId" text,
-    scopes jsonb NOT NULL,
-    "createdAt" timestamp with time zone NOT NULL,
-    "updatedAt" timestamp with time zone NOT NULL,
-    resources jsonb,
-    "requestedUserInfoClaims" jsonb
-);
-
-
-ALTER TABLE public."oauthConsent" OWNER TO postgres;
-
---
--- Name: oauthRefreshToken; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public."oauthRefreshToken" (
-    id text NOT NULL,
-    token text NOT NULL,
-    "clientId" text NOT NULL,
-    "sessionId" text,
-    "userId" text NOT NULL,
-    "referenceId" text,
-    "expiresAt" timestamp with time zone NOT NULL,
-    "createdAt" timestamp with time zone NOT NULL,
-    revoked timestamp with time zone,
-    "authTime" timestamp with time zone,
-    scopes jsonb NOT NULL,
-    "authorizationCodeId" text,
-    resources jsonb,
-    "requestedUserInfoClaims" jsonb,
-    "rotatedAt" timestamp with time zone,
-    "rotationReplayResponse" text,
-    "rotationReplayExpiresAt" timestamp with time zone,
-    confirmation jsonb
-);
-
-
-ALTER TABLE public."oauthRefreshToken" OWNER TO postgres;
-
---
--- Name: oauthResource; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public."oauthResource" (
-    id text NOT NULL,
-    identifier text NOT NULL,
-    name text NOT NULL,
-    "accessTokenTtl" integer,
-    "refreshTokenTtl" integer,
-    "signingAlgorithm" text,
-    "signingKeyId" text,
-    "allowedScopes" jsonb,
-    "customClaims" jsonb,
-    "dpopBoundAccessTokensRequired" boolean DEFAULT false NOT NULL,
-    disabled boolean DEFAULT false NOT NULL,
-    "createdAt" timestamp with time zone,
-    "updatedAt" timestamp with time zone,
-    "policyVersion" integer DEFAULT 1 NOT NULL,
-    metadata jsonb
-);
-
-
-ALTER TABLE public."oauthResource" OWNER TO postgres;
 
 --
 -- Name: page_deletion_intents; Type: TABLE; Schema: public; Owner: postgres
@@ -6272,28 +6893,6 @@ CREATE TABLE public.page_publications (
 
 
 ALTER TABLE public.page_publications OWNER TO postgres;
-
---
--- Name: passkey; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.passkey (
-    id text NOT NULL,
-    name text,
-    "publicKey" text NOT NULL,
-    "userId" text NOT NULL,
-    "credentialID" text NOT NULL,
-    counter integer NOT NULL,
-    "deviceType" text NOT NULL,
-    "backedUp" boolean NOT NULL,
-    transports text,
-    "createdAt" timestamp with time zone,
-    aaguid text,
-    CONSTRAINT passkey_name_length_check CHECK (((name IS NULL) OR ((length(TRIM(BOTH FROM name)) >= 1) AND (length(TRIM(BOTH FROM name)) <= 80))))
-);
-
-
-ALTER TABLE public.passkey OWNER TO postgres;
 
 --
 -- Name: passkey_management_intents; Type: TABLE; Schema: public; Owner: postgres
@@ -6405,7 +7004,8 @@ CREATE VIEW public.private_document_catalog WITH (security_barrier='true', secur
     revision.links_indexed_at,
     COALESCE((search.revision_id = page.current_version_id), false) AS search_ready,
     document.created_at,
-    document.updated_at
+    document.updated_at,
+    version.entity_type
    FROM (((((((public.hypermedia_documents document
      JOIN public.knowledge_pages page ON ((page.id = document.id)))
      JOIN public.knowledge_page_versions version ON (((version.id = page.current_version_id) AND (version.page_id = page.id))))
@@ -6449,7 +7049,8 @@ UNION ALL
             ELSE ((revision.id IS NOT NULL) AND (revision.links_indexed_at IS NOT NULL))
         END AS search_ready,
     document.created_at,
-    document.updated_at
+    document.updated_at,
+    NULL::public.knowledge_entity_type AS entity_type
    FROM ((public.hypermedia_documents document
      JOIN public.source_records record ON ((record.document_id = document.id)))
      LEFT JOIN public.hypermedia_document_revisions revision ON (((revision.id = record.current_revision_id) AND (revision.document_id = record.document_id))))
@@ -6485,7 +7086,8 @@ UNION ALL
     NULL::timestamp with time zone AS links_indexed_at,
     true AS search_ready,
     document.created_at,
-    document.updated_at
+    document.updated_at,
+    NULL::public.knowledge_entity_type AS entity_type
    FROM ((public.hypermedia_documents document
      JOIN public.assets asset ON ((asset.id = document.id)))
      LEFT JOIN public.public_resources resource ON ((resource.document_id = asset.id)))
@@ -6833,24 +7435,6 @@ CREATE TABLE public.retained_page_artifacts (
 ALTER TABLE public.retained_page_artifacts OWNER TO postgres;
 
 --
--- Name: session; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.session (
-    id text NOT NULL,
-    "expiresAt" timestamp with time zone NOT NULL,
-    token text NOT NULL,
-    "createdAt" timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    "updatedAt" timestamp with time zone NOT NULL,
-    "ipAddress" text,
-    "userAgent" text,
-    "userId" text NOT NULL
-);
-
-
-ALTER TABLE public.session OWNER TO postgres;
-
---
 -- Name: source_record_search_chunks; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -6863,48 +7447,6 @@ CREATE TABLE public.source_record_search_chunks (
 
 
 ALTER TABLE public.source_record_search_chunks OWNER TO postgres;
-
---
--- Name: user; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public."user" (
-    id text NOT NULL,
-    name text NOT NULL,
-    email text NOT NULL,
-    "emailVerified" boolean NOT NULL,
-    image text,
-    "createdAt" timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    "updatedAt" timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    CONSTRAINT user_single_owner_check CHECK (((id = 'context-use-owner'::text) AND ("emailVerified" = true)))
-);
-
-
-ALTER TABLE public."user" OWNER TO postgres;
-
---
--- Name: verification; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.verification (
-    id text NOT NULL,
-    identifier text NOT NULL,
-    value text NOT NULL,
-    "expiresAt" timestamp with time zone NOT NULL,
-    "createdAt" timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    "updatedAt" timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
-);
-
-
-ALTER TABLE public.verification OWNER TO postgres;
-
---
--- Name: account account_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.account
-    ADD CONSTRAINT account_pkey PRIMARY KEY (id);
-
 
 --
 -- Name: asset_publications asset_publications_artifact_id_key; Type: CONSTRAINT; Schema: public; Owner: postgres
@@ -7059,19 +7601,99 @@ ALTER TABLE ONLY public.hypermedia_documents
 
 
 --
--- Name: jwks jwks_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.jwks
-    ADD CONSTRAINT jwks_pkey PRIMARY KEY (id);
-
-
---
 -- Name: knowledge_asset_links knowledge_asset_links_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
 ALTER TABLE ONLY public.knowledge_asset_links
     ADD CONSTRAINT knowledge_asset_links_pkey PRIMARY KEY (source_version_id, target_asset_id);
+
+
+--
+-- Name: knowledge_bundle_export_objects knowledge_bundle_export_objects_intent_id_object_key_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.knowledge_bundle_export_objects
+    ADD CONSTRAINT knowledge_bundle_export_objects_intent_id_object_key_key UNIQUE (intent_id, object_key);
+
+
+--
+-- Name: knowledge_bundle_export_objects knowledge_bundle_export_objects_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.knowledge_bundle_export_objects
+    ADD CONSTRAINT knowledge_bundle_export_objects_pkey PRIMARY KEY (intent_id, ordinal);
+
+
+--
+-- Name: knowledge_bundle_export_records knowledge_bundle_export_records_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.knowledge_bundle_export_records
+    ADD CONSTRAINT knowledge_bundle_export_records_pkey PRIMARY KEY (intent_id, dataset, ordinal);
+
+
+--
+-- Name: knowledge_bundle_exports knowledge_bundle_exports_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.knowledge_bundle_exports
+    ADD CONSTRAINT knowledge_bundle_exports_pkey PRIMARY KEY (intent_id);
+
+
+--
+-- Name: knowledge_bundle_import_objects knowledge_bundle_import_objects_import_id_object_key_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.knowledge_bundle_import_objects
+    ADD CONSTRAINT knowledge_bundle_import_objects_import_id_object_key_key UNIQUE (import_id, object_key);
+
+
+--
+-- Name: knowledge_bundle_import_objects knowledge_bundle_import_objects_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.knowledge_bundle_import_objects
+    ADD CONSTRAINT knowledge_bundle_import_objects_pkey PRIMARY KEY (import_id, ordinal);
+
+
+--
+-- Name: knowledge_bundle_import_parts knowledge_bundle_import_parts_object_key_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.knowledge_bundle_import_parts
+    ADD CONSTRAINT knowledge_bundle_import_parts_object_key_key UNIQUE (object_key);
+
+
+--
+-- Name: knowledge_bundle_import_parts knowledge_bundle_import_parts_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.knowledge_bundle_import_parts
+    ADD CONSTRAINT knowledge_bundle_import_parts_pkey PRIMARY KEY (import_id, part_number);
+
+
+--
+-- Name: knowledge_bundle_import_policy knowledge_bundle_import_policy_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.knowledge_bundle_import_policy
+    ADD CONSTRAINT knowledge_bundle_import_policy_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: knowledge_bundle_import_records knowledge_bundle_import_records_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.knowledge_bundle_import_records
+    ADD CONSTRAINT knowledge_bundle_import_records_pkey PRIMARY KEY (import_id, dataset, ordinal);
+
+
+--
+-- Name: knowledge_bundle_imports knowledge_bundle_imports_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.knowledge_bundle_imports
+    ADD CONSTRAINT knowledge_bundle_imports_pkey PRIMARY KEY (id);
 
 
 --
@@ -7179,94 +7801,6 @@ ALTER TABLE ONLY public.knowledge_settings
 
 
 --
--- Name: oauthAccessToken oauthAccessToken_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public."oauthAccessToken"
-    ADD CONSTRAINT "oauthAccessToken_pkey" PRIMARY KEY (id);
-
-
---
--- Name: oauthAccessToken oauthAccessToken_token_key; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public."oauthAccessToken"
-    ADD CONSTRAINT "oauthAccessToken_token_key" UNIQUE (token);
-
-
---
--- Name: oauthClientAssertion oauthClientAssertion_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public."oauthClientAssertion"
-    ADD CONSTRAINT "oauthClientAssertion_pkey" PRIMARY KEY (id);
-
-
---
--- Name: oauthClientResource oauthClientResource_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public."oauthClientResource"
-    ADD CONSTRAINT "oauthClientResource_pkey" PRIMARY KEY (id);
-
-
---
--- Name: oauthClient oauthClient_clientId_key; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public."oauthClient"
-    ADD CONSTRAINT "oauthClient_clientId_key" UNIQUE ("clientId");
-
-
---
--- Name: oauthClient oauthClient_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public."oauthClient"
-    ADD CONSTRAINT "oauthClient_pkey" PRIMARY KEY (id);
-
-
---
--- Name: oauthConsent oauthConsent_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public."oauthConsent"
-    ADD CONSTRAINT "oauthConsent_pkey" PRIMARY KEY (id);
-
-
---
--- Name: oauthRefreshToken oauthRefreshToken_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public."oauthRefreshToken"
-    ADD CONSTRAINT "oauthRefreshToken_pkey" PRIMARY KEY (id);
-
-
---
--- Name: oauthRefreshToken oauthRefreshToken_token_key; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public."oauthRefreshToken"
-    ADD CONSTRAINT "oauthRefreshToken_token_key" UNIQUE (token);
-
-
---
--- Name: oauthResource oauthResource_identifier_key; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public."oauthResource"
-    ADD CONSTRAINT "oauthResource_identifier_key" UNIQUE (identifier);
-
-
---
--- Name: oauthResource oauthResource_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public."oauthResource"
-    ADD CONSTRAINT "oauthResource_pkey" PRIMARY KEY (id);
-
-
---
 -- Name: page_deletion_intents page_deletion_intents_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -7304,14 +7838,6 @@ ALTER TABLE ONLY public.passkey_management_intents
 
 ALTER TABLE ONLY public.passkey_management_intents
     ADD CONSTRAINT passkey_management_intents_pkey PRIMARY KEY (id);
-
-
---
--- Name: passkey passkey_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.passkey
-    ADD CONSTRAINT passkey_pkey PRIMARY KEY (id);
 
 
 --
@@ -7659,22 +8185,6 @@ ALTER TABLE ONLY public.retained_page_artifacts
 
 
 --
--- Name: session session_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.session
-    ADD CONSTRAINT session_pkey PRIMARY KEY (id);
-
-
---
--- Name: session session_token_key; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.session
-    ADD CONSTRAINT session_token_key UNIQUE (token);
-
-
---
 -- Name: source_record_search_chunks source_record_search_chunks_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -7688,37 +8198,6 @@ ALTER TABLE ONLY public.source_record_search_chunks
 
 ALTER TABLE ONLY public.source_records
     ADD CONSTRAINT source_records_pkey PRIMARY KEY (document_id);
-
-
---
--- Name: user user_email_key; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public."user"
-    ADD CONSTRAINT user_email_key UNIQUE (email);
-
-
---
--- Name: user user_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public."user"
-    ADD CONSTRAINT user_pkey PRIMARY KEY (id);
-
-
---
--- Name: verification verification_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.verification
-    ADD CONSTRAINT verification_pkey PRIMARY KEY (id);
-
-
---
--- Name: account_userId_idx; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX "account_userId_idx" ON public.account USING btree ("userId");
 
 
 --
@@ -7761,6 +8240,20 @@ CREATE INDEX hypermedia_document_revisions_unindexed_links_idx ON public.hyperme
 --
 
 CREATE INDEX knowledge_asset_links_target_idx ON public.knowledge_asset_links USING btree (target_asset_id);
+
+
+--
+-- Name: knowledge_bundle_export_records_stream_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX knowledge_bundle_export_records_stream_idx ON public.knowledge_bundle_export_records USING btree (intent_id, dataset, ordinal);
+
+
+--
+-- Name: knowledge_bundle_imports_expiry_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX knowledge_bundle_imports_expiry_idx ON public.knowledge_bundle_imports USING btree (expires_at);
 
 
 --
@@ -7827,122 +8320,10 @@ CREATE INDEX knowledge_search_vector_idx ON public.knowledge_search USING gin (s
 
 
 --
--- Name: oauthAccessToken_authorizationCodeId_idx; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX "oauthAccessToken_authorizationCodeId_idx" ON public."oauthAccessToken" USING btree ("authorizationCodeId");
-
-
---
--- Name: oauthAccessToken_clientId_idx; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX "oauthAccessToken_clientId_idx" ON public."oauthAccessToken" USING btree ("clientId");
-
-
---
--- Name: oauthAccessToken_refreshId_idx; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX "oauthAccessToken_refreshId_idx" ON public."oauthAccessToken" USING btree ("refreshId");
-
-
---
--- Name: oauthAccessToken_sessionId_idx; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX "oauthAccessToken_sessionId_idx" ON public."oauthAccessToken" USING btree ("sessionId");
-
-
---
--- Name: oauthAccessToken_userId_idx; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX "oauthAccessToken_userId_idx" ON public."oauthAccessToken" USING btree ("userId");
-
-
---
--- Name: oauthClientResource_clientId_idx; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX "oauthClientResource_clientId_idx" ON public."oauthClientResource" USING btree ("clientId");
-
-
---
--- Name: oauthClientResource_resourceId_idx; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX "oauthClientResource_resourceId_idx" ON public."oauthClientResource" USING btree ("resourceId");
-
-
---
--- Name: oauthClient_userId_idx; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX "oauthClient_userId_idx" ON public."oauthClient" USING btree ("userId");
-
-
---
--- Name: oauthConsent_clientId_idx; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX "oauthConsent_clientId_idx" ON public."oauthConsent" USING btree ("clientId");
-
-
---
--- Name: oauthConsent_userId_idx; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX "oauthConsent_userId_idx" ON public."oauthConsent" USING btree ("userId");
-
-
---
--- Name: oauthRefreshToken_authorizationCodeId_idx; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX "oauthRefreshToken_authorizationCodeId_idx" ON public."oauthRefreshToken" USING btree ("authorizationCodeId");
-
-
---
--- Name: oauthRefreshToken_clientId_idx; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX "oauthRefreshToken_clientId_idx" ON public."oauthRefreshToken" USING btree ("clientId");
-
-
---
--- Name: oauthRefreshToken_sessionId_idx; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX "oauthRefreshToken_sessionId_idx" ON public."oauthRefreshToken" USING btree ("sessionId");
-
-
---
--- Name: oauthRefreshToken_userId_idx; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX "oauthRefreshToken_userId_idx" ON public."oauthRefreshToken" USING btree ("userId");
-
-
---
 -- Name: page_deletion_intents_expiry_idx; Type: INDEX; Schema: public; Owner: postgres
 --
 
 CREATE INDEX page_deletion_intents_expiry_idx ON public.page_deletion_intents USING btree (expires_at);
-
-
---
--- Name: passkey_credentialID_idx; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX "passkey_credentialID_idx" ON public.passkey USING btree ("credentialID");
-
-
---
--- Name: passkey_credentialID_unique; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE UNIQUE INDEX "passkey_credentialID_unique" ON public.passkey USING btree ("credentialID");
 
 
 --
@@ -8016,13 +8397,6 @@ CREATE INDEX publication_intents_expiry_idx ON public.publication_intents USING 
 
 
 --
--- Name: session_userId_idx; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX "session_userId_idx" ON public.session USING btree ("userId");
-
-
---
 -- Name: source_record_search_chunks_vector_idx; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -8058,38 +8432,24 @@ CREATE INDEX source_records_search_idx ON public.source_records USING gin (searc
 
 
 --
--- Name: verification_identifier_idx; Type: INDEX; Schema: public; Owner: postgres
+-- Name: asset_publications asset_publications_bump_public_visibility; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE INDEX verification_identifier_idx ON public.verification USING btree (identifier);
-
-
---
--- Name: asset_publications asset_publications_028_validate_active_mapping; Type: TRIGGER; Schema: public; Owner: postgres
---
-
-CREATE TRIGGER asset_publications_028_validate_active_mapping BEFORE INSERT OR UPDATE ON public.asset_publications FOR EACH ROW EXECUTE FUNCTION public.validate_active_publication_pin();
+CREATE TRIGGER asset_publications_bump_public_visibility AFTER INSERT OR DELETE OR UPDATE ON public.asset_publications FOR EACH ROW EXECUTE FUNCTION public.bump_pin_public_visibility();
 
 
 --
--- Name: asset_publications asset_publications_029_bump_public_visibility; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: asset_publications asset_publications_validate_active_mapping; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER asset_publications_029_bump_public_visibility AFTER INSERT OR DELETE OR UPDATE ON public.asset_publications FOR EACH ROW EXECUTE FUNCTION public.bump_pin_public_visibility();
-
-
---
--- Name: assets assets_028_protect_active_publication_delete; Type: TRIGGER; Schema: public; Owner: postgres
---
-
-CREATE TRIGGER assets_028_protect_active_publication_delete BEFORE DELETE ON public.assets FOR EACH ROW EXECUTE FUNCTION public.protect_active_asset_publication();
+CREATE TRIGGER asset_publications_validate_active_mapping BEFORE INSERT OR UPDATE ON public.asset_publications FOR EACH ROW EXECUTE FUNCTION public.validate_active_publication_pin();
 
 
 --
--- Name: assets assets_028_protect_active_publication_update; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: assets assets_close_full_import; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER assets_028_protect_active_publication_update BEFORE UPDATE OF deleted_at ON public.assets FOR EACH ROW EXECUTE FUNCTION public.protect_active_asset_publication();
+CREATE TRIGGER assets_close_full_import BEFORE INSERT OR DELETE OR UPDATE ON public.assets FOR EACH ROW EXECUTE FUNCTION public.close_full_knowledge_import();
 
 
 --
@@ -8097,6 +8457,20 @@ CREATE TRIGGER assets_028_protect_active_publication_update BEFORE UPDATE OF del
 --
 
 CREATE TRIGGER assets_keep_document_identity_stable BEFORE UPDATE OF id ON public.assets FOR EACH ROW EXECUTE FUNCTION public.keep_asset_document_identity_stable();
+
+
+--
+-- Name: assets assets_protect_active_publication_delete; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER assets_protect_active_publication_delete BEFORE DELETE ON public.assets FOR EACH ROW EXECUTE FUNCTION public.protect_active_asset_publication();
+
+
+--
+-- Name: assets assets_protect_active_publication_update; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER assets_protect_active_publication_update BEFORE UPDATE OF deleted_at ON public.assets FOR EACH ROW EXECUTE FUNCTION public.protect_active_asset_publication();
 
 
 --
@@ -8121,10 +8495,17 @@ CREATE TRIGGER assets_remove_document_identity AFTER DELETE ON public.assets FOR
 
 
 --
--- Name: assets assets_zz029_bump_publication_target; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: assets assets_zz_bump_publication_target; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER assets_zz029_bump_publication_target AFTER INSERT OR DELETE OR UPDATE OF filename, content_type, size_bytes, content_hash, s3_object_key, width, height, duration_seconds, deleted_at ON public.assets FOR EACH ROW EXECUTE FUNCTION public.bump_asset_publication_target_generation();
+CREATE TRIGGER assets_zz_bump_publication_target AFTER INSERT OR DELETE OR UPDATE OF filename, content_type, size_bytes, content_hash, s3_object_key, width, height, duration_seconds, deleted_at ON public.assets FOR EACH ROW EXECUTE FUNCTION public.bump_asset_publication_target_generation();
+
+
+--
+-- Name: automation_registry automation_registry_close_full_import; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER automation_registry_close_full_import BEFORE INSERT OR DELETE OR UPDATE ON public.automation_registry FOR EACH ROW EXECUTE FUNCTION public.close_full_knowledge_import();
 
 
 --
@@ -8149,10 +8530,17 @@ CREATE TRIGGER confirmation_challenges_030_reject_pending_object_claim BEFORE IN
 
 
 --
--- Name: hypermedia_bootstrap_allocations hypermedia_bootstrap_040_keep_allocations; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: hypermedia_bootstrap_allocations hypermedia_bootstrap_keep_allocations; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER hypermedia_bootstrap_040_keep_allocations BEFORE DELETE OR UPDATE ON public.hypermedia_bootstrap_allocations FOR EACH ROW EXECUTE FUNCTION public.guard_hypermedia_bootstrap_allocations();
+CREATE TRIGGER hypermedia_bootstrap_keep_allocations BEFORE DELETE OR UPDATE ON public.hypermedia_bootstrap_allocations FOR EACH ROW EXECUTE FUNCTION public.guard_hypermedia_bootstrap_allocations();
+
+
+--
+-- Name: hypermedia_bootstrap_allocations hypermedia_bootstrap_open_full_import; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER hypermedia_bootstrap_open_full_import AFTER UPDATE OF completed_at ON public.hypermedia_bootstrap_allocations FOR EACH STATEMENT EXECUTE FUNCTION public.open_full_knowledge_import_after_bootstrap();
 
 
 --
@@ -8163,10 +8551,10 @@ CREATE TRIGGER hypermedia_document_revisions_validate_representation BEFORE INSE
 
 
 --
--- Name: hypermedia_documents hypermedia_documents_028_guard_public_uuid; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: hypermedia_documents hypermedia_documents_guard_public_uuid; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER hypermedia_documents_028_guard_public_uuid BEFORE INSERT OR UPDATE OF id ON public.hypermedia_documents FOR EACH ROW EXECUTE FUNCTION public.guard_private_uuid_columns('id');
+CREATE TRIGGER hypermedia_documents_guard_public_uuid BEFORE INSERT OR UPDATE OF id ON public.hypermedia_documents FOR EACH ROW EXECUTE FUNCTION public.guard_private_uuid_columns('id');
 
 
 --
@@ -8177,10 +8565,17 @@ CREATE TRIGGER hypermedia_documents_keep_identity_stable BEFORE UPDATE OF id, au
 
 
 --
--- Name: hypermedia_document_revisions hypermedia_revisions_028_guard_public_uuid; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: hypermedia_document_revisions hypermedia_revisions_guard_public_uuid; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER hypermedia_revisions_028_guard_public_uuid BEFORE INSERT OR UPDATE OF id ON public.hypermedia_document_revisions FOR EACH ROW EXECUTE FUNCTION public.guard_private_uuid_columns('id');
+CREATE TRIGGER hypermedia_revisions_guard_public_uuid BEFORE INSERT OR UPDATE OF id ON public.hypermedia_document_revisions FOR EACH ROW EXECUTE FUNCTION public.guard_private_uuid_columns('id');
+
+
+--
+-- Name: knowledge_page_changes knowledge_page_changes_close_full_import; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER knowledge_page_changes_close_full_import BEFORE INSERT ON public.knowledge_page_changes FOR EACH ROW EXECUTE FUNCTION public.close_full_knowledge_import_for_page_change();
 
 
 --
@@ -8205,24 +8600,10 @@ CREATE TRIGGER knowledge_page_versions_remove_document_revision AFTER DELETE ON 
 
 
 --
--- Name: knowledge_pages knowledge_pages_028_protect_active_publication_delete; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: knowledge_pages knowledge_pages_capture_archive; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER knowledge_pages_028_protect_active_publication_delete BEFORE DELETE ON public.knowledge_pages FOR EACH ROW EXECUTE FUNCTION public.protect_active_page_publication();
-
-
---
--- Name: knowledge_pages knowledge_pages_028_protect_active_publication_update; Type: TRIGGER; Schema: public; Owner: postgres
---
-
-CREATE TRIGGER knowledge_pages_028_protect_active_publication_update BEFORE UPDATE OF archived_at ON public.knowledge_pages FOR EACH ROW EXECUTE FUNCTION public.protect_active_page_publication();
-
-
---
--- Name: knowledge_pages knowledge_pages_037_capture_archive; Type: TRIGGER; Schema: public; Owner: postgres
---
-
-CREATE TRIGGER knowledge_pages_037_capture_archive AFTER UPDATE OF archived_at ON public.knowledge_pages FOR EACH ROW WHEN (((old.archived_at IS NULL) AND (new.archived_at IS NOT NULL))) EXECUTE FUNCTION public.capture_archived_knowledge_document();
+CREATE TRIGGER knowledge_pages_capture_archive AFTER UPDATE OF archived_at ON public.knowledge_pages FOR EACH ROW WHEN (((old.archived_at IS NULL) AND (new.archived_at IS NOT NULL))) EXECUTE FUNCTION public.capture_archived_knowledge_document();
 
 
 --
@@ -8244,6 +8625,20 @@ CREATE TRIGGER knowledge_pages_lock_settings_before_guide_delete BEFORE DELETE O
 --
 
 CREATE TRIGGER knowledge_pages_lock_settings_before_guide_update BEFORE UPDATE OF archived_at ON public.knowledge_pages FOR EACH STATEMENT EXECUTE FUNCTION public.lock_knowledge_settings_for_page_lifecycle();
+
+
+--
+-- Name: knowledge_pages knowledge_pages_protect_active_publication_delete; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER knowledge_pages_protect_active_publication_delete BEFORE DELETE ON public.knowledge_pages FOR EACH ROW EXECUTE FUNCTION public.protect_active_page_publication();
+
+
+--
+-- Name: knowledge_pages knowledge_pages_protect_active_publication_update; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER knowledge_pages_protect_active_publication_update BEFORE UPDATE OF archived_at ON public.knowledge_pages FOR EACH ROW EXECUTE FUNCTION public.protect_active_page_publication();
 
 
 --
@@ -8303,10 +8698,17 @@ CREATE TRIGGER knowledge_pages_replace_document_identity AFTER UPDATE OF id ON p
 
 
 --
--- Name: knowledge_pages knowledge_pages_zz029_bump_publication_target; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: knowledge_pages knowledge_pages_zz_bump_publication_target; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER knowledge_pages_zz029_bump_publication_target AFTER INSERT OR DELETE OR UPDATE OF current_version_id, archived_at ON public.knowledge_pages FOR EACH ROW EXECUTE FUNCTION public.bump_page_publication_target_generation();
+CREATE TRIGGER knowledge_pages_zz_bump_publication_target AFTER INSERT OR DELETE OR UPDATE OF current_version_id, archived_at ON public.knowledge_pages FOR EACH ROW EXECUTE FUNCTION public.bump_page_publication_target_generation();
+
+
+--
+-- Name: knowledge_settings knowledge_settings_close_full_import; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER knowledge_settings_close_full_import BEFORE INSERT OR DELETE OR UPDATE ON public.knowledge_settings FOR EACH ROW EXECUTE FUNCTION public.close_full_knowledge_import();
 
 
 --
@@ -8317,66 +8719,66 @@ CREATE TRIGGER knowledge_settings_validate_global_guide BEFORE INSERT OR UPDATE 
 
 
 --
--- Name: page_publications page_publications_028_validate_active_mapping; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: page_publications page_publications_bump_public_visibility; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER page_publications_028_validate_active_mapping BEFORE INSERT OR UPDATE ON public.page_publications FOR EACH ROW EXECUTE FUNCTION public.validate_active_publication_pin();
-
-
---
--- Name: page_publications page_publications_029_bump_public_visibility; Type: TRIGGER; Schema: public; Owner: postgres
---
-
-CREATE TRIGGER page_publications_029_bump_public_visibility AFTER INSERT OR DELETE OR UPDATE ON public.page_publications FOR EACH ROW EXECUTE FUNCTION public.bump_pin_public_visibility();
+CREATE TRIGGER page_publications_bump_public_visibility AFTER INSERT OR DELETE OR UPDATE ON public.page_publications FOR EACH ROW EXECUTE FUNCTION public.bump_pin_public_visibility();
 
 
 --
--- Name: passkey passkey_protect_credential; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: page_publications page_publications_validate_active_mapping; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER passkey_protect_credential BEFORE DELETE OR UPDATE ON public.passkey FOR EACH ROW EXECUTE FUNCTION public.protect_passkey_credential();
-
-
---
--- Name: public_artifact_id_reservations public_artifact_reservations_028_guard_namespace; Type: TRIGGER; Schema: public; Owner: postgres
---
-
-CREATE TRIGGER public_artifact_reservations_028_guard_namespace BEFORE INSERT OR DELETE OR UPDATE ON public.public_artifact_id_reservations FOR EACH ROW EXECUTE FUNCTION public.guard_artifact_reservation_namespace();
+CREATE TRIGGER page_publications_validate_active_mapping BEFORE INSERT OR UPDATE ON public.page_publications FOR EACH ROW EXECUTE FUNCTION public.validate_active_publication_pin();
 
 
 --
--- Name: public_asset_artifacts public_asset_artifacts_029_keep_history; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: public_artifact_id_reservations public_artifact_reservations_guard_namespace; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER public_asset_artifacts_029_keep_history BEFORE INSERT OR DELETE OR UPDATE ON public.public_asset_artifacts FOR EACH ROW EXECUTE FUNCTION public.guard_public_artifact_history();
-
-
---
--- Name: public_page_artifacts public_page_artifacts_029_keep_history; Type: TRIGGER; Schema: public; Owner: postgres
---
-
-CREATE TRIGGER public_page_artifacts_029_keep_history BEFORE INSERT OR DELETE OR UPDATE ON public.public_page_artifacts FOR EACH ROW EXECUTE FUNCTION public.guard_public_artifact_history();
+CREATE TRIGGER public_artifact_reservations_guard_namespace BEFORE INSERT OR DELETE OR UPDATE ON public.public_artifact_id_reservations FOR EACH ROW EXECUTE FUNCTION public.guard_artifact_reservation_namespace();
 
 
 --
--- Name: public_representation_token_reservations public_representation_tokens_029_keep_immutable; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: public_asset_artifacts public_asset_artifacts_keep_history; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER public_representation_tokens_029_keep_immutable BEFORE DELETE OR UPDATE ON public.public_representation_token_reservations FOR EACH ROW EXECUTE FUNCTION public.guard_public_representation_token_reservation();
-
-
---
--- Name: public_resources public_resources_028_guard_identity; Type: TRIGGER; Schema: public; Owner: postgres
---
-
-CREATE TRIGGER public_resources_028_guard_identity BEFORE INSERT OR DELETE OR UPDATE ON public.public_resources FOR EACH ROW EXECUTE FUNCTION public.guard_public_resource_identity();
+CREATE TRIGGER public_asset_artifacts_keep_history BEFORE INSERT OR DELETE OR UPDATE ON public.public_asset_artifacts FOR EACH ROW EXECUTE FUNCTION public.guard_public_artifact_history();
 
 
 --
--- Name: public_resources public_resources_029_initialize_visibility_generation; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: public_page_artifacts public_page_artifacts_keep_history; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER public_resources_029_initialize_visibility_generation AFTER INSERT ON public.public_resources FOR EACH ROW EXECUTE FUNCTION public.initialize_public_visibility_generation();
+CREATE TRIGGER public_page_artifacts_keep_history BEFORE INSERT OR DELETE OR UPDATE ON public.public_page_artifacts FOR EACH ROW EXECUTE FUNCTION public.guard_public_artifact_history();
+
+
+--
+-- Name: public_representation_token_reservations public_representation_tokens_keep_immutable; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER public_representation_tokens_keep_immutable BEFORE DELETE OR UPDATE ON public.public_representation_token_reservations FOR EACH ROW EXECUTE FUNCTION public.guard_public_representation_token_reservation();
+
+
+--
+-- Name: public_resources public_resources_close_full_import; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER public_resources_close_full_import BEFORE INSERT OR DELETE OR UPDATE ON public.public_resources FOR EACH ROW EXECUTE FUNCTION public.close_full_knowledge_import();
+
+
+--
+-- Name: public_resources public_resources_guard_identity; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER public_resources_guard_identity BEFORE INSERT OR DELETE OR UPDATE ON public.public_resources FOR EACH ROW EXECUTE FUNCTION public.guard_public_resource_identity();
+
+
+--
+-- Name: public_resources public_resources_initialize_visibility_generation; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER public_resources_initialize_visibility_generation AFTER INSERT ON public.public_resources FOR EACH ROW EXECUTE FUNCTION public.initialize_public_visibility_generation();
 
 
 --
@@ -8387,10 +8789,10 @@ CREATE TRIGGER public_resources_validate_mapping BEFORE INSERT OR UPDATE OF docu
 
 
 --
--- Name: public_route_aliases public_route_aliases_028_guard_namespace; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: public_route_aliases public_route_aliases_guard_namespace; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER public_route_aliases_028_guard_namespace BEFORE INSERT OR DELETE OR UPDATE ON public.public_route_aliases FOR EACH ROW EXECUTE FUNCTION public.guard_legacy_alias_namespace();
+CREATE TRIGGER public_route_aliases_guard_namespace BEFORE INSERT OR DELETE OR UPDATE ON public.public_route_aliases FOR EACH ROW EXECUTE FUNCTION public.guard_legacy_alias_namespace();
 
 
 --
@@ -8401,31 +8803,38 @@ CREATE TRIGGER publication_claims_030_keep_history BEFORE DELETE OR UPDATE ON pu
 
 
 --
--- Name: publication_intent_id_reservations publication_intent_ids_029_keep_immutable; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: publication_intent_id_reservations publication_intent_ids_keep_immutable; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER publication_intent_ids_029_keep_immutable BEFORE DELETE OR UPDATE ON public.publication_intent_id_reservations FOR EACH ROW EXECUTE FUNCTION public.guard_publication_intent_id_reservation();
-
-
---
--- Name: publication_intents publication_intents_029_reserve_uuid; Type: TRIGGER; Schema: public; Owner: postgres
---
-
-CREATE TRIGGER publication_intents_029_reserve_uuid BEFORE INSERT ON public.publication_intents FOR EACH ROW EXECUTE FUNCTION public.reserve_publication_intent_id_from_row();
+CREATE TRIGGER publication_intent_ids_keep_immutable BEFORE DELETE OR UPDATE ON public.publication_intent_id_reservations FOR EACH ROW EXECUTE FUNCTION public.guard_publication_intent_id_reservation();
 
 
 --
--- Name: publication_intents publication_intents_zz029_keep_history; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: publication_intents publication_intents_close_full_import; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER publication_intents_zz029_keep_history BEFORE DELETE OR UPDATE ON public.publication_intents FOR EACH ROW EXECUTE FUNCTION public.guard_publication_intent_history();
+CREATE TRIGGER publication_intents_close_full_import BEFORE INSERT OR DELETE OR UPDATE ON public.publication_intents FOR EACH ROW EXECUTE FUNCTION public.close_full_knowledge_import();
 
 
 --
--- Name: publication_artifact_staging publication_staging_029_keep_history; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: publication_intents publication_intents_reserve_uuid; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER publication_staging_029_keep_history BEFORE DELETE OR UPDATE ON public.publication_artifact_staging FOR EACH ROW EXECUTE FUNCTION public.guard_publication_staging_history();
+CREATE TRIGGER publication_intents_reserve_uuid BEFORE INSERT ON public.publication_intents FOR EACH ROW EXECUTE FUNCTION public.reserve_publication_intent_id_from_row();
+
+
+--
+-- Name: publication_intents publication_intents_zz_keep_history; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER publication_intents_zz_keep_history BEFORE DELETE OR UPDATE ON public.publication_intents FOR EACH ROW EXECUTE FUNCTION public.guard_publication_intent_history();
+
+
+--
+-- Name: publication_settings publication_settings_close_full_import; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER publication_settings_close_full_import BEFORE INSERT OR DELETE OR UPDATE ON public.publication_settings FOR EACH ROW EXECUTE FUNCTION public.close_full_knowledge_import();
 
 
 --
@@ -8436,10 +8845,24 @@ CREATE TRIGGER publication_staging_030_require_claim BEFORE INSERT ON public.pub
 
 
 --
--- Name: retained_page_artifacts retained_page_artifacts_028_reserve_identity; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: publication_artifact_staging publication_staging_keep_history; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER retained_page_artifacts_028_reserve_identity BEFORE INSERT OR UPDATE OF artifact_id, body_object_key ON public.retained_page_artifacts FOR EACH ROW EXECUTE FUNCTION public.reserve_retained_page_artifact_identity();
+CREATE TRIGGER publication_staging_keep_history BEFORE DELETE OR UPDATE ON public.publication_artifact_staging FOR EACH ROW EXECUTE FUNCTION public.guard_publication_staging_history();
+
+
+--
+-- Name: retained_page_artifacts retained_page_artifacts_reserve_identity; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER retained_page_artifacts_reserve_identity BEFORE INSERT OR UPDATE OF artifact_id, body_object_key ON public.retained_page_artifacts FOR EACH ROW EXECUTE FUNCTION public.reserve_retained_page_artifact_identity();
+
+
+--
+-- Name: source_records source_records_close_full_import; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER source_records_close_full_import BEFORE INSERT OR DELETE OR UPDATE ON public.source_records FOR EACH ROW EXECUTE FUNCTION public.close_full_knowledge_import();
 
 
 --
@@ -8447,21 +8870,6 @@ CREATE TRIGGER retained_page_artifacts_028_reserve_identity BEFORE INSERT OR UPD
 --
 
 CREATE TRIGGER source_records_validate_document_identity BEFORE INSERT OR UPDATE OF document_id ON public.source_records FOR EACH ROW EXECUTE FUNCTION public.validate_source_record_document_identity();
-
-
---
--- Name: user user_protect_owner_identity; Type: TRIGGER; Schema: public; Owner: postgres
---
-
-CREATE TRIGGER user_protect_owner_identity BEFORE DELETE OR UPDATE ON public."user" FOR EACH ROW EXECUTE FUNCTION public.protect_owner_identity();
-
-
---
--- Name: account account_userId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.account
-    ADD CONSTRAINT "account_userId_fkey" FOREIGN KEY ("userId") REFERENCES public."user"(id) ON DELETE CASCADE;
 
 
 --
@@ -8545,6 +8953,54 @@ ALTER TABLE ONLY public.knowledge_asset_links
 
 
 --
+-- Name: knowledge_bundle_export_objects knowledge_bundle_export_objects_intent_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.knowledge_bundle_export_objects
+    ADD CONSTRAINT knowledge_bundle_export_objects_intent_id_fkey FOREIGN KEY (intent_id) REFERENCES public.knowledge_bundle_exports(intent_id) ON DELETE CASCADE;
+
+
+--
+-- Name: knowledge_bundle_export_records knowledge_bundle_export_records_intent_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.knowledge_bundle_export_records
+    ADD CONSTRAINT knowledge_bundle_export_records_intent_id_fkey FOREIGN KEY (intent_id) REFERENCES public.knowledge_bundle_exports(intent_id) ON DELETE CASCADE;
+
+
+--
+-- Name: knowledge_bundle_exports knowledge_bundle_exports_intent_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.knowledge_bundle_exports
+    ADD CONSTRAINT knowledge_bundle_exports_intent_id_fkey FOREIGN KEY (intent_id) REFERENCES public.knowledge_export_intents(id) ON DELETE CASCADE;
+
+
+--
+-- Name: knowledge_bundle_import_objects knowledge_bundle_import_objects_import_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.knowledge_bundle_import_objects
+    ADD CONSTRAINT knowledge_bundle_import_objects_import_id_fkey FOREIGN KEY (import_id) REFERENCES public.knowledge_bundle_imports(id) ON DELETE CASCADE;
+
+
+--
+-- Name: knowledge_bundle_import_parts knowledge_bundle_import_parts_import_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.knowledge_bundle_import_parts
+    ADD CONSTRAINT knowledge_bundle_import_parts_import_id_fkey FOREIGN KEY (import_id) REFERENCES public.knowledge_bundle_imports(id) ON DELETE CASCADE;
+
+
+--
+-- Name: knowledge_bundle_import_records knowledge_bundle_import_records_import_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.knowledge_bundle_import_records
+    ADD CONSTRAINT knowledge_bundle_import_records_import_id_fkey FOREIGN KEY (import_id) REFERENCES public.knowledge_bundle_imports(id) ON DELETE CASCADE;
+
+
+--
 -- Name: knowledge_page_versions knowledge_page_versions_page_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -8609,102 +9065,6 @@ ALTER TABLE ONLY public.knowledge_settings
 
 
 --
--- Name: oauthAccessToken oauthAccessToken_clientId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public."oauthAccessToken"
-    ADD CONSTRAINT "oauthAccessToken_clientId_fkey" FOREIGN KEY ("clientId") REFERENCES public."oauthClient"("clientId") ON DELETE CASCADE;
-
-
---
--- Name: oauthAccessToken oauthAccessToken_refreshId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public."oauthAccessToken"
-    ADD CONSTRAINT "oauthAccessToken_refreshId_fkey" FOREIGN KEY ("refreshId") REFERENCES public."oauthRefreshToken"(id) ON DELETE CASCADE;
-
-
---
--- Name: oauthAccessToken oauthAccessToken_sessionId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public."oauthAccessToken"
-    ADD CONSTRAINT "oauthAccessToken_sessionId_fkey" FOREIGN KEY ("sessionId") REFERENCES public.session(id) ON DELETE SET NULL;
-
-
---
--- Name: oauthAccessToken oauthAccessToken_userId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public."oauthAccessToken"
-    ADD CONSTRAINT "oauthAccessToken_userId_fkey" FOREIGN KEY ("userId") REFERENCES public."user"(id) ON DELETE CASCADE;
-
-
---
--- Name: oauthClientResource oauthClientResource_clientId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public."oauthClientResource"
-    ADD CONSTRAINT "oauthClientResource_clientId_fkey" FOREIGN KEY ("clientId") REFERENCES public."oauthClient"("clientId") ON DELETE CASCADE;
-
-
---
--- Name: oauthClientResource oauthClientResource_resourceId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public."oauthClientResource"
-    ADD CONSTRAINT "oauthClientResource_resourceId_fkey" FOREIGN KEY ("resourceId") REFERENCES public."oauthResource"(identifier) ON DELETE CASCADE;
-
-
---
--- Name: oauthClient oauthClient_userId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public."oauthClient"
-    ADD CONSTRAINT "oauthClient_userId_fkey" FOREIGN KEY ("userId") REFERENCES public."user"(id) ON DELETE CASCADE;
-
-
---
--- Name: oauthConsent oauthConsent_clientId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public."oauthConsent"
-    ADD CONSTRAINT "oauthConsent_clientId_fkey" FOREIGN KEY ("clientId") REFERENCES public."oauthClient"("clientId") ON DELETE CASCADE;
-
-
---
--- Name: oauthConsent oauthConsent_userId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public."oauthConsent"
-    ADD CONSTRAINT "oauthConsent_userId_fkey" FOREIGN KEY ("userId") REFERENCES public."user"(id) ON DELETE CASCADE;
-
-
---
--- Name: oauthRefreshToken oauthRefreshToken_clientId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public."oauthRefreshToken"
-    ADD CONSTRAINT "oauthRefreshToken_clientId_fkey" FOREIGN KEY ("clientId") REFERENCES public."oauthClient"("clientId") ON DELETE CASCADE;
-
-
---
--- Name: oauthRefreshToken oauthRefreshToken_sessionId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public."oauthRefreshToken"
-    ADD CONSTRAINT "oauthRefreshToken_sessionId_fkey" FOREIGN KEY ("sessionId") REFERENCES public.session(id) ON DELETE SET NULL;
-
-
---
--- Name: oauthRefreshToken oauthRefreshToken_userId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public."oauthRefreshToken"
-    ADD CONSTRAINT "oauthRefreshToken_userId_fkey" FOREIGN KEY ("userId") REFERENCES public."user"(id) ON DELETE CASCADE;
-
-
---
 -- Name: page_deletion_intents page_deletion_intents_page_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -8733,7 +9093,7 @@ ALTER TABLE ONLY public.page_publications
 --
 
 ALTER TABLE ONLY public.passkey_management_intents
-    ADD CONSTRAINT passkey_management_intents_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.session(id) ON DELETE CASCADE;
+    ADD CONSTRAINT passkey_management_intents_session_id_fkey FOREIGN KEY (session_id) REFERENCES auth.session(id) ON DELETE CASCADE;
 
 
 --
@@ -8741,15 +9101,7 @@ ALTER TABLE ONLY public.passkey_management_intents
 --
 
 ALTER TABLE ONLY public.passkey_management_intents
-    ADD CONSTRAINT passkey_management_intents_target_passkey_id_fkey FOREIGN KEY (target_passkey_id) REFERENCES public.passkey(id) ON DELETE CASCADE;
-
-
---
--- Name: passkey passkey_userId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.passkey
-    ADD CONSTRAINT "passkey_userId_fkey" FOREIGN KEY ("userId") REFERENCES public."user"(id) ON DELETE CASCADE;
+    ADD CONSTRAINT passkey_management_intents_target_passkey_id_fkey FOREIGN KEY (target_passkey_id) REFERENCES auth.passkey(id) ON DELETE CASCADE;
 
 
 --
@@ -8953,14 +9305,6 @@ ALTER TABLE ONLY public.retained_page_artifacts
 
 
 --
--- Name: session session_userId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.session
-    ADD CONSTRAINT "session_userId_fkey" FOREIGN KEY ("userId") REFERENCES public."user"(id) ON DELETE CASCADE;
-
-
---
 -- Name: source_record_search_chunks source_record_search_chunks_document_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -8984,14 +9328,6 @@ ALTER TABLE ONLY public.source_records
     ADD CONSTRAINT source_records_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.hypermedia_documents(id) ON DELETE CASCADE;
 
 
--- Required singleton state for a newly installed application. The publication
--- timestamp is the bootstrap latch, so both it and the entrypoint remain unset
--- until the bootstrap transaction creates and validates all required documents.
-INSERT INTO public.knowledge_settings(singleton) VALUES (true);
-INSERT INTO public.publication_settings(singleton, entrypoint_public_id, updated_at)
-VALUES (true, NULL, NULL);
-
-
 --
 -- Name: SCHEMA public; Type: ACL; Schema: -; Owner: pg_database_owner
 --
@@ -9010,6 +9346,18 @@ GRANT USAGE ON SCHEMA public TO context_use_corpus;
 GRANT USAGE ON SCHEMA public TO context_use_publication_lock_owner;
 GRANT USAGE ON SCHEMA public TO context_use_storage_owner;
 GRANT USAGE ON SCHEMA public TO context_use_document_history_owner;
+GRANT USAGE ON SCHEMA public TO context_use_import_owner;
+
+
+--
+-- Name: TYPE knowledge_entity_type; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TYPE public.knowledge_entity_type TO context_use_boundary_owner;
+GRANT ALL ON TYPE public.knowledge_entity_type TO context_use_projection_owner;
+GRANT ALL ON TYPE public.knowledge_entity_type TO context_use_dashboard;
+GRANT ALL ON TYPE public.knowledge_entity_type TO context_use_mcp;
+GRANT ALL ON TYPE public.knowledge_entity_type TO context_use_backup;
 
 
 --
@@ -9018,6 +9366,15 @@ GRANT USAGE ON SCHEMA public TO context_use_document_history_owner;
 
 GRANT ALL ON TYPE public.public_route_state TO context_use_public;
 GRANT ALL ON TYPE public.public_route_state TO context_use_backup;
+
+
+--
+-- Name: FUNCTION archive_source_record(p_document_id uuid, p_expected_revision_id uuid); Type: ACL; Schema: public; Owner: context_use_boundary_owner
+--
+
+REVOKE ALL ON FUNCTION public.archive_source_record(p_document_id uuid, p_expected_revision_id uuid) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.archive_source_record(p_document_id uuid, p_expected_revision_id uuid) TO context_use_dashboard;
+GRANT ALL ON FUNCTION public.archive_source_record(p_document_id uuid, p_expected_revision_id uuid) TO context_use_mcp;
 
 
 --
@@ -9160,6 +9517,14 @@ REVOKE ALL ON FUNCTION public.capture_deleted_current_page_version() FROM PUBLIC
 
 
 --
+-- Name: FUNCTION capture_full_knowledge_bundle(p_intent_id uuid, p_owner_user_id text, p_session_id text); Type: ACL; Schema: public; Owner: context_use_import_owner
+--
+
+REVOKE ALL ON FUNCTION public.capture_full_knowledge_bundle(p_intent_id uuid, p_owner_user_id text, p_session_id text) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.capture_full_knowledge_bundle(p_intent_id uuid, p_owner_user_id text, p_session_id text) TO context_use_dashboard;
+
+
+--
 -- Name: FUNCTION capture_inserted_current_page_version(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -9190,11 +9555,40 @@ GRANT ALL ON FUNCTION public.claim_publication_artifact(p_intent_id uuid, p_clai
 
 
 --
+-- Name: FUNCTION close_full_knowledge_import(); Type: ACL; Schema: public; Owner: context_use_import_owner
+--
+
+REVOKE ALL ON FUNCTION public.close_full_knowledge_import() FROM PUBLIC;
+
+
+--
+-- Name: FUNCTION close_full_knowledge_import_for_page_change(); Type: ACL; Schema: public; Owner: context_use_import_owner
+--
+
+REVOKE ALL ON FUNCTION public.close_full_knowledge_import_for_page_change() FROM PUBLIC;
+
+
+--
 -- Name: FUNCTION complete_hypermedia_bootstrap(); Type: ACL; Schema: public; Owner: context_use_boundary_owner
 --
 
 REVOKE ALL ON FUNCTION public.complete_hypermedia_bootstrap() FROM PUBLIC;
 GRANT ALL ON FUNCTION public.complete_hypermedia_bootstrap() TO context_use_corpus;
+
+
+--
+-- Name: FUNCTION confirm_knowledge_bundle_import(p_import_id uuid, p_owner_user_id text, p_session_id text, p_credential_id text, p_expected_counter integer, p_new_counter integer); Type: ACL; Schema: public; Owner: context_use_boundary_owner
+--
+
+REVOKE ALL ON FUNCTION public.confirm_knowledge_bundle_import(p_import_id uuid, p_owner_user_id text, p_session_id text, p_credential_id text, p_expected_counter integer, p_new_counter integer) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.confirm_knowledge_bundle_import(p_import_id uuid, p_owner_user_id text, p_session_id text, p_credential_id text, p_expected_counter integer, p_new_counter integer) TO context_use_confirmation;
+
+
+--
+-- Name: FUNCTION confirm_knowledge_bundle_import_unchecked(p_import_id uuid, p_owner_user_id text, p_session_id text, p_credential_id text, p_expected_counter integer, p_new_counter integer); Type: ACL; Schema: public; Owner: context_use_boundary_owner
+--
+
+REVOKE ALL ON FUNCTION public.confirm_knowledge_bundle_import_unchecked(p_import_id uuid, p_owner_user_id text, p_session_id text, p_credential_id text, p_expected_counter integer, p_new_counter integer) FROM PUBLIC;
 
 
 --
@@ -9237,6 +9631,14 @@ GRANT ALL ON FUNCTION public.defer_document_link_index(p_source_revision_id uuid
 
 
 --
+-- Name: FUNCTION delete_archived_source_record(p_document_id uuid, p_expected_revision_id uuid); Type: ACL; Schema: public; Owner: context_use_boundary_owner
+--
+
+REVOKE ALL ON FUNCTION public.delete_archived_source_record(p_document_id uuid, p_expected_revision_id uuid) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.delete_archived_source_record(p_document_id uuid, p_expected_revision_id uuid) TO context_use_dashboard;
+
+
+--
 -- Name: FUNCTION document_search_vector(p_title text, p_summary text, p_body_markdown text); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -9251,6 +9653,31 @@ GRANT ALL ON FUNCTION public.document_search_vector(p_title text, p_summary text
 
 REVOKE ALL ON FUNCTION public.finalize_publication_artifact_claim(p_claim_token uuid, p_intent_id uuid, p_target_kind public.publication_target, p_body_size_bytes bigint, p_body_content_hash text, p_public_title text, p_public_summary text, p_public_last_edited_at timestamp with time zone, p_public_filename text, p_public_content_type text, p_public_width integer, p_public_height integer, p_public_duration_seconds text, p_projected_target_public_ids uuid[], p_observed_public_uuid_tokens uuid[], p_projection_receipt_hash text) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.finalize_publication_artifact_claim(p_claim_token uuid, p_intent_id uuid, p_target_kind public.publication_target, p_body_size_bytes bigint, p_body_content_hash text, p_public_title text, p_public_summary text, p_public_last_edited_at timestamp with time zone, p_public_filename text, p_public_content_type text, p_public_width integer, p_public_height integer, p_public_duration_seconds text, p_projected_target_public_ids uuid[], p_observed_public_uuid_tokens uuid[], p_projection_receipt_hash text) TO context_use_storage;
+
+
+--
+-- Name: FUNCTION full_knowledge_bundle_summary(); Type: ACL; Schema: public; Owner: context_use_import_owner
+--
+
+REVOKE ALL ON FUNCTION public.full_knowledge_bundle_summary() FROM PUBLIC;
+GRANT ALL ON FUNCTION public.full_knowledge_bundle_summary() TO context_use_dashboard;
+
+
+--
+-- Name: TABLE knowledge_bundle_import_policy; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT SELECT,UPDATE ON TABLE public.knowledge_bundle_import_policy TO context_use_import_owner;
+GRANT SELECT ON TABLE public.knowledge_bundle_import_policy TO context_use_backup;
+
+
+--
+-- Name: FUNCTION full_knowledge_import_available(); Type: ACL; Schema: public; Owner: context_use_import_owner
+--
+
+REVOKE ALL ON FUNCTION public.full_knowledge_import_available() FROM PUBLIC;
+GRANT ALL ON FUNCTION public.full_knowledge_import_available() TO context_use_dashboard;
+GRANT ALL ON FUNCTION public.full_knowledge_import_available() TO context_use_boundary_owner;
 
 
 --
@@ -9369,6 +9796,14 @@ GRANT ALL ON FUNCTION public.issue_confirmation_challenge(p_intent_kind public.c
 
 
 --
+-- Name: FUNCTION issue_knowledge_bundle_import_challenge(p_import_id uuid, p_challenge text); Type: ACL; Schema: public; Owner: context_use_boundary_owner
+--
+
+REVOKE ALL ON FUNCTION public.issue_knowledge_bundle_import_challenge(p_import_id uuid, p_challenge text) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.issue_knowledge_bundle_import_challenge(p_import_id uuid, p_challenge text) TO context_use_confirmation;
+
+
+--
 -- Name: FUNCTION keep_asset_document_identity_stable(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -9443,6 +9878,13 @@ REVOKE ALL ON FUNCTION public.lock_public_uuid_namespace(p_uuid uuid) FROM PUBLI
 
 REVOKE ALL ON FUNCTION public.lock_publication_context(p_target_kind public.publication_target, p_target_document_id uuid, p_expected_revision_id uuid) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.lock_publication_context(p_target_kind public.publication_target, p_target_document_id uuid, p_expected_revision_id uuid) TO context_use_storage_owner;
+
+
+--
+-- Name: FUNCTION open_full_knowledge_import_after_bootstrap(); Type: ACL; Schema: public; Owner: context_use_import_owner
+--
+
+REVOKE ALL ON FUNCTION public.open_full_knowledge_import_after_bootstrap() FROM PUBLIC;
 
 
 --
@@ -9766,12 +10208,27 @@ GRANT ALL ON FUNCTION public.resolve_storage_route(p_representation_token text) 
 
 
 --
--- Name: FUNCTION search_private_document_catalog(p_query text, p_after_rank real, p_after_updated_at_epoch_micros bigint, p_after_document_id uuid, p_include_retired boolean, p_limit integer, p_authority public.hypermedia_document_authority, p_representation public.hypermedia_document_representation, p_document_kind public.private_document_kind, p_lifecycle public.private_document_lifecycle, p_integration text, p_operational_role public.private_document_operational_role); Type: ACL; Schema: public; Owner: context_use_projection_owner
+-- Name: FUNCTION restore_full_knowledge_bundle(p_import_id uuid, p_owner_user_id text, p_session_id text); Type: ACL; Schema: public; Owner: context_use_import_owner
 --
 
-REVOKE ALL ON FUNCTION public.search_private_document_catalog(p_query text, p_after_rank real, p_after_updated_at_epoch_micros bigint, p_after_document_id uuid, p_include_retired boolean, p_limit integer, p_authority public.hypermedia_document_authority, p_representation public.hypermedia_document_representation, p_document_kind public.private_document_kind, p_lifecycle public.private_document_lifecycle, p_integration text, p_operational_role public.private_document_operational_role) FROM PUBLIC;
-GRANT ALL ON FUNCTION public.search_private_document_catalog(p_query text, p_after_rank real, p_after_updated_at_epoch_micros bigint, p_after_document_id uuid, p_include_retired boolean, p_limit integer, p_authority public.hypermedia_document_authority, p_representation public.hypermedia_document_representation, p_document_kind public.private_document_kind, p_lifecycle public.private_document_lifecycle, p_integration text, p_operational_role public.private_document_operational_role) TO context_use_dashboard;
-GRANT ALL ON FUNCTION public.search_private_document_catalog(p_query text, p_after_rank real, p_after_updated_at_epoch_micros bigint, p_after_document_id uuid, p_include_retired boolean, p_limit integer, p_authority public.hypermedia_document_authority, p_representation public.hypermedia_document_representation, p_document_kind public.private_document_kind, p_lifecycle public.private_document_lifecycle, p_integration text, p_operational_role public.private_document_operational_role) TO context_use_mcp;
+REVOKE ALL ON FUNCTION public.restore_full_knowledge_bundle(p_import_id uuid, p_owner_user_id text, p_session_id text) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.restore_full_knowledge_bundle(p_import_id uuid, p_owner_user_id text, p_session_id text) TO context_use_dashboard;
+
+
+--
+-- Name: FUNCTION restore_full_knowledge_bundle_unchecked(p_import_id uuid, p_owner_user_id text, p_session_id text); Type: ACL; Schema: public; Owner: context_use_import_owner
+--
+
+REVOKE ALL ON FUNCTION public.restore_full_knowledge_bundle_unchecked(p_import_id uuid, p_owner_user_id text, p_session_id text) FROM PUBLIC;
+
+
+--
+-- Name: FUNCTION search_private_document_catalog(p_query text, p_after_rank real, p_after_updated_at_epoch_micros bigint, p_after_document_id uuid, p_include_retired boolean, p_limit integer, p_authority public.hypermedia_document_authority, p_representation public.hypermedia_document_representation, p_document_kind public.private_document_kind, p_lifecycle public.private_document_lifecycle, p_integration text, p_operational_role public.private_document_operational_role, p_catalog_types text[], p_entity_types public.knowledge_entity_type[]); Type: ACL; Schema: public; Owner: context_use_projection_owner
+--
+
+REVOKE ALL ON FUNCTION public.search_private_document_catalog(p_query text, p_after_rank real, p_after_updated_at_epoch_micros bigint, p_after_document_id uuid, p_include_retired boolean, p_limit integer, p_authority public.hypermedia_document_authority, p_representation public.hypermedia_document_representation, p_document_kind public.private_document_kind, p_lifecycle public.private_document_lifecycle, p_integration text, p_operational_role public.private_document_operational_role, p_catalog_types text[], p_entity_types public.knowledge_entity_type[]) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.search_private_document_catalog(p_query text, p_after_rank real, p_after_updated_at_epoch_micros bigint, p_after_document_id uuid, p_include_retired boolean, p_limit integer, p_authority public.hypermedia_document_authority, p_representation public.hypermedia_document_representation, p_document_kind public.private_document_kind, p_lifecycle public.private_document_lifecycle, p_integration text, p_operational_role public.private_document_operational_role, p_catalog_types text[], p_entity_types public.knowledge_entity_type[]) TO context_use_dashboard;
+GRANT ALL ON FUNCTION public.search_private_document_catalog(p_query text, p_after_rank real, p_after_updated_at_epoch_micros bigint, p_after_document_id uuid, p_include_retired boolean, p_limit integer, p_authority public.hypermedia_document_authority, p_representation public.hypermedia_document_representation, p_document_kind public.private_document_kind, p_lifecycle public.private_document_lifecycle, p_integration text, p_operational_role public.private_document_operational_role, p_catalog_types text[], p_entity_types public.knowledge_entity_type[]) TO context_use_mcp;
 
 
 --
@@ -9840,19 +10297,12 @@ REVOKE ALL ON FUNCTION public.validate_source_record_document_identity() FROM PU
 
 
 --
--- Name: TABLE account; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.account TO context_use_auth;
-GRANT SELECT ON TABLE public.account TO context_use_backup;
-
-
---
 -- Name: TABLE asset_publications; Type: ACL; Schema: public; Owner: postgres
 --
 
 GRANT DELETE ON TABLE public.asset_publications TO context_use_boundary_owner;
 GRANT SELECT ON TABLE public.asset_publications TO context_use_backup;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.asset_publications TO context_use_import_owner;
 
 
 --
@@ -9881,6 +10331,7 @@ GRANT SELECT ON TABLE public.assets TO context_use_dashboard;
 GRANT SELECT ON TABLE public.assets TO context_use_mcp;
 GRANT SELECT ON TABLE public.assets TO context_use_backup;
 GRANT UPDATE ON TABLE public.assets TO context_use_boundary_owner;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.assets TO context_use_import_owner;
 
 
 --
@@ -10014,6 +10465,7 @@ GRANT SELECT(deleted_at) ON TABLE public.assets TO context_use_storage_owner;
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.automation_registry TO context_use_boundary_owner;
 GRANT SELECT,INSERT ON TABLE public.automation_registry TO context_use_dashboard;
 GRANT SELECT ON TABLE public.automation_registry TO context_use_backup;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.automation_registry TO context_use_import_owner;
 
 
 --
@@ -10056,6 +10508,7 @@ GRANT UPDATE(disabled_at) ON TABLE public.automation_registry TO context_use_das
 --
 
 GRANT SELECT ON TABLE public.public_namespace_conflicts TO context_use_backup;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.public_namespace_conflicts TO context_use_import_owner;
 
 
 --
@@ -10181,6 +10634,7 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.document_links TO context_use_
 GRANT SELECT ON TABLE public.document_links TO context_use_dashboard;
 GRANT SELECT ON TABLE public.document_links TO context_use_mcp;
 GRANT SELECT ON TABLE public.document_links TO context_use_backup;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.document_links TO context_use_import_owner;
 
 
 --
@@ -10189,6 +10643,7 @@ GRANT SELECT ON TABLE public.document_links TO context_use_backup;
 
 GRANT SELECT,INSERT,UPDATE ON TABLE public.hypermedia_bootstrap_allocations TO context_use_boundary_owner;
 GRANT SELECT ON TABLE public.hypermedia_bootstrap_allocations TO context_use_backup;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.hypermedia_bootstrap_allocations TO context_use_import_owner;
 
 
 --
@@ -10221,6 +10676,7 @@ GRANT SELECT,INSERT ON TABLE public.hypermedia_document_revisions TO context_use
 GRANT SELECT ON TABLE public.hypermedia_document_revisions TO context_use_storage;
 GRANT SELECT ON TABLE public.hypermedia_document_revisions TO context_use_backup;
 GRANT UPDATE ON TABLE public.hypermedia_document_revisions TO context_use_boundary_owner;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.hypermedia_document_revisions TO context_use_import_owner;
 
 
 --
@@ -10309,6 +10765,7 @@ GRANT SELECT,INSERT ON TABLE public.hypermedia_documents TO context_use_mcp;
 GRANT SELECT ON TABLE public.hypermedia_documents TO context_use_storage;
 GRANT SELECT ON TABLE public.hypermedia_documents TO context_use_backup;
 GRANT DELETE ON TABLE public.hypermedia_documents TO context_use_boundary_owner;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.hypermedia_documents TO context_use_import_owner;
 
 
 --
@@ -10357,14 +10814,6 @@ GRANT SELECT(representation) ON TABLE public.hypermedia_documents TO context_use
 
 
 --
--- Name: TABLE jwks; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.jwks TO context_use_auth;
-GRANT SELECT ON TABLE public.jwks TO context_use_backup;
-
-
---
 -- Name: TABLE knowledge_asset_links; Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -10372,6 +10821,375 @@ GRANT SELECT,INSERT ON TABLE public.knowledge_asset_links TO context_use_dashboa
 GRANT SELECT,INSERT ON TABLE public.knowledge_asset_links TO context_use_mcp;
 GRANT SELECT ON TABLE public.knowledge_asset_links TO context_use_backup;
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.knowledge_asset_links TO context_use_boundary_owner;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.knowledge_asset_links TO context_use_import_owner;
+
+
+--
+-- Name: TABLE knowledge_bundle_export_objects; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT SELECT,INSERT,DELETE,TRUNCATE,UPDATE ON TABLE public.knowledge_bundle_export_objects TO context_use_import_owner;
+GRANT SELECT,INSERT,DELETE ON TABLE public.knowledge_bundle_export_objects TO context_use_dashboard;
+GRANT SELECT ON TABLE public.knowledge_bundle_export_objects TO context_use_backup;
+
+
+--
+-- Name: TABLE knowledge_bundle_export_records; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT SELECT,INSERT,DELETE,TRUNCATE,UPDATE ON TABLE public.knowledge_bundle_export_records TO context_use_import_owner;
+GRANT SELECT,INSERT,DELETE ON TABLE public.knowledge_bundle_export_records TO context_use_dashboard;
+GRANT SELECT ON TABLE public.knowledge_bundle_export_records TO context_use_backup;
+
+
+--
+-- Name: TABLE knowledge_bundle_exports; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT SELECT,INSERT,DELETE,TRUNCATE,UPDATE ON TABLE public.knowledge_bundle_exports TO context_use_import_owner;
+GRANT SELECT,INSERT,DELETE ON TABLE public.knowledge_bundle_exports TO context_use_dashboard;
+GRANT SELECT ON TABLE public.knowledge_bundle_exports TO context_use_backup;
+
+
+--
+-- Name: COLUMN knowledge_bundle_exports.intent_id; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT SELECT(intent_id) ON TABLE public.knowledge_bundle_exports TO context_use_confirmation;
+
+
+--
+-- Name: COLUMN knowledge_bundle_exports.status; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(status) ON TABLE public.knowledge_bundle_exports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_exports.phase; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(phase) ON TABLE public.knowledge_bundle_exports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_exports.records_completed; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(records_completed) ON TABLE public.knowledge_bundle_exports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_exports.records_total; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(records_total) ON TABLE public.knowledge_bundle_exports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_exports.objects_completed; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(objects_completed) ON TABLE public.knowledge_bundle_exports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_exports.objects_total; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(objects_total) ON TABLE public.knowledge_bundle_exports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_exports.bytes_completed; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(bytes_completed) ON TABLE public.knowledge_bundle_exports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_exports.bytes_total; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(bytes_total) ON TABLE public.knowledge_bundle_exports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_exports.bundle_size_bytes; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(bundle_size_bytes) ON TABLE public.knowledge_bundle_exports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_exports.bundle_sha256; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(bundle_sha256) ON TABLE public.knowledge_bundle_exports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_exports.error_code; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(error_code) ON TABLE public.knowledge_bundle_exports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_exports.error_message; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(error_message) ON TABLE public.knowledge_bundle_exports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_exports.updated_at; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(updated_at) ON TABLE public.knowledge_bundle_exports TO context_use_dashboard;
+
+
+--
+-- Name: TABLE knowledge_bundle_import_objects; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT SELECT,INSERT,DELETE,TRUNCATE,UPDATE ON TABLE public.knowledge_bundle_import_objects TO context_use_import_owner;
+GRANT SELECT,INSERT,DELETE ON TABLE public.knowledge_bundle_import_objects TO context_use_dashboard;
+GRANT SELECT ON TABLE public.knowledge_bundle_import_objects TO context_use_backup;
+
+
+--
+-- Name: COLUMN knowledge_bundle_import_objects.import_id; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT SELECT(import_id) ON TABLE public.knowledge_bundle_import_objects TO context_use_storage;
+
+
+--
+-- Name: COLUMN knowledge_bundle_import_objects.object_key; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT SELECT(object_key) ON TABLE public.knowledge_bundle_import_objects TO context_use_storage;
+
+
+--
+-- Name: COLUMN knowledge_bundle_import_objects.size_bytes; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT SELECT(size_bytes) ON TABLE public.knowledge_bundle_import_objects TO context_use_storage;
+
+
+--
+-- Name: COLUMN knowledge_bundle_import_objects.content_hash; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT SELECT(content_hash) ON TABLE public.knowledge_bundle_import_objects TO context_use_storage;
+
+
+--
+-- Name: COLUMN knowledge_bundle_import_objects.content_type; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT SELECT(content_type) ON TABLE public.knowledge_bundle_import_objects TO context_use_storage;
+
+
+--
+-- Name: COLUMN knowledge_bundle_import_objects.materialized_at; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(materialized_at) ON TABLE public.knowledge_bundle_import_objects TO context_use_dashboard;
+GRANT SELECT(materialized_at) ON TABLE public.knowledge_bundle_import_objects TO context_use_storage;
+
+
+--
+-- Name: TABLE knowledge_bundle_import_parts; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT SELECT,INSERT,DELETE,TRUNCATE,UPDATE ON TABLE public.knowledge_bundle_import_parts TO context_use_import_owner;
+GRANT SELECT,INSERT,DELETE ON TABLE public.knowledge_bundle_import_parts TO context_use_dashboard;
+GRANT SELECT ON TABLE public.knowledge_bundle_import_parts TO context_use_backup;
+
+
+--
+-- Name: TABLE knowledge_bundle_import_records; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT SELECT,INSERT,DELETE,TRUNCATE,UPDATE ON TABLE public.knowledge_bundle_import_records TO context_use_import_owner;
+GRANT SELECT,INSERT,DELETE ON TABLE public.knowledge_bundle_import_records TO context_use_dashboard;
+GRANT SELECT ON TABLE public.knowledge_bundle_import_records TO context_use_backup;
+
+
+--
+-- Name: TABLE knowledge_bundle_imports; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT SELECT,INSERT,DELETE,TRUNCATE,UPDATE ON TABLE public.knowledge_bundle_imports TO context_use_import_owner;
+GRANT SELECT,DELETE ON TABLE public.knowledge_bundle_imports TO context_use_dashboard;
+GRANT SELECT,UPDATE ON TABLE public.knowledge_bundle_imports TO context_use_boundary_owner;
+GRANT SELECT ON TABLE public.knowledge_bundle_imports TO context_use_backup;
+
+
+--
+-- Name: COLUMN knowledge_bundle_imports.id; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT INSERT(id) ON TABLE public.knowledge_bundle_imports TO context_use_dashboard;
+GRANT SELECT(id) ON TABLE public.knowledge_bundle_imports TO context_use_confirmation;
+GRANT SELECT(id) ON TABLE public.knowledge_bundle_imports TO context_use_storage;
+
+
+--
+-- Name: COLUMN knowledge_bundle_imports.owner_user_id; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT INSERT(owner_user_id) ON TABLE public.knowledge_bundle_imports TO context_use_dashboard;
+GRANT SELECT(owner_user_id) ON TABLE public.knowledge_bundle_imports TO context_use_confirmation;
+
+
+--
+-- Name: COLUMN knowledge_bundle_imports.session_id; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT INSERT(session_id) ON TABLE public.knowledge_bundle_imports TO context_use_dashboard;
+GRANT SELECT(session_id) ON TABLE public.knowledge_bundle_imports TO context_use_confirmation;
+
+
+--
+-- Name: COLUMN knowledge_bundle_imports.filename; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT INSERT(filename) ON TABLE public.knowledge_bundle_imports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_imports.total_bytes; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT INSERT(total_bytes) ON TABLE public.knowledge_bundle_imports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_imports.part_size; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT INSERT(part_size) ON TABLE public.knowledge_bundle_imports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_imports.total_parts; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT INSERT(total_parts) ON TABLE public.knowledge_bundle_imports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_imports.status; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(status) ON TABLE public.knowledge_bundle_imports TO context_use_dashboard;
+GRANT SELECT(status) ON TABLE public.knowledge_bundle_imports TO context_use_confirmation;
+GRANT SELECT(status) ON TABLE public.knowledge_bundle_imports TO context_use_storage;
+
+
+--
+-- Name: COLUMN knowledge_bundle_imports.phase; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(phase) ON TABLE public.knowledge_bundle_imports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_imports.parts_completed; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(parts_completed) ON TABLE public.knowledge_bundle_imports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_imports.records_completed; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(records_completed) ON TABLE public.knowledge_bundle_imports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_imports.records_total; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(records_total) ON TABLE public.knowledge_bundle_imports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_imports.objects_completed; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(objects_completed) ON TABLE public.knowledge_bundle_imports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_imports.objects_total; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(objects_total) ON TABLE public.knowledge_bundle_imports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_imports.bytes_completed; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(bytes_completed) ON TABLE public.knowledge_bundle_imports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_imports.bytes_total; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT INSERT(bytes_total),UPDATE(bytes_total) ON TABLE public.knowledge_bundle_imports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_imports.manifest; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(manifest) ON TABLE public.knowledge_bundle_imports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_imports.error_code; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(error_code) ON TABLE public.knowledge_bundle_imports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_imports.error_message; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(error_message) ON TABLE public.knowledge_bundle_imports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_imports.updated_at; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(updated_at) ON TABLE public.knowledge_bundle_imports TO context_use_dashboard;
+
+
+--
+-- Name: COLUMN knowledge_bundle_imports.expires_at; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT UPDATE(expires_at) ON TABLE public.knowledge_bundle_imports TO context_use_dashboard;
+GRANT SELECT(expires_at) ON TABLE public.knowledge_bundle_imports TO context_use_confirmation;
+GRANT SELECT(expires_at) ON TABLE public.knowledge_bundle_imports TO context_use_storage;
+
+
+--
+-- Name: COLUMN knowledge_bundle_imports.confirmed_at; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT SELECT(confirmed_at) ON TABLE public.knowledge_bundle_imports TO context_use_confirmation;
+GRANT SELECT(confirmed_at) ON TABLE public.knowledge_bundle_imports TO context_use_storage;
 
 
 --
@@ -10381,6 +11199,7 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.knowledge_asset_links TO conte
 GRANT DELETE ON TABLE public.knowledge_export_intents TO context_use_boundary_owner;
 GRANT SELECT,DELETE ON TABLE public.knowledge_export_intents TO context_use_dashboard;
 GRANT SELECT ON TABLE public.knowledge_export_intents TO context_use_backup;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.knowledge_export_intents TO context_use_import_owner;
 
 
 --
@@ -10442,6 +11261,7 @@ GRANT SELECT(download_started_at) ON TABLE public.knowledge_export_intents TO co
 GRANT SELECT ON TABLE public.knowledge_page_changes TO context_use_dashboard;
 GRANT SELECT ON TABLE public.knowledge_page_changes TO context_use_mcp;
 GRANT SELECT ON TABLE public.knowledge_page_changes TO context_use_backup;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.knowledge_page_changes TO context_use_import_owner;
 
 
 --
@@ -10513,6 +11333,7 @@ GRANT INSERT(changed_at) ON TABLE public.knowledge_page_changes TO context_use_d
 
 GRANT SELECT ON SEQUENCE public.knowledge_page_changes_change_sequence_seq TO context_use_backup;
 GRANT SELECT,USAGE ON SEQUENCE public.knowledge_page_changes_change_sequence_seq TO context_use_document_history_owner;
+GRANT ALL ON SEQUENCE public.knowledge_page_changes_change_sequence_seq TO context_use_import_owner;
 
 
 --
@@ -10523,6 +11344,7 @@ GRANT INSERT,DELETE,UPDATE ON TABLE public.knowledge_page_versions TO context_us
 GRANT SELECT ON TABLE public.knowledge_page_versions TO context_use_dashboard;
 GRANT SELECT ON TABLE public.knowledge_page_versions TO context_use_mcp;
 GRANT SELECT ON TABLE public.knowledge_page_versions TO context_use_backup;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.knowledge_page_versions TO context_use_import_owner;
 
 
 --
@@ -10629,6 +11451,19 @@ GRANT SELECT(created_at) ON TABLE public.knowledge_page_versions TO context_use_
 
 
 --
+-- Name: COLUMN knowledge_page_versions.entity_type; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT INSERT(entity_type) ON TABLE public.knowledge_page_versions TO context_use_dashboard;
+GRANT INSERT(entity_type) ON TABLE public.knowledge_page_versions TO context_use_mcp;
+GRANT SELECT(entity_type) ON TABLE public.knowledge_page_versions TO context_use_projection_owner;
+GRANT SELECT(entity_type) ON TABLE public.knowledge_page_versions TO context_use_boundary_owner;
+GRANT SELECT(entity_type) ON TABLE public.knowledge_page_versions TO context_use_storage;
+GRANT SELECT(entity_type) ON TABLE public.knowledge_page_versions TO context_use_storage_owner;
+GRANT SELECT(entity_type) ON TABLE public.knowledge_page_versions TO context_use_document_history_owner;
+
+
+--
 -- Name: TABLE knowledge_pages; Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -10636,6 +11471,7 @@ GRANT INSERT,DELETE,UPDATE ON TABLE public.knowledge_pages TO context_use_bounda
 GRANT SELECT ON TABLE public.knowledge_pages TO context_use_dashboard;
 GRANT SELECT ON TABLE public.knowledge_pages TO context_use_mcp;
 GRANT SELECT ON TABLE public.knowledge_pages TO context_use_backup;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.knowledge_pages TO context_use_import_owner;
 
 
 --
@@ -10709,6 +11545,7 @@ GRANT SELECT,INSERT ON TABLE public.knowledge_revision_contracts TO context_use_
 GRANT SELECT ON TABLE public.knowledge_revision_contracts TO context_use_dashboard;
 GRANT SELECT ON TABLE public.knowledge_revision_contracts TO context_use_mcp;
 GRANT SELECT ON TABLE public.knowledge_revision_contracts TO context_use_backup;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.knowledge_revision_contracts TO context_use_import_owner;
 
 
 --
@@ -10765,6 +11602,7 @@ GRANT SELECT,INSERT,UPDATE ON TABLE public.knowledge_search TO context_use_bound
 GRANT SELECT ON TABLE public.knowledge_search TO context_use_dashboard;
 GRANT SELECT ON TABLE public.knowledge_search TO context_use_mcp;
 GRANT SELECT ON TABLE public.knowledge_search TO context_use_backup;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.knowledge_search TO context_use_import_owner;
 
 
 --
@@ -10788,6 +11626,7 @@ GRANT SELECT(revision_id) ON TABLE public.knowledge_search TO context_use_bounda
 GRANT SELECT ON TABLE public.knowledge_search_chunks TO context_use_projection_owner;
 GRANT SELECT,INSERT,DELETE ON TABLE public.knowledge_search_chunks TO context_use_boundary_owner;
 GRANT SELECT ON TABLE public.knowledge_search_chunks TO context_use_backup;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.knowledge_search_chunks TO context_use_import_owner;
 
 
 --
@@ -10798,6 +11637,7 @@ GRANT SELECT ON TABLE public.knowledge_settings TO context_use_dashboard;
 GRANT SELECT ON TABLE public.knowledge_settings TO context_use_mcp;
 GRANT SELECT ON TABLE public.knowledge_settings TO context_use_backup;
 GRANT SELECT,UPDATE ON TABLE public.knowledge_settings TO context_use_boundary_owner;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.knowledge_settings TO context_use_import_owner;
 
 
 --
@@ -10829,6 +11669,7 @@ GRANT UPDATE(updated_at) ON TABLE public.knowledge_settings TO context_use_bound
 --
 
 GRANT SELECT ON TABLE public.public_artifact_id_reservations TO context_use_backup;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.public_artifact_id_reservations TO context_use_import_owner;
 
 
 --
@@ -10877,6 +11718,7 @@ GRANT SELECT ON TABLE public.public_resources TO context_use_mcp;
 GRANT SELECT ON TABLE public.public_resources TO context_use_backup;
 GRANT SELECT ON TABLE public.public_resources TO context_use_projection_owner;
 GRANT UPDATE ON TABLE public.public_resources TO context_use_publication_lock_owner;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.public_resources TO context_use_import_owner;
 
 
 --
@@ -10926,6 +11768,7 @@ GRANT SELECT ON TABLE public.public_route_aliases TO context_use_mcp;
 GRANT SELECT ON TABLE public.public_route_aliases TO context_use_backup;
 GRANT SELECT ON TABLE public.public_route_aliases TO context_use_projection_owner;
 GRANT UPDATE ON TABLE public.public_route_aliases TO context_use_publication_lock_owner;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.public_route_aliases TO context_use_import_owner;
 
 
 --
@@ -10958,68 +11801,13 @@ GRANT SELECT ON TABLE public.live_public_namespace_conflicts TO context_use_back
 
 
 --
--- Name: TABLE "oauthAccessToken"; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public."oauthAccessToken" TO context_use_auth;
-GRANT SELECT ON TABLE public."oauthAccessToken" TO context_use_backup;
-
-
---
--- Name: TABLE "oauthClient"; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public."oauthClient" TO context_use_auth;
-GRANT SELECT ON TABLE public."oauthClient" TO context_use_backup;
-
-
---
--- Name: TABLE "oauthClientAssertion"; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public."oauthClientAssertion" TO context_use_auth;
-GRANT SELECT ON TABLE public."oauthClientAssertion" TO context_use_backup;
-
-
---
--- Name: TABLE "oauthClientResource"; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public."oauthClientResource" TO context_use_auth;
-GRANT SELECT ON TABLE public."oauthClientResource" TO context_use_backup;
-
-
---
--- Name: TABLE "oauthConsent"; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public."oauthConsent" TO context_use_auth;
-GRANT SELECT ON TABLE public."oauthConsent" TO context_use_backup;
-
-
---
--- Name: TABLE "oauthRefreshToken"; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public."oauthRefreshToken" TO context_use_auth;
-GRANT SELECT ON TABLE public."oauthRefreshToken" TO context_use_backup;
-
-
---
--- Name: TABLE "oauthResource"; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public."oauthResource" TO context_use_auth;
-GRANT SELECT ON TABLE public."oauthResource" TO context_use_backup;
-
-
---
 -- Name: TABLE page_deletion_intents; Type: ACL; Schema: public; Owner: postgres
 --
 
 GRANT SELECT ON TABLE public.page_deletion_intents TO context_use_dashboard;
 GRANT DELETE ON TABLE public.page_deletion_intents TO context_use_boundary_owner;
 GRANT SELECT ON TABLE public.page_deletion_intents TO context_use_backup;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.page_deletion_intents TO context_use_import_owner;
 
 
 --
@@ -11082,6 +11870,7 @@ GRANT SELECT(expires_at) ON TABLE public.page_deletion_intents TO context_use_co
 
 GRANT DELETE ON TABLE public.page_publications TO context_use_boundary_owner;
 GRANT SELECT ON TABLE public.page_publications TO context_use_backup;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.page_publications TO context_use_import_owner;
 
 
 --
@@ -11091,6 +11880,8 @@ GRANT SELECT ON TABLE public.page_publications TO context_use_backup;
 GRANT SELECT(public_id),INSERT(public_id),UPDATE(public_id) ON TABLE public.page_publications TO context_use_boundary_owner;
 GRANT SELECT(public_id) ON TABLE public.page_publications TO context_use_projection_owner;
 GRANT SELECT(public_id) ON TABLE public.page_publications TO context_use_storage_owner;
+GRANT SELECT(public_id) ON TABLE public.page_publications TO context_use_dashboard;
+GRANT SELECT(public_id) ON TABLE public.page_publications TO context_use_mcp;
 
 
 --
@@ -11100,76 +11891,6 @@ GRANT SELECT(public_id) ON TABLE public.page_publications TO context_use_storage
 GRANT SELECT(artifact_id),INSERT(artifact_id) ON TABLE public.page_publications TO context_use_boundary_owner;
 GRANT SELECT(artifact_id) ON TABLE public.page_publications TO context_use_projection_owner;
 GRANT SELECT(artifact_id) ON TABLE public.page_publications TO context_use_storage_owner;
-
-
---
--- Name: TABLE passkey; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT SELECT,INSERT ON TABLE public.passkey TO context_use_auth;
-GRANT SELECT ON TABLE public.passkey TO context_use_backup;
-GRANT DELETE ON TABLE public.passkey TO context_use_boundary_owner;
-
-
---
--- Name: COLUMN passkey.id; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT SELECT(id) ON TABLE public.passkey TO context_use_confirmation;
-GRANT SELECT(id) ON TABLE public.passkey TO context_use_boundary_owner;
-
-
---
--- Name: COLUMN passkey.name; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT SELECT(name) ON TABLE public.passkey TO context_use_confirmation;
-
-
---
--- Name: COLUMN passkey."publicKey"; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT SELECT("publicKey") ON TABLE public.passkey TO context_use_confirmation;
-
-
---
--- Name: COLUMN passkey."userId"; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT SELECT("userId") ON TABLE public.passkey TO context_use_boundary_owner;
-GRANT SELECT("userId") ON TABLE public.passkey TO context_use_confirmation;
-
-
---
--- Name: COLUMN passkey."credentialID"; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT SELECT("credentialID") ON TABLE public.passkey TO context_use_boundary_owner;
-GRANT SELECT("credentialID") ON TABLE public.passkey TO context_use_confirmation;
-
-
---
--- Name: COLUMN passkey.counter; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT SELECT(counter),UPDATE(counter) ON TABLE public.passkey TO context_use_boundary_owner;
-GRANT SELECT(counter) ON TABLE public.passkey TO context_use_confirmation;
-GRANT UPDATE(counter) ON TABLE public.passkey TO context_use_auth;
-
-
---
--- Name: COLUMN passkey.transports; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT SELECT(transports) ON TABLE public.passkey TO context_use_confirmation;
-
-
---
--- Name: COLUMN passkey."createdAt"; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT SELECT("createdAt") ON TABLE public.passkey TO context_use_confirmation;
 
 
 --
@@ -11187,7 +11908,8 @@ GRANT SELECT ON TABLE public.passkey_management_intents TO context_use_backup;
 GRANT SELECT,INSERT ON TABLE public.source_records TO context_use_mcp;
 GRANT SELECT ON TABLE public.source_records TO context_use_dashboard;
 GRANT SELECT ON TABLE public.source_records TO context_use_backup;
-GRANT UPDATE ON TABLE public.source_records TO context_use_boundary_owner;
+GRANT DELETE,UPDATE ON TABLE public.source_records TO context_use_boundary_owner;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.source_records TO context_use_import_owner;
 
 
 --
@@ -11206,6 +11928,7 @@ GRANT SELECT(document_id) ON TABLE public.source_records TO context_use_projecti
 GRANT SELECT(current_revision_id) ON TABLE public.source_records TO context_use_storage;
 GRANT UPDATE(current_revision_id) ON TABLE public.source_records TO context_use_mcp;
 GRANT SELECT(current_revision_id) ON TABLE public.source_records TO context_use_projection_owner;
+GRANT SELECT(current_revision_id) ON TABLE public.source_records TO context_use_boundary_owner;
 
 
 --
@@ -11266,6 +11989,7 @@ GRANT SELECT(search_vector) ON TABLE public.source_records TO context_use_projec
 GRANT SELECT(deleted_at) ON TABLE public.source_records TO context_use_storage;
 GRANT UPDATE(deleted_at) ON TABLE public.source_records TO context_use_mcp;
 GRANT SELECT(deleted_at) ON TABLE public.source_records TO context_use_projection_owner;
+GRANT SELECT(deleted_at) ON TABLE public.source_records TO context_use_boundary_owner;
 
 
 --
@@ -11273,6 +11997,7 @@ GRANT SELECT(deleted_at) ON TABLE public.source_records TO context_use_projectio
 --
 
 GRANT SELECT(connection_instance_id) ON TABLE public.source_records TO context_use_projection_owner;
+GRANT UPDATE(connection_instance_id) ON TABLE public.source_records TO context_use_mcp;
 
 
 --
@@ -11289,6 +12014,7 @@ GRANT SELECT ON TABLE public.private_document_catalog TO context_use_backup;
 --
 
 GRANT SELECT ON TABLE public.public_asset_artifacts TO context_use_backup;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.public_asset_artifacts TO context_use_import_owner;
 
 
 --
@@ -11445,6 +12171,7 @@ GRANT SELECT ON TABLE public.public_assets TO context_use_backup;
 --
 
 GRANT SELECT ON TABLE public.public_page_artifacts TO context_use_backup;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.public_page_artifacts TO context_use_import_owner;
 
 
 --
@@ -11642,6 +12369,7 @@ GRANT SELECT ON TABLE public.public_pages TO context_use_backup;
 
 GRANT SELECT,INSERT ON TABLE public.public_representation_token_reservations TO context_use_boundary_owner;
 GRANT SELECT ON TABLE public.public_representation_token_reservations TO context_use_backup;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.public_representation_token_reservations TO context_use_import_owner;
 
 
 --
@@ -11671,6 +12399,7 @@ GRANT SELECT(resource_kind) ON TABLE public.public_representation_token_reservat
 
 GRANT SELECT,INSERT,UPDATE ON TABLE public.public_visibility_generations TO context_use_boundary_owner;
 GRANT SELECT ON TABLE public.public_visibility_generations TO context_use_backup;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.public_visibility_generations TO context_use_import_owner;
 
 
 --
@@ -11679,6 +12408,7 @@ GRANT SELECT ON TABLE public.public_visibility_generations TO context_use_backup
 
 GRANT SELECT ON TABLE public.publication_artifact_staging TO context_use_backup;
 GRANT SELECT,INSERT ON TABLE public.publication_artifact_staging TO context_use_boundary_owner;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.publication_artifact_staging TO context_use_import_owner;
 
 
 --
@@ -11694,6 +12424,7 @@ GRANT SELECT(intent_id) ON TABLE public.publication_artifact_staging TO context_
 
 GRANT SELECT,INSERT ON TABLE public.publication_intent_id_reservations TO context_use_boundary_owner;
 GRANT SELECT ON TABLE public.publication_intent_id_reservations TO context_use_backup;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.publication_intent_id_reservations TO context_use_import_owner;
 
 
 --
@@ -11709,6 +12440,7 @@ GRANT SELECT(intent_id) ON TABLE public.publication_intent_id_reservations TO co
 
 GRANT SELECT ON TABLE public.publication_intents TO context_use_backup;
 GRANT SELECT,INSERT ON TABLE public.publication_intents TO context_use_boundary_owner;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.publication_intents TO context_use_import_owner;
 
 
 --
@@ -11827,6 +12559,7 @@ GRANT UPDATE(cancelled_at) ON TABLE public.publication_intents TO context_use_bo
 
 GRANT SELECT,INSERT ON TABLE public.publication_object_claims TO context_use_storage_owner;
 GRANT SELECT ON TABLE public.publication_object_claims TO context_use_backup;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.publication_object_claims TO context_use_import_owner;
 
 
 --
@@ -11901,6 +12634,7 @@ GRANT SELECT(body_content_hash) ON TABLE public.publication_object_claims TO con
 
 GRANT SELECT ON TABLE public.publication_settings TO context_use_backup;
 GRANT SELECT,UPDATE ON TABLE public.publication_settings TO context_use_boundary_owner;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.publication_settings TO context_use_import_owner;
 
 
 --
@@ -11931,6 +12665,7 @@ GRANT SELECT(updated_at) ON TABLE public.publication_settings TO context_use_bou
 
 GRANT SELECT,INSERT,UPDATE ON TABLE public.publication_target_generations TO context_use_boundary_owner;
 GRANT SELECT ON TABLE public.publication_target_generations TO context_use_backup;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.publication_target_generations TO context_use_import_owner;
 
 
 --
@@ -11941,6 +12676,7 @@ GRANT SELECT,INSERT,UPDATE ON TABLE public.retained_page_artifacts TO context_us
 GRANT SELECT ON TABLE public.retained_page_artifacts TO context_use_projection_owner;
 GRANT SELECT ON TABLE public.retained_page_artifacts TO context_use_backup;
 GRANT UPDATE ON TABLE public.retained_page_artifacts TO context_use_boundary_owner;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.retained_page_artifacts TO context_use_import_owner;
 
 
 --
@@ -12007,20 +12743,13 @@ GRANT SELECT(body_content_hash) ON TABLE public.retained_page_artifacts TO conte
 
 
 --
--- Name: TABLE session; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.session TO context_use_auth;
-GRANT SELECT ON TABLE public.session TO context_use_backup;
-
-
---
 -- Name: TABLE source_record_search_chunks; Type: ACL; Schema: public; Owner: postgres
 --
 
 GRANT SELECT,INSERT,DELETE ON TABLE public.source_record_search_chunks TO context_use_boundary_owner;
 GRANT SELECT ON TABLE public.source_record_search_chunks TO context_use_mcp;
 GRANT SELECT ON TABLE public.source_record_search_chunks TO context_use_backup;
+GRANT SELECT,INSERT,TRUNCATE ON TABLE public.source_record_search_chunks TO context_use_import_owner;
 
 
 --
@@ -12038,54 +12767,19 @@ GRANT SELECT(search_vector) ON TABLE public.source_record_search_chunks TO conte
 
 
 --
--- Name: TABLE "user"; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT SELECT,INSERT ON TABLE public."user" TO context_use_auth;
-GRANT SELECT ON TABLE public."user" TO context_use_backup;
-
-
---
--- Name: COLUMN "user".name; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT UPDATE(name) ON TABLE public."user" TO context_use_auth;
-
-
---
--- Name: COLUMN "user".image; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT UPDATE(image) ON TABLE public."user" TO context_use_auth;
-
-
---
--- Name: COLUMN "user"."updatedAt"; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT UPDATE("updatedAt") ON TABLE public."user" TO context_use_auth;
-
-
---
--- Name: TABLE verification; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.verification TO context_use_auth;
-GRANT SELECT ON TABLE public.verification TO context_use_backup;
-
-
---
 -- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: public; Owner: postgres
 --
 
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT ON SEQUENCES TO context_use_backup;
 
+-- Runtime bootstrap, rather than this migration, creates singleton state.
+GRANT INSERT ON TABLE
+  public.knowledge_bundle_import_policy,
+  public.knowledge_settings,
+  public.publication_settings
+TO context_use_boundary_owner;
+GRANT SELECT (singleton) ON TABLE public.knowledge_bundle_import_policy
+TO context_use_boundary_owner;
 
--- The dump uses an empty search path while creating schema-qualified objects.
--- Restore the migrator's expected path before it records this transaction.
+-- Restore the migrator path before it records this migration.
 SELECT pg_catalog.set_config('search_path', 'pg_catalog, public', true);
-
-
---
--- PostgreSQL database dump complete
---

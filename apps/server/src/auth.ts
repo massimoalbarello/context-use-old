@@ -32,6 +32,7 @@ function hashOAuthClientSecret(secret: string): string {
 
 export const authPool = new Pool({
   connectionString: config.AUTH_DATABASE_URL,
+  options: "-c search_path=auth,public",
   max: 10,
   application_name: "context-use-auth",
 });
@@ -45,13 +46,13 @@ async function provisionNangoOAuthClient(): Promise<void> {
     await client.query("BEGIN");
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [NANGO_CLIENT_KIND]);
     await client.query(
-      `UPDATE "oauthClient"
+      `UPDATE auth."oauthClient"
        SET disabled=true,"updatedAt"=$3
        WHERE "referenceId"=$1 AND "clientId"<>$2`,
       [NANGO_CLIENT_KIND, config.NANGO_OAUTH_CLIENT_ID, now],
     );
     await client.query(
-      `INSERT INTO "oauthClient"(
+      `INSERT INTO auth."oauthClient"(
        id,"clientId","clientSecret",disabled,"skipConsent","enableEndSession",
        "subjectType",scopes,"userId","createdAt","updatedAt",name,uri,
        "redirectUris","postLogoutRedirectUris","tokenEndpointAuthMethod",
@@ -119,7 +120,7 @@ export async function ensureNangoOAuthClient(): Promise<void> {
 async function resolveOwnerSetup(context: string | null | undefined) {
   const setup = ownerSetupContext(context);
   if (!setup) throw new APIError("FORBIDDEN", { message: "Invalid owner setup claim" });
-  const existing = await authPool.query("SELECT 1 FROM passkey LIMIT 1");
+  const existing = await authPool.query("SELECT 1 FROM auth.passkey LIMIT 1");
   if (existing.rowCount) throw new APIError("CONFLICT", { message: "The owner passkey is already registered" });
   return {
     id: ownerUserId,
@@ -129,7 +130,7 @@ async function resolveOwnerSetup(context: string | null | undefined) {
 }
 
 async function resolvePasskeyRegistration(context: string | null | undefined) {
-  const existing = await authPool.query("SELECT 1 FROM passkey WHERE \"userId\"=$1 LIMIT 1", [ownerUserId]);
+  const existing = await authPool.query("SELECT 1 FROM auth.passkey WHERE \"userId\"=$1 LIMIT 1", [ownerUserId]);
   if (!existing.rowCount) return resolveOwnerSetup(context);
   const enrollment = await enrollmentForContext(authPool, context);
   if (!enrollment) throw new APIError("FORBIDDEN", { message: "A confirmed passkey enrollment is required" });
@@ -142,7 +143,7 @@ async function resolvePasskeyRegistration(context: string | null | undefined) {
 
 async function ownerIdentity(): Promise<{ email: string; emailVerified: boolean } | null> {
   const owner = await authPool.query<{ email: string; emailVerified: boolean }>(
-    `SELECT email,"emailVerified" FROM "user" WHERE id=$1`,
+    `SELECT email,"emailVerified" FROM auth."user" WHERE id=$1`,
     [ownerUserId],
   );
   return owner.rows[0] ?? null;
@@ -166,7 +167,7 @@ async function assertOwnerCanHoldSession(): Promise<void> {
 async function createOwner(): Promise<void> {
   try {
     await authPool.query(
-      `INSERT INTO "user"(id,name,email,"emailVerified") VALUES ($1,'Owner',$2,true)
+      `INSERT INTO auth."user"(id,name,email,"emailVerified") VALUES ($1,'Owner',$2,true)
        ON CONFLICT (id) DO NOTHING`,
       [ownerUserId, normalizedOwnerEmail],
     );
@@ -360,14 +361,14 @@ export type DashboardPrincipal = {
 export async function touchLiveOwnerSession(sessionId: string): Promise<boolean> {
   if (!sessionId || sessionId.length > 512) return false;
   const touched = await authPool.query(
-    `UPDATE "session"
+    `UPDATE auth."session"
      SET "updatedAt"=now()
      WHERE id=$1 AND "userId"=$2
        AND "createdAt">=now()-make_interval(secs=>$3::int)
        AND "updatedAt">=now()-make_interval(secs=>$4::int)
        AND "expiresAt">now()
        AND EXISTS (
-         SELECT 1 FROM "user" owner
+         SELECT 1 FROM auth."user" owner
          WHERE owner.id=$2
            AND lower(btrim(owner.email))=$5
            AND owner."emailVerified"=true

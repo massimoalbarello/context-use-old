@@ -27,13 +27,13 @@ describeDatabase("passkey-bound full knowledge bundle exports", () => {
 
   beforeAll(async () => {
     const owner = await pool.query(
-      `INSERT INTO "user"(id,name,email,"emailVerified")
+      `INSERT INTO auth."user"(id,name,email,"emailVerified")
        VALUES ('context-use-owner','Owner','owner@example.com',true)
        ON CONFLICT (id) DO NOTHING`,
     );
     createdOwner = owner.rowCount === 1;
     await pool.query(
-      `INSERT INTO passkey(id,"publicKey","userId","credentialID",counter,"deviceType","backedUp")
+      `INSERT INTO auth.passkey(id,"publicKey","userId","credentialID",counter,"deviceType","backedUp")
        VALUES ($1,'public-key','context-use-owner',$2,0,'multiDevice',true)`,
       [passkeyId, passkeyId],
     );
@@ -48,8 +48,10 @@ describeDatabase("passkey-bound full knowledge bundle exports", () => {
         await pool.query("DELETE FROM knowledge_bundle_exports WHERE intent_id=$1", [intentId]);
         await pool.query("DELETE FROM knowledge_export_intents WHERE id=$1", [intentId]);
       }
-      await pool.query("DELETE FROM passkey WHERE id=$1", [passkeyId]);
-      if (createdOwner) await pool.query("DELETE FROM \"user\" WHERE id='context-use-owner'");
+      await pool.query("DELETE FROM auth.passkey WHERE id=$1", [passkeyId]);
+      if (createdOwner) {
+        await pool.query("DELETE FROM auth.\"user\" WHERE id='context-use-owner'");
+      }
       await pool.query("COMMIT");
     } catch (error) {
       await pool.query("ROLLBACK");

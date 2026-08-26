@@ -174,12 +174,12 @@ export async function cleanupPublicationFixtures(
     );
     if (credentialIds.length > 0) {
       await client.query(
-        `DELETE FROM passkey WHERE "credentialID"=ANY($1::text[])`,
+        `DELETE FROM auth.passkey WHERE "credentialID"=ANY($1::text[])`,
         [credentialIds],
       );
     }
     if (userIds.length > 0) {
-      await client.query(`DELETE FROM "user" WHERE id=ANY($1::text[])`, [userIds]);
+      await client.query(`DELETE FROM auth."user" WHERE id=ANY($1::text[])`, [userIds]);
     }
     await client.query("COMMIT");
   } catch (error) {

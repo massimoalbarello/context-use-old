@@ -1,4 +1,7 @@
-export const LEGACY_MIGRATION_MAX = 10;
+// The rewritten install snapshot contains pg_dump session statements and the
+// idempotent role-creation block. Every forward migration starts at 005 and is
+// held to the schema-only policy below.
+export const LEGACY_MIGRATION_MAX = 4;
 
 const FORBIDDEN_STATEMENT_STARTS = new Set([
   "CALL",

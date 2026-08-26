@@ -38,7 +38,7 @@ export function assertMigrationState(
   files: MigrationDescriptor[],
   applied: AppliedMigration[],
   existingRelations: string[],
-  baseline = "001_baseline.sql",
+  baseline = "001_create_auth_schema.sql",
 ): void {
   const current = new Map(files.map((file) => [file.version, file.checksum]));
   const unknown = applied.filter(({ version }) => !current.has(version)).map(({ version }) => version);

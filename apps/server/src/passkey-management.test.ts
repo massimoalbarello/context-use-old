@@ -63,9 +63,9 @@ describe("owner authentication revocation", () => {
     await revokeOwnerAuthentication(database as never, "owner");
 
     expect(statements).toHaveLength(3);
-    expect(statements[0]).toContain('UPDATE "oauthRefreshToken"');
+    expect(statements[0]).toContain('UPDATE auth."oauthRefreshToken"');
     expect(statements[0]).toContain("rotationReplayResponse");
-    expect(statements[1]).toContain('UPDATE "oauthAccessToken"');
-    expect(statements[2]).toContain('DELETE FROM "session"');
+    expect(statements[1]).toContain('UPDATE auth."oauthAccessToken"');
+    expect(statements[2]).toContain('DELETE FROM auth."session"');
   });
 });

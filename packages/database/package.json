@@ -17,6 +17,7 @@
     "migrate": "bun src/migrate.ts",
     "reset:development": "bun src/reset-development.ts",
     "mark:disposable": "bun src/mark-disposable.ts",
+    "seed:test": "bun src/seed-test-state.ts",
     "test:roles": "bun test test/roles.integration.test.ts"
   },
   "dependencies": {
