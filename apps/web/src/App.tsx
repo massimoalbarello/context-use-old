@@ -1,6 +1,7 @@
 import type { DashboardObjectSummary } from "@context-use/shared";
+import { useQuery } from "@tanstack/react-query";
+import { useMatchRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { api, refreshCsrf } from "./api.ts";
 import { authClient } from "./auth-client.ts";
 import { AssetDetails } from "./components/Assets.tsx";
 import { Automations } from "./components/Automations.tsx";
@@ -11,11 +12,13 @@ import { KnowledgeHistory } from "./components/KnowledgeHistory.tsx";
 import { Login } from "./components/Login.tsx";
 import { NewPage } from "./components/NewPage.tsx";
 import { OAuthConsent } from "./components/OAuthConsent.tsx";
-import { Settings, type PasskeySummary } from "./components/Settings.tsx";
+import { Settings } from "./components/Settings.tsx";
 import { SourceRecord } from "./components/SourceRecord.tsx";
-import type { Asset } from "./types.ts";
+import { queryClient } from "./lib/query-client.ts";
+import { assetsQueryOptions } from "./queries/assets.ts";
+import { objectQueryKey, objectQueryOptions } from "./queries/objects.ts";
+import { sessionQueryOptions } from "./queries/session.ts";
 
-type SessionInfo = { owner: { id: string; email: string }; passkey_count: number; passkeys: PasskeySummary[] };
 type Section = "knowledge" | "automations" | "history" | "settings";
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "context-use.sidebar.width.v1";
@@ -63,33 +66,23 @@ function CloseIcon() {
   return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" /></svg>;
 }
 
-type DashboardSelection = { kind: "object"; id: string };
-
-function selectionFromLocation(): DashboardSelection | null {
-  const match = window.location.pathname.match(/^\/app\/(objects|pages|assets|records)\/([0-9a-f-]+)/);
-  if (!match) return null;
-  return { kind: "object", id: match[2]! };
-}
-
-function sectionFromLocation(): Section {
-  if (window.location.pathname === "/app/settings" || window.location.pathname === "/app/mcp") return "settings";
-  if (window.location.pathname === "/app/automations") return "automations";
-  if (window.location.pathname === "/app/history") return "history";
-  return "knowledge";
-}
-
 export function App() {
   const { data: authSession, isPending } = authClient.useSession();
+  const matchRoute = useMatchRoute();
+  const navigate = useNavigate();
+  const objectMatch = matchRoute({ to: "/app/objects/$objectId" });
+  const selected = objectMatch ? { kind: "object" as const, id: objectMatch.objectId } : null;
+  const creatingPage = Boolean(matchRoute({ to: "/app/objects/new" }));
+  const consent = Boolean(matchRoute({ to: "/app/oauth/consent" }));
+  const section: Section = matchRoute({ to: "/app/settings" })
+    ? "settings"
+    : matchRoute({ to: "/app/automations" })
+      ? "automations"
+      : matchRoute({ to: "/app/history" })
+        ? "history"
+        : "knowledge";
   const [sessionResolved, setSessionResolved] = useState(false);
-  const [session, setSession] = useState<SessionInfo | null>(null);
-  const [assets, setAssets] = useState<Asset[]>([]);
-  const [selected, setSelected] = useState<DashboardSelection | null>(selectionFromLocation);
-  const [selectedObject, setSelectedObject] = useState<DashboardObjectSummary | null>(null);
-  const [creatingPage, setCreatingPage] = useState(
-    window.location.pathname === "/app/objects/new",
-  );
   const [navigatorRefresh, setNavigatorRefresh] = useState(0);
-  const [section, setSection] = useState<Section>(sectionFromLocation);
   const [query, setQuery] = useState("");
   const [sidebarWidth, setSidebarWidth] = useState(restoredSidebarWidth);
   const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(restoredSidebarOpen);
@@ -101,50 +94,31 @@ export function App() {
   const mobileSidebarToggleRef = useRef<HTMLButtonElement>(null);
   const mobileSidebarCloseRef = useRef<HTMLButtonElement>(null);
   const sidebarResizeStart = useRef({ pointerX: 0, width: DEFAULT_SIDEBAR_WIDTH });
-  const consent = window.location.pathname === "/app/oauth/consent";
-
+  const sessionQuery = useQuery({ ...sessionQueryOptions(), enabled: Boolean(authSession) });
+  const session = sessionQuery.data ?? null;
+  const assetsQuery = useQuery({ ...assetsQueryOptions(), enabled: Boolean(session) });
+  const assets = assetsQuery.data ?? [];
+  const selectedObjectQuery = useQuery({
+    ...objectQueryOptions(selected?.id ?? ""),
+    enabled: Boolean(session && selected),
+  });
+  const selectedObject = selectedObjectQuery.data ?? null;
   const loadSession = async () => {
-    const value = await api<SessionInfo>("/api/dashboard/session");
-    setSession(value);
-    await refreshCsrf();
+    await sessionQuery.refetch();
   };
-  const loadAssets = async () => setAssets(await api<Asset[]>("/api/dashboard/assets"));
+  const loadAssets = async () => {
+    await assetsQuery.refetch();
+  };
   useEffect(() => { if (!isPending) setSessionResolved(true); }, [isPending]);
-  useEffect(() => { if (authSession) loadSession().catch(() => setSession(null)); }, [authSession]);
-  useEffect(() => { if (session) loadAssets().catch(() => undefined); }, [session]);
   useEffect(() => {
-    if (window.location.pathname === "/app/mcp") history.replaceState({}, "", "/app/settings");
-  }, []);
-  useEffect(() => {
-    const syncLocation = () => {
-      setSelected(selectionFromLocation());
-      setSelectedObject(null);
-      setCreatingPage(window.location.pathname === "/app/objects/new");
-      setSection(sectionFromLocation());
-      setMobileSidebarOpen(false);
-    };
-    window.addEventListener("popstate", syncLocation);
-    return () => window.removeEventListener("popstate", syncLocation);
-  }, []);
-  useEffect(() => {
-    if (!session || selected?.kind !== "object") {
-      setSelectedObject(null);
-      return;
+    if (selectedObjectQuery.error) {
+      setMessage(
+        selectedObjectQuery.error instanceof Error
+          ? selectedObjectQuery.error.message
+          : "Could not open object",
+      );
     }
-    const controller = new AbortController();
-    api<DashboardObjectSummary>(`/api/dashboard/objects/${selected.id}`, {
-      signal: controller.signal,
-    }).then((object) => {
-      setSelectedObject(object);
-      if (!window.location.pathname.startsWith("/app/objects/")) {
-        history.replaceState({}, "", `/app/objects/${object.object_id}${window.location.hash}`);
-      }
-    }).catch((caught: unknown) => {
-      if (caught instanceof DOMException && caught.name === "AbortError") return;
-      setMessage(caught instanceof Error ? caught.message : "Could not open object");
-    });
-    return () => controller.abort();
-  }, [selected?.id, selected?.kind, session]);
+  }, [selectedObjectQuery.error]);
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") return;
@@ -239,58 +213,51 @@ export function App() {
   if (session.passkey_count === 0) return <main className="center-card"><h1>Owner passkey missing</h1><p>This installation must always retain at least one owner passkey.</p></main>;
 
   const openObject = (object: DashboardObjectSummary, fragment = "") => {
-    setCreatingPage(false);
-    setSelected({ kind: "object", id: object.object_id });
-    setSelectedObject(object);
-    setSection("knowledge");
+    queryClient.setQueryData(objectQueryKey(object.object_id), object);
     setMobileSidebarOpen(false);
-    history.pushState({}, "", `/app/objects/${object.object_id}${fragment}`);
+    void navigate({
+      to: "/app/objects/$objectId",
+      params: { objectId: object.object_id },
+      hash: fragment.replace(/^#/, ""),
+    });
   };
 
   const openObjectId = (objectId: string, fragment = "") => {
-    setCreatingPage(false);
-    setSelected({ kind: "object", id: objectId });
-    setSelectedObject(null);
-    setSection("knowledge");
     setMobileSidebarOpen(false);
-    history.pushState({}, "", `/app/objects/${objectId}${fragment}`);
+    void navigate({
+      to: "/app/objects/$objectId",
+      params: { objectId },
+      hash: fragment.replace(/^#/, ""),
+    });
   };
 
   const openSettings = () => {
-    setCreatingPage(false);
-    setSection("settings");
     setMobileSidebarOpen(false);
-    if (window.location.pathname !== "/app/settings") history.pushState({}, "", "/app/settings");
+    void navigate({ to: "/app/settings" });
   };
 
   const openHistory = () => {
-    setCreatingPage(false);
-    setSection("history");
     setMobileSidebarOpen(false);
-    history.pushState({}, "", "/app/history");
+    void navigate({ to: "/app/history" });
   };
 
   const openAutomations = () => {
-    setCreatingPage(false);
-    setSection("automations");
     setMobileSidebarOpen(false);
-    history.pushState({}, "", "/app/automations");
+    void navigate({ to: "/app/automations" });
   };
 
   const openKnowledge = () => {
-    setCreatingPage(false);
-    setSection("knowledge");
     setMobileSidebarOpen(false);
-    history.pushState({}, "", selected ? `/app/objects/${selected.id}` : "/app");
+    if (selected) {
+      void navigate({ to: "/app/objects/$objectId", params: { objectId: selected.id } });
+    } else {
+      void navigate({ to: "/app" });
+    }
   };
 
   const createPage = () => {
-    setSelected(null);
-    setSelectedObject(null);
-    setCreatingPage(true);
-    setSection("knowledge");
     setMobileSidebarOpen(false);
-    history.pushState({}, "", "/app/objects/new");
+    void navigate({ to: "/app/objects/new" });
   };
 
   const followObjectLink = (event: ReactMouseEvent<HTMLDivElement>) => {
@@ -375,7 +342,7 @@ export function App() {
       onKeyDown={resizeSidebarWithKeyboard}
       onDoubleClick={() => setSidebarWidth(DEFAULT_SIDEBAR_WIDTH)}
     />
-    {section === "settings" ? <Settings passkeys={session.passkeys} onPasskeysChanged={loadSession} /> : section === "automations" ? <Automations onOpenObject={openObjectId} /> : section === "history" ? <KnowledgeHistory onOpenObject={openObjectId} /> : creatingPage ? <NewPage onCancel={openKnowledge} onCreated={(objectId) => { setNavigatorRefresh((value) => value + 1); openObjectId(objectId); }} /> : selected && selectedObject?.object_kind === "page" ? <Editor pageId={selected.id} onChanged={async () => { setNavigatorRefresh((value) => value + 1); }} onDeleted={async () => { setSelected(null); setSelectedObject(null); history.pushState({}, "", "/app"); setNavigatorRefresh((value) => value + 1); setMessage("Page and retained revisions deleted. A body-free tombstone remains in Change history."); }} onOpenObject={openObject} /> : selected && selectedObject?.object_kind === "record" ? <SourceRecord objectId={selected.id} onChanged={async () => { setNavigatorRefresh((value) => value + 1); }} onDeleted={async () => { setSelected(null); setSelectedObject(null); history.pushState({}, "", "/app"); setNavigatorRefresh((value) => value + 1); setMessage("Source record and retained revisions deleted from the live database."); }} /> : selectedAsset ? <AssetDetails key={selectedAsset.id} asset={selectedAsset} onChanged={async () => { await loadAssets(); setNavigatorRefresh((value) => value + 1); }} onDeleted={async () => { setSelected(null); setSelectedObject(null); history.pushState({}, "", "/app"); await loadAssets(); setNavigatorRefresh((value) => value + 1); setMessage("Asset deleted. S3 versioning retains a recoverable noncurrent copy for the configured safety period."); }} /> : selectedObject ? <ObjectDetails object={selectedObject} /> : selected ? <main className="editor-empty">Loading object…</main> : <main className="editor-empty"><div className="empty-content"><span className="empty-kicker"><i />Private by default</span><h1>Your context,<br />ready when you need it.</h1><p>Search your knowledge, open an object, then follow its links and backlinks. Your content stays private until you explicitly publish an exact version.</p><div className="empty-details"><span>Search-first</span><span>Hyperlinked</span><span>Versioned history</span></div></div><div className="empty-sigil" aria-hidden="true"><span>c</span><span>u</span></div></main>}
+    {section === "settings" ? <Settings passkeys={session.passkeys} onPasskeysChanged={loadSession} /> : section === "automations" ? <Automations onOpenObject={openObjectId} /> : section === "history" ? <KnowledgeHistory onOpenObject={openObjectId} /> : creatingPage ? <NewPage onCancel={openKnowledge} onCreated={(objectId) => { setNavigatorRefresh((value) => value + 1); openObjectId(objectId); }} /> : selected && selectedObject?.object_kind === "page" ? <Editor pageId={selected.id} onChanged={async () => { setNavigatorRefresh((value) => value + 1); }} onDeleted={async () => { await navigate({ to: "/app" }); setNavigatorRefresh((value) => value + 1); setMessage("Page and retained revisions deleted. A body-free tombstone remains in Change history."); }} onOpenObject={openObject} /> : selected && selectedObject?.object_kind === "record" ? <SourceRecord objectId={selected.id} onChanged={async () => { setNavigatorRefresh((value) => value + 1); }} onDeleted={async () => { await navigate({ to: "/app" }); setNavigatorRefresh((value) => value + 1); setMessage("Source record and retained revisions deleted from the live database."); }} /> : selectedAsset ? <AssetDetails key={selectedAsset.id} asset={selectedAsset} onChanged={async () => { await loadAssets(); setNavigatorRefresh((value) => value + 1); }} onDeleted={async () => { await navigate({ to: "/app" }); await loadAssets(); setNavigatorRefresh((value) => value + 1); setMessage("Asset deleted. S3 versioning retains a recoverable noncurrent copy for the configured safety period."); }} /> : selectedObject ? <ObjectDetails object={selectedObject} /> : selected ? <main className="editor-empty">Loading object…</main> : <main className="editor-empty"><div className="empty-content"><span className="empty-kicker"><i />Private by default</span><h1>Your context,<br />ready when you need it.</h1><p>Search your knowledge, open an object, then follow its links and backlinks. Your content stays private until you explicitly publish an exact version.</p><div className="empty-details"><span>Search-first</span><span>Hyperlinked</span><span>Versioned history</span></div></div><div className="empty-sigil" aria-hidden="true"><span>c</span><span>u</span></div></main>}
     {message && <div className="toast">{message}</div>}
   </div>;
 }

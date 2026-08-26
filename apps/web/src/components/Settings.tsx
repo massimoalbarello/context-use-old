@@ -5,14 +5,9 @@ import { ActionDialog } from "./ActionDialog.tsx";
 import { McpClients } from "./McpClients.tsx";
 import { RunningRelease } from "./RunningRelease.tsx";
 import { IntrinsicServices } from "./Services.tsx";
+import type { PasskeySummary } from "../types.ts";
 
-export type PasskeySummary = {
-  id: string;
-  name: string | null;
-  created_at: string;
-  device_type: string;
-  backed_up: boolean;
-};
+export type { PasskeySummary } from "../types.ts";
 
 type KnowledgeBundleExportConfirmation = {
   download_url: string;

@@ -102,6 +102,20 @@ export type AssetStatus = {
   published: boolean;
 };
 
+export type PasskeySummary = {
+  id: string;
+  name: string | null;
+  created_at: string;
+  device_type: string;
+  backed_up: boolean;
+};
+
+export type DashboardSession = {
+  owner: { id: string; email: string };
+  passkey_count: number;
+  passkeys: PasskeySummary[];
+};
+
 /**
  * What republishing releases: everything written since the pinned public version, which the
  * owner has not necessarily seen. Imported or historically incomplete data can
