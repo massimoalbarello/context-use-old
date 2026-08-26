@@ -27,20 +27,23 @@ Migration orchestration is split under `src/migrations`: catalog loading, ledger
 transactional application, and role-password reconciliation are separate mechanisms. The executable
 `src/migrate.ts` remains only the composition root for restore coordination and those mechanisms.
 
-The completed refactor has two clearly separated, ordered migration sections in
-one transactional ledger:
+The completed refactor has two clearly separated, ordered migration streams with independent
+checksummed ledgers:
 
-1. Better Auth migrations create and evolve the `auth` schema.
-2. Context Use migrations create and evolve application schema.
+1. `migrations/auth` creates and evolves the `auth` schema, recorded in
+   `public.auth_schema_migrations`.
+2. `migrations/application` creates and evolves application schema, recorded in
+   `public.schema_migrations`.
 
 The Better Auth section always runs first. Generated Better Auth DDL is committed as its own file
 and changed only by adding another generated migration. Better Auth never mutates schema
 automatically at application startup. Context Use hardening follows in a separate application-owned
 migration.
 
-The clean history starts with `001_create_auth_schema.sql`, then the generated
-`002_better_auth.sql`, the application snapshot in `003_application_schema.sql`, and finally the
-application-owned auth constraints and grants in `004_harden_owner_auth.sql`.
+The clean auth history starts with `auth/001_create_auth_schema.sql`, followed by the generated
+`auth/002_better_auth.sql`. Only after that stream is current does the application history run,
+starting with `application/001_application_schema.sql` and then the application-owned auth
+constraints and grants in `application/002_harden_owner_auth.sql`.
 
 Before adopting that history, run `bun run inspect:legacy` with the migration administrator URL.
 The read-only inspector accepts only the frozen v0.1.97 ledger and Better Auth table structure;

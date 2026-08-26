@@ -1,7 +1,11 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "pg";
-import { loadMigrationCatalog } from "./migrations/catalog.ts";
+import {
+  loadMigrationStreams,
+  MIGRATION_STREAM_ORDER,
+  releaseMigrationCatalog,
+} from "./migrations/catalog.ts";
 import { applyPendingMigrations, validateMigrationLedger } from "./migrations/ledger.ts";
 import { configureMigrationRolePasswords } from "./migrations/role-passwords.ts";
 import {
@@ -27,8 +31,8 @@ const prepareRequested = restorePhase === "prepare";
 const reconcileRequested = restorePhase === "reconcile";
 
 const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
-const migrations = await loadMigrationCatalog({ directory: migrationsDirectory });
-const targetMigrations = migrations;
+const migrationStreams = await loadMigrationStreams({ directory: migrationsDirectory });
+const targetMigrations = releaseMigrationCatalog(migrationStreams);
 
 const client = new Client({ connectionString: migrationUrl });
 await client.connect();
@@ -56,16 +60,21 @@ try {
       );
     }
 
-    await validateMigrationLedger({
-      client,
-      migrations,
-      baseline: "001_create_auth_schema.sql",
-    });
-    await applyPendingMigrations({
-      client,
-      migrations,
-      onApplied: (version) => console.info(`Applied ${version}`),
-    });
+    for (const stream of MIGRATION_STREAM_ORDER) {
+      const migrations = migrationStreams[stream];
+      await validateMigrationLedger({
+        client,
+        migrations,
+        baseline: stream === "auth" ? "001_create_auth_schema.sql" : "001_application_schema.sql",
+        stream,
+      });
+      await applyPendingMigrations({
+        client,
+        migrations,
+        stream,
+        onApplied: (version) => console.info(`Applied ${stream}/${version}`),
+      });
+    }
 
     if (reconcileRequested) {
       const reconciledOwnerships = await reconcilePendingRestoreOwnership(client, targetMigrations);

@@ -19,14 +19,19 @@ describeDatabase("owner passkey schema", () => {
   });
 
   test("installs Better Auth first and keeps every auth relation out of public", async () => {
-    const migrations = await admin.query<{ version: string }>(
-      "SELECT version FROM public.schema_migrations ORDER BY version",
+    const authMigrations = await admin.query<{ version: string }>(
+      "SELECT version FROM public.auth_schema_migrations ORDER BY version",
     );
-    expect(migrations.rows.map(({ version }) => version)).toEqual([
+    expect(authMigrations.rows.map(({ version }) => version)).toEqual([
       "001_create_auth_schema.sql",
       "002_better_auth.sql",
-      "003_application_schema.sql",
-      "004_harden_owner_auth.sql",
+    ]);
+    const applicationMigrations = await admin.query<{ version: string }>(
+      "SELECT version FROM public.schema_migrations ORDER BY version",
+    );
+    expect(applicationMigrations.rows.map(({ version }) => version)).toEqual([
+      "001_application_schema.sql",
+      "002_harden_owner_auth.sql",
     ]);
 
     const relations = await admin.query<{ schema_name: string; relation_name: string }>(

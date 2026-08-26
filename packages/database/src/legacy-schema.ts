@@ -67,9 +67,9 @@ export const BETTER_AUTH_TABLES = [
 // digest deliberately excludes row data and includes only the auth tables'
 // structural catalog surface and privileges.
 export const LEGACY_AUTH_STRUCTURE_FINGERPRINT =
-  "c7adf4a9d73e65b5eda4429600b183998052f757434e12d80c711e28e8332764";
+  "29d38187c89db8d38e7a10ef437448dfee09bc354d6b32351f5bf5a0897f52bf";
 export const ADOPTED_AUTH_STRUCTURE_FINGERPRINT =
-  "197fc54f51f98518a779c83becc308df070b2c361228636be9f7c07c0d2140e4";
+  "dc47de40f1ba445a6fac62c1d6a0b69eec0eee52694a97364068af64c444b1fe";
 
 type AuthStructureRow = {
   kind: string;
@@ -176,7 +176,7 @@ export function legacyStateFromInspection({
   };
 }
 
-export async function authStructureFingerprint(client: Client): Promise<string | null> {
+export async function authStructureCatalog(client: Client): Promise<AuthStructureRow[]> {
   const result = await client.query<AuthStructureRow>(
     `
     WITH auth_relations AS (
@@ -194,7 +194,10 @@ export async function authStructureFingerprint(client: Client): Promise<string |
       SELECT
         'schema'::text AS kind,
         pg_catalog.quote_ident(namespace.nspname) AS identity,
-        concat_ws('|',owner.rolname,COALESCE(namespace.nspacl::text,'')) AS definition
+        concat_ws('|',owner.rolname,COALESCE((
+          SELECT string_agg(entry::text,',' ORDER BY entry::text)
+          FROM unnest(namespace.nspacl) AS entry
+        ),'')) AS definition
       FROM pg_catalog.pg_namespace AS namespace
       JOIN pg_catalog.pg_roles AS owner ON owner.oid=namespace.nspowner
       WHERE namespace.oid IN (
@@ -208,7 +211,10 @@ export async function authStructureFingerprint(client: Client): Promise<string |
       SELECT
         'relation'::text AS kind,
         format('%I.%I',namespace.nspname,relation.relname) AS identity,
-        concat_ws('|',relation.relkind,owner.rolname,COALESCE(relation.relacl::text,''),
+        concat_ws('|',relation.relkind,owner.rolname,COALESCE((
+          SELECT string_agg(entry::text,',' ORDER BY entry::text)
+          FROM unnest(relation.relacl) AS entry
+        ),''),
           relation.relrowsecurity,relation.relforcerowsecurity) AS definition
       FROM auth_relations AS selected
       JOIN pg_catalog.pg_class AS relation ON relation.oid=selected.oid
@@ -220,10 +226,12 @@ export async function authStructureFingerprint(client: Client): Promise<string |
       SELECT
         'column',
         format('%I.%I.%I',namespace.nspname,relation.relname,attribute.attname),
-        concat_ws('|',attribute.attnum,
-          pg_catalog.format_type(attribute.atttypid,attribute.atttypmod),
+        concat_ws('|',pg_catalog.format_type(attribute.atttypid,attribute.atttypmod),
           attribute.attnotnull,COALESCE(pg_catalog.pg_get_expr(default_value.adbin,default_value.adrelid),''),
-          attribute.attidentity,attribute.attgenerated,COALESCE(attribute.attacl::text,''))
+          attribute.attidentity,attribute.attgenerated,COALESCE((
+            SELECT string_agg(entry::text,',' ORDER BY entry::text)
+            FROM unnest(attribute.attacl) AS entry
+          ),''))
       FROM auth_relations AS selected
       JOIN pg_catalog.pg_class AS relation ON relation.oid=selected.oid
       JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid=relation.relnamespace
@@ -285,10 +293,15 @@ export async function authStructureFingerprint(client: Client): Promise<string |
   `,
     [[...BETTER_AUTH_TABLES]],
   );
-  if (result.rows.length === 0) {
+  return result.rows;
+}
+
+export async function authStructureFingerprint(client: Client): Promise<string | null> {
+  const rows = await authStructureCatalog(client);
+  if (rows.length === 0) {
     return null;
   }
-  return createHash("sha256").update(JSON.stringify(result.rows)).digest("hex");
+  return createHash("sha256").update(JSON.stringify(rows)).digest("hex");
 }
 
 export async function inspectLegacySchema(client: Client): Promise<LegacySchemaInspection> {

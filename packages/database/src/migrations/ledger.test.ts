@@ -38,18 +38,19 @@ describe("transactional migration ledger", () => {
     await applyPendingMigrations({
       client,
       migrations: [migration],
+      stream: "auth",
       onApplied: (version) => applied.push(version),
     });
 
     expect(calls).toEqual([
       {
-        sql: "SELECT 1 FROM schema_migrations WHERE version = $1",
+        sql: "SELECT 1 FROM public.auth_schema_migrations WHERE version = $1",
         values: [migration.version],
       },
       { sql: "BEGIN" },
       { sql: migration.sql },
       {
-        sql: "INSERT INTO schema_migrations(version,checksum) VALUES ($1,$2)",
+        sql: "INSERT INTO public.auth_schema_migrations(version,checksum) VALUES ($1,$2)",
         values: [migration.version, migration.checksum],
       },
       { sql: "COMMIT" },
@@ -65,6 +66,7 @@ describe("transactional migration ledger", () => {
       applyPendingMigrations({
         client,
         migrations: [migration],
+        stream: "application",
         onApplied: (version) => applied.push(version),
       }),
     ).rejects.toThrow("migration failed");
