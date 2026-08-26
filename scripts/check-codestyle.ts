@@ -24,15 +24,15 @@ function gitFiles(args: string[]): string[] {
     .filter(Boolean);
 }
 
-const changedFiles = gitFiles(["diff", "--name-only", "--diff-filter=ACMR", "origin/main", "--"]);
+const addedFiles = gitFiles(["diff", "--name-only", "--diff-filter=A", "origin/main", "--"]);
 const untrackedFiles = gitFiles(["ls-files", "--others", "--exclude-standard"]);
-const files = [...new Set([...changedFiles, ...untrackedFiles])]
+const files = [...new Set([...addedFiles, ...untrackedFiles])]
   .filter((file) => supportedFile.test(file))
   .filter((file) => !ignoredFiles.has(file))
   .sort();
 
 if (files.length === 0) {
-  console.log("No changed files require Biome checks.");
+  console.log("No new files require Biome checks.");
   process.exit(0);
 }
 
