@@ -75,23 +75,25 @@ function restoredImportJob(): KnowledgeImportJob | null {
   }
 }
 
-function summarizeUploadedParts({
+export function summarizeUploadedParts({
   fileSize,
-  job,
+  partSize,
+  totalParts,
   uploaded,
 }: {
   fileSize: number;
-  job: KnowledgeImportJob;
+  partSize: number;
+  totalParts: number;
   uploaded: Set<number>;
 }) {
   const uploadedParts: number[] = [];
   let bytesCompleted = 0;
-  for (let partNumber = 0; partNumber < job.total_parts; partNumber += 1) {
+  for (let partNumber = 0; partNumber < totalParts; partNumber += 1) {
     if (!uploaded.has(partNumber)) {
       continue;
     }
     uploadedParts.push(partNumber);
-    bytesCompleted += Math.min(job.part_size, fileSize - partNumber * job.part_size);
+    bytesCompleted += Math.min(partSize, fileSize - partNumber * partSize);
   }
   return { bytesCompleted, uploadedParts };
 }
@@ -239,7 +241,12 @@ export function useKnowledgeImport() {
         const part = file.slice(start, Math.min(file.size, start + nextJob.part_size));
         await uploadKnowledgeBundlePart(nextJob.import_id, partNumber, part, await sha256(part));
         uploaded.add(partNumber);
-        const completed = summarizeUploadedParts({ fileSize: file.size, job: nextJob, uploaded });
+        const completed = summarizeUploadedParts({
+          fileSize: file.size,
+          partSize: nextJob.part_size,
+          totalParts: nextJob.total_parts,
+          uploaded,
+        });
         nextJob = {
           ...nextJob,
           parts_completed: uploaded.size,
