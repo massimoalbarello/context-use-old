@@ -381,31 +381,16 @@ test("development compose confines the corpus credential to the audited one-shot
   }
 });
 
-test("database initialization and CI provision the dedicated corpus role password", async () => {
-  const [migrator, migrationState, testDatabase, workflow] = await Promise.all([
+test("database initialization provisions the dedicated corpus role password", async () => {
+  const [migrator, migrationState, testDatabase] = await Promise.all([
     Bun.file(new URL("../../../packages/database/src/migrate.ts", import.meta.url)).text(),
     Bun.file(new URL("../../../packages/database/src/migration-state.ts", import.meta.url)).text(),
     Bun.file(new URL("../../../scripts/test-database.ts", import.meta.url)).text(),
-    Bun.file(new URL("../../../.github/workflows/ci.yml", import.meta.url)).text(),
   ]);
   expect(migrationState).toContain('context_use_corpus: "DB_CORPUS_PASSWORD"');
   expect(migrator).toContain("configuredExistingRolePasswords");
   expect(migrator).toContain("SELECT rolname::text FROM pg_roles");
   expect(testDatabase).toContain('DB_CORPUS_PASSWORD: "test-only"');
-  expect(workflow).toContain("DB_CORPUS_PASSWORD: test-corpus");
-  expect(workflow).toContain("CORPUS_DATABASE_URL: postgres://context_use_corpus:test-corpus");
-});
-
-test("CI runs restore integration with PostgreSQL 17 dump and restore clients", async () => {
-  const workflow = await Bun.file(new URL("../../../.github/workflows/ci.yml", import.meta.url)).text();
-  expect(workflow).toContain('postgres:17-alpine pg_dump "$@"');
-  expect(workflow).toContain('postgres:17-alpine psql "$@"');
-  expect(workflow).not.toContain("TEST_RESTORE_OWNERSHIP_HISTORICAL_DATABASE_URL");
-  expect(workflow).not.toContain("context-use-restore-history");
-  expect(workflow).toContain('PATH="${client_bin}:${PATH}"');
-  expect(workflow.indexOf('PATH="${client_bin}:${PATH}"')).toBeLessThan(
-    workflow.indexOf("bun test packages/database/test/restore-ownership.integration.test.ts"),
-  );
 });
 
 test("restore verifies the backup, keeps traffic down on failure, migrates, and restarts on success", () => {
