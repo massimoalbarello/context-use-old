@@ -13,7 +13,7 @@
     },
     "apps/cli": {
       "name": "@context-use/cli",
-      "version": "0.1.98",
+      "version": "0.1.99",
       "bin": {
         "context-use": "./src/main.ts",
       },
@@ -28,7 +28,7 @@
     },
     "apps/server": {
       "name": "@context-use/server",
-      "version": "0.1.98",
+      "version": "0.1.99",
       "dependencies": {
         "@aws-sdk/client-s3": "3.1101.0",
         "@better-auth/oauth-provider": "1.7.0-rc.1",
@@ -55,7 +55,7 @@
     },
     "apps/web": {
       "name": "@context-use/web",
-      "version": "0.1.98",
+      "version": "0.1.99",
       "dependencies": {
         "@better-auth/oauth-provider": "1.7.0-rc.1",
         "@better-auth/passkey": "1.7.0-rc.1",
@@ -76,7 +76,7 @@
     },
     "packages/database": {
       "name": "@context-use/database",
-      "version": "0.1.98",
+      "version": "0.1.99",
       "dependencies": {
         "@context-use/shared": "workspace:*",
         "entities": "7.0.1",
@@ -100,7 +100,7 @@
     },
     "packages/shared": {
       "name": "@context-use/shared",
-      "version": "0.1.98",
+      "version": "0.1.99",
       "dependencies": {
         "zod": "4.4.3",
       },
