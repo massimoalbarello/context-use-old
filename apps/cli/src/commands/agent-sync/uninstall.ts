@@ -9,7 +9,7 @@ import {
   revokedAgentSyncMetadata,
 } from "../../agent-sync/registration.ts";
 import { readInfrastructure } from "../../lifecycle.ts";
-import { createInternalNangoFetcher } from "../../nango-internal.ts";
+import { createInternalNangoApi } from "../../nango-internal.ts";
 import { getNangoConnection, putAgentSyncConnection } from "../../nango-integrations.ts";
 import { ensureNangoApiKeys } from "../../nango.ts";
 
@@ -30,7 +30,7 @@ export const command = defineCommand("agent-sync uninstall", {
     await ensureNangoApiKeys(config, data, compute.instance_id);
     const managerKey = "";
     const baseUrl = `https://${config.nangoHostname}`;
-    const nango = { fetcher: createInternalNangoFetcher(config, data, compute.instance_id, "integration-manager") };
+    const nango = createInternalNangoApi(config, data, compute.instance_id, "integration-manager");
     const connection = await getNangoConnection(
       baseUrl,
       managerKey,

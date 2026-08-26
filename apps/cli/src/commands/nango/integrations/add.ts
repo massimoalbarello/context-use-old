@@ -12,7 +12,7 @@ import {
   selectableIntegrations,
   usesStaticOAuth,
 } from "../../../nango-integration-selection.ts";
-import { createInternalNangoFetcher } from "../../../nango-internal.ts";
+import { createInternalNangoApi } from "../../../nango-internal.ts";
 import { getNangoIntegration, reconcileNangoIntegration, type OAuthClientCredentials } from "../../../nango-integrations.ts";
 import { ensureNangoApiKeys } from "../../../nango.ts";
 
@@ -71,7 +71,7 @@ export const command = defineCommand("nango integrations add", {
 
     const managerKey = "";
     const baseUrl = `https://${config.nangoHostname}`;
-    const nango = { fetcher: createInternalNangoFetcher(config, data, compute.instance_id, "integration-manager") };
+    const nango = createInternalNangoApi(config, data, compute.instance_id, "integration-manager");
 
     const existing = await getNangoIntegration(baseUrl, managerKey, integration.id, nango);
     if (existing && existing.provider !== integration.provider) {

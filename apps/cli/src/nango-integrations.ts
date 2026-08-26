@@ -46,6 +46,7 @@ type NangoScript = z.infer<typeof scriptSchema>;
 export type NangoApiDependencies = {
   fetcher?: typeof fetch;
   pause?: (milliseconds: number) => Promise<void>;
+  requestTimeoutMilliseconds?: number;
 };
 
 export type OAuthClientCredentials = {
@@ -100,6 +101,7 @@ async function requestJson(
 ): Promise<unknown> {
   const fetcher = dependencies.fetcher ?? fetch;
   const pause = dependencies.pause ?? ((milliseconds: number) => Bun.sleep(milliseconds));
+  const requestTimeoutMilliseconds = dependencies.requestTimeoutMilliseconds ?? 10_000;
   const method = init.method ?? "GET";
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
@@ -112,7 +114,7 @@ async function requestJson(
       response = await fetcher(apiUrl(baseUrl, path), {
         ...init,
         headers,
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.timeout(requestTimeoutMilliseconds),
       });
     } catch {
       if (!retry || attempt === 2) {

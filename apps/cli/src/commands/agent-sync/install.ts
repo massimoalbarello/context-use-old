@@ -23,7 +23,7 @@ import { ensureAgentSyncSourceConfig } from "../../agent-sync/source-config.ts";
 import { refreshNangoPipelineRuntime } from "../../deploy.ts";
 import { readInfrastructure } from "../../lifecycle.ts";
 import { deployManagedNangoFunction } from "../../nango-integration-deployment.ts";
-import { createInternalNangoFetcher } from "../../nango-internal.ts";
+import { createInternalNangoApi } from "../../nango-internal.ts";
 import {
   getNangoConnection,
   getNangoIntegrationWebhookUrl,
@@ -80,7 +80,7 @@ export const command = defineCommand("agent-sync install", {
     await refreshNangoPipelineRuntime(config, compute);
     const managerKey = "";
     const baseUrl = `https://${config.nangoHostname}`;
-    const nango = { fetcher: createInternalNangoFetcher(config, data, compute.instance_id, "integration-manager") };
+    const nango = createInternalNangoApi(config, data, compute.instance_id, "integration-manager");
     const integration = MANAGED_INTEGRATIONS.find((candidate) => candidate.id === AGENT_SYNC_INTEGRATION_ID);
     if (!integration) throw new Error("The agent-sync integration is missing from this Context Use release");
     await reconcileNangoIntegration(baseUrl, managerKey, integration, undefined, nango);

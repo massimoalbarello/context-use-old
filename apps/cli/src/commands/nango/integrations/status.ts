@@ -4,7 +4,7 @@ import { z } from "zod";
 import { MANAGED_FUNCTIONS } from "../../../../../../nango-integrations/catalog.ts";
 import { readInfrastructure } from "../../../lifecycle.ts";
 import { resolveSelectableIntegration, selectableIntegrations } from "../../../nango-integration-selection.ts";
-import { createInternalNangoFetcher } from "../../../nango-internal.ts";
+import { createInternalNangoApi } from "../../../nango-internal.ts";
 import { readManagedIntegrationStatus, type ManagedIntegrationStatus } from "../../../nango-integrations.ts";
 
 export function formatManagedIntegrationStatus(
@@ -51,7 +51,7 @@ export const command = defineCommand("nango integrations status", {
     if (!data || !compute) throw new Error("No active deployment");
     const managerKey = "";
     const baseUrl = `https://${config.nangoHostname}`;
-    const nango = { fetcher: createInternalNangoFetcher(config, data, compute.instance_id, "integration-manager") };
+    const nango = createInternalNangoApi(config, data, compute.instance_id, "integration-manager");
 
     for (const integration of integrations) {
       const managedFunction = MANAGED_FUNCTIONS.find((candidate) => candidate.integrationId === integration.id);
