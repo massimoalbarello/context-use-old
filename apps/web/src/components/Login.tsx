@@ -1,4 +1,5 @@
 import { type FormEvent, useEffect, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { authClient } from "../auth-client.ts";
 import {
   continuesOAuthAuthorization,
@@ -8,6 +9,7 @@ import {
 } from "../login-feedback.ts";
 
 export function Login() {
+  const navigate = useNavigate();
   const [entry] = useState(() => {
     const parameters = new URLSearchParams(window.location.hash.slice(1));
     return {
@@ -21,8 +23,10 @@ export function Login() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (window.location.hash) history.replaceState({}, "", `${window.location.pathname}${window.location.search}`);
-  }, []);
+    if (window.location.hash) {
+      void navigate({ hash: "", replace: true });
+    }
+  }, [navigate]);
 
   const signIn = async () => {
     setWorking(true);
