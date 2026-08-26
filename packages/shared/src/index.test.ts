@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  archiveSourceRecordSchema,
   archiveAssetSchema,
   archivePageSchema,
   createAssetSchema,
@@ -7,6 +8,7 @@ import {
   dashboardObjectCatalogPageSchema,
   dashboardObjectNeighborhoodSchema,
   dashboardObjectSummarySchema,
+  deleteSourceRecordSchema,
   PAGE_MARKDOWN_BODY_DESCRIPTION,
   updatePageSchema,
 } from "./index.ts";
@@ -49,6 +51,27 @@ describe("strict mutation schemas", () => {
     expect(archiveAssetSchema.safeParse({
       object_id: pageId,
       unexpected_field: true,
+    }).success).toBe(false);
+  });
+
+  test("source-record lifecycle binds destructive actions to an exact revision", () => {
+    expect(archiveSourceRecordSchema.safeParse({
+      object_id: pageId,
+      expected_revision_id: versionId,
+    }).success).toBe(true);
+    expect(deleteSourceRecordSchema.safeParse({
+      object_id: pageId,
+      expected_revision_id: versionId,
+      confirm: true,
+    }).success).toBe(true);
+    expect(deleteSourceRecordSchema.safeParse({
+      object_id: pageId,
+      expected_revision_id: versionId,
+    }).success).toBe(false);
+    expect(deleteSourceRecordSchema.safeParse({
+      object_id: pageId,
+      expected_revision_id: versionId,
+      confirm: false,
     }).success).toBe(false);
   });
 

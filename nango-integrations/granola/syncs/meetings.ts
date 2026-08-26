@@ -89,7 +89,28 @@ function parseTranscript(raw: string): string | undefined {
   const value = raw.trim();
   if (!value || /^no transcript\b/i.test(value)) return undefined;
   const wrapped = value.match(/<transcript(?:\s+[^>]*)?>([\s\S]*?)<\/transcript>/i)?.[1];
-  return decodeXml(stripCdata(wrapped ?? value)).trim() || undefined;
+  const decoded = decodeXml(stripCdata(wrapped ?? value)).trim();
+  const transcript = transcriptFromJson(decoded) ?? decoded;
+  return formatSpeakerTurns(transcript).trim() || undefined;
+}
+
+function transcriptFromJson(value: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (typeof parsed === "object" && parsed !== null && "transcript" in parsed) {
+      const transcript = (parsed as { transcript?: unknown }).transcript;
+      return typeof transcript === "string" ? transcript : undefined;
+    }
+  } catch {
+    // Older Granola responses are plain text or XML rather than JSON.
+  }
+  return undefined;
+}
+
+function formatSpeakerTurns(value: string): string {
+  return value
+    .replace(/\s+(?=(?:Me|Them):\s)/g, "\n\n")
+    .replace(/^(?:Me|Them):\s*/gm, (label) => `**${label.trim().slice(0, -1)}:** `);
 }
 
 function parseMeetings(xml: string): Array<ListedMeeting & { summary?: string }> {

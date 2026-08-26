@@ -270,6 +270,17 @@ describeApplication("HTTP credential and OAuth boundary", () => {
       const dashboard = await application!.handle(new Request(`http://localhost:3000${path}`));
       expect(dashboard.status).toBe(401);
     }
+    for (const [path, method, body] of [
+      ["/api/dashboard/source-records/11111111-1111-4111-8111-111111111111/archive", "POST", { expected_revision_id: null }],
+      ["/api/dashboard/source-records/11111111-1111-4111-8111-111111111111", "DELETE", { expected_revision_id: null, confirm: true }],
+    ] as const) {
+      const response = await application!.handle(new Request(`http://localhost:3000${path}`, {
+        method,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }));
+      expect(response.status).toBe(401);
+    }
     for (const headers of [{}, { authorization: "Bearer forged" }]) {
       const privateAsset = await application!.handle(new Request(
         "http://localhost:3000/api/dashboard/assets/11111111-1111-4111-8111-111111111111/content",

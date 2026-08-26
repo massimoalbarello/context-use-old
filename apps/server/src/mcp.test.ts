@@ -5,6 +5,7 @@ import type {
   KnowledgeSettingsRepository,
   KnowledgePageRepository,
   PrivateObjectCatalogRepository,
+  SourceRecordRepository,
 } from "@context-use/database";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createKnowledgeGuideReceipt } from "./mcp-guidance-receipt.ts";
@@ -32,7 +33,7 @@ async function mcpRequest(serverOrPromise: McpServer | Promise<McpServer>, body:
           name: string;
           title?: string;
           description?: string;
-          annotations?: { readOnlyHint?: boolean };
+          annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
           inputSchema?: { properties?: Record<string, { default?: unknown; description?: string }> };
           outputSchema?: { properties?: Record<string, { description?: string }> };
         }>;
@@ -58,6 +59,7 @@ function serverWith(
     objectLinks?: ObjectLinkRepository;
     documents?: McpObjectRepositories;
     sourceRecords?: SourceRecordReader;
+    recordObjects?: SourceRecordRepository;
   } = {},
 ) {
   const knowledgeSettings = options.knowledgeSettings ?? {
@@ -84,7 +86,7 @@ function serverWith(
   return createMcpServer(
     options.context ?? DEFAULT_MCP_CONTEXT,
     options.sourceRecords,
-    undefined,
+    options.recordObjects,
     knowledgeSettings,
     objectLinks,
     documents,
@@ -123,6 +125,56 @@ const rootGuidanceReceipt = createKnowledgeGuideReceipt({
 
 
 describe("MCP knowledge tools", () => {
+  test("archives an exact source-record revision without exposing permanent deletion", async () => {
+    const objectId = "77777777-7777-4777-8777-777777777777";
+    const revisionId = "88888888-8888-4888-8888-888888888888";
+    const calls: unknown[] = [];
+    const recordObjects = {
+      async archive(id: string, revision: string | null) {
+        calls.push({ action: "archive", id, revision });
+        return "archived" as const;
+      },
+      async metadata(id: string) {
+        return {
+          object_id: id,
+          current_revision_id: revisionId,
+          deleted_at: new Date("2026-08-26T10:00:00.000Z"),
+          reference: `context-use://object/${id}`,
+        };
+      },
+    } as unknown as SourceRecordRepository;
+
+    const listed = await mcpRequest(serverWith(undefined, { recordObjects }), {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+      params: {},
+    });
+    expect(listed.result?.tools?.find((candidate) => candidate.name === "archive_record")
+      ?.annotations?.destructiveHint).toBe(true);
+    expect(listed.result?.tools?.some((candidate) => candidate.name === "delete_record"))
+      .toBe(false);
+
+    const archived = await mcpRequest(serverWith(undefined, { recordObjects }), {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: {
+        name: "archive_record",
+        arguments: { object_id: objectId, expected_revision_id: revisionId },
+      },
+    });
+    expect(archived.result?.structuredContent).toMatchObject({
+      object_id: objectId,
+      current_revision_id: revisionId,
+      reference: `context-use://object/${objectId}`,
+    });
+
+    expect(calls).toEqual([
+      { action: "archive", id: objectId, revision: revisionId },
+    ]);
+  });
+
   test("advertises bounded source reads as a non-read-only sync", async () => {
     const calls: unknown[] = [];
     const sourceRecords: SourceRecordReader = {

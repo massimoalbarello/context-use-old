@@ -45,6 +45,13 @@ export type SourceRecord = SourceRecordMetadata & {
   body_markdown: string | null;
 };
 
+export type SourceRecordArchiveResult = "archived" | "not_found" | "revision_conflict";
+export type SourceRecordDeleteResult =
+  | "deleted"
+  | "not_archived"
+  | "not_found"
+  | "revision_conflict";
+
 export interface SourceRecordWriter {
   write(record: SourceRecordWrite): Promise<SourceRecordIdentity>;
 }
@@ -57,6 +64,7 @@ type CurrentSourceRecord = {
   source_updated_at: Date;
   deleted_at: Date | null;
   authority: "source" | "knowledge";
+  connection_instance_id: string | null;
   connection_id: string;
 };
 
@@ -64,14 +72,17 @@ const CURRENT_SOURCE_RECORD = `
   SELECT source.document_id,source.current_revision_id,
     revision.revision_number,revision.body_content_hash,
     source.source_updated_at,source.deleted_at,document.authority,
-    source.connection_id
+    source.connection_instance_id::text,source.connection_id
   FROM source_records source
   JOIN hypermedia_documents document ON document.id=source.document_id
   LEFT JOIN hypermedia_document_revisions revision
     ON revision.id=source.current_revision_id
    AND revision.document_id=source.document_id
-  WHERE source.integration=$1 AND source.connection_instance_id=$2
-    AND source.model=$3 AND source.source_record_id=$4
+  WHERE source.integration=$1 AND source.model=$2
+    AND source.source_record_id=$3
+  ORDER BY source.connection_instance_id=$4 DESC,
+    document.created_at,source.document_id
+  LIMIT 1
 `;
 
 const SOURCE_RECORD_FROM = `
@@ -165,17 +176,17 @@ function assertSourceAuthority(record: CurrentSourceRecord): void {
   }
 }
 
-function identity(record: SourceRecordWrite): [string, number, string, string] {
+function identity(record: SourceRecordWrite): [string, string, string, number] {
   return [
     record.integration,
-    record.connectionInstanceId,
     record.model,
     record.sourceRecordId,
+    record.connectionInstanceId,
   ];
 }
 
 function lockIdentity(record: SourceRecordWrite): string {
-  return identity(record).map((value) => {
+  return [record.integration, record.model, record.sourceRecordId].map((value) => {
     const encoded = String(value);
     return `${typeof value}:${encoded.length}:${encoded}`;
   }).join("|");
@@ -296,6 +307,28 @@ export class SourceRecordRepository implements SourceRecordWriter {
     return result.rows.map(withReference);
   }
 
+  async archive(
+    documentId: string,
+    expectedRevisionId: string | null,
+  ): Promise<SourceRecordArchiveResult> {
+    const result = await this.pool.query<{ result: SourceRecordArchiveResult }>(
+      "SELECT archive_source_record($1,$2) AS result",
+      [documentId, expectedRevisionId],
+    );
+    return result.rows[0]?.result ?? "not_found";
+  }
+
+  async delete(
+    documentId: string,
+    expectedRevisionId: string | null,
+  ): Promise<SourceRecordDeleteResult> {
+    const result = await this.pool.query<{ result: SourceRecordDeleteResult }>(
+      "SELECT delete_archived_source_record($1,$2) AS result",
+      [documentId, expectedRevisionId],
+    );
+    return result.rows[0]?.result ?? "not_found";
+  }
+
   async write(record: SourceRecordWrite): Promise<SourceRecordIdentity> {
     if (!Number.isSafeInteger(record.connectionInstanceId) || record.connectionInstanceId < 1) {
       throw new Error("Nango connection instance ID must be a positive safe integer");
@@ -318,6 +351,7 @@ export class SourceRecordRepository implements SourceRecordWriter {
       assertSourceAuthority(initial.rows[0]);
       if (
         isSuperseded(record, initial.rows[0])
+        && initial.rows[0].connection_instance_id === String(record.connectionInstanceId)
         && initial.rows[0].connection_id === record.connectionId
       ) {
         return sourceRecordIdentity(initial.rows[0]);
@@ -341,13 +375,18 @@ export class SourceRecordRepository implements SourceRecordWriter {
       const current = selected.rows[0];
       if (current) {
         assertSourceAuthority(current);
+        if (
+          current.connection_instance_id !== String(record.connectionInstanceId)
+          || current.connection_id !== record.connectionId
+        ) {
+          await client.query(
+            `UPDATE source_records
+             SET connection_instance_id=$2,connection_id=$3
+             WHERE document_id=$1`,
+            [current.document_id, record.connectionInstanceId, record.connectionId],
+          );
+        }
         if (isSuperseded(record, current)) {
-          if (current.connection_id !== record.connectionId) {
-            await client.query(
-              "UPDATE source_records SET connection_id=$2 WHERE document_id=$1",
-              [current.document_id, record.connectionId],
-            );
-          }
           return sourceRecordIdentity(current);
         }
       }

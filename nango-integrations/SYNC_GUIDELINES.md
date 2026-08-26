@@ -38,6 +38,13 @@ Do not add connection-specific root fields such as repository, channel, message,
 pull-request, or provider IDs. Put source context, provider completeness warnings, and other useful
 details in `body`. The root `id` is the necessary exception because Nango requires stable identity.
 
+Treat the integration, model name, and root `id` as a durable object identity; connection IDs are
+mutable transport metadata. Formatting, hydration, sync-version changes, and connection recreation
+must keep the model and provider-native `id` unchanged so Context Use creates a new revision on the
+existing object. Never derive `id` from a title, body, timestamp, connection, or sync version.
+Changing either the model or the ID scheme requires an explicit data migration because it otherwise
+represents a different source object.
+
 Internal state or checkpoint models that are not sent to the downstream pipeline may use a
 sync-specific schema.
 

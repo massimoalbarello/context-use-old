@@ -107,7 +107,8 @@ describeDatabase("object-backed source records", () => {
       const changed = await records.write({
         ...base,
         action: "updated",
-        sourceUpdatedAt: "2026-08-20T10:00:00.000Z",
+        // A sync-code-only formatting change keeps the provider timestamp.
+        sourceUpdatedAt: "2026-08-20T09:30:00.000Z",
         markdown: "# Issue 42\n\nClosed.\n",
       });
       expect(changed.object_id).toBe(added.object_id);
@@ -124,7 +125,7 @@ describeDatabase("object-backed source records", () => {
       );
       expect(source.rowCount).toBe(1);
       expect(source.rows[0]?.deleted_at).toBeNull();
-      expect(source.rows[0]?.source_updated_at.toISOString()).toBe("2026-08-20T10:00:00.000Z");
+      expect(source.rows[0]?.source_updated_at.toISOString()).toBe("2026-08-20T09:30:00.000Z");
       expect((await pool.query(
         "SELECT 1 FROM hypermedia_document_revisions WHERE document_id=$1",
         [source.rows[0]!.document_id],
@@ -134,7 +135,7 @@ describeDatabase("object-backed source records", () => {
       const superseded = await records.write({
         ...base,
         action: "updated",
-        sourceUpdatedAt: "2026-08-20T09:30:00.000Z",
+        sourceUpdatedAt: "2026-08-20T09:00:00.000Z",
         markdown: "# Issue 42\n\nStale re-open.\n",
       });
       expect(superseded).toEqual(changed);
@@ -236,7 +237,60 @@ describeDatabase("object-backed source records", () => {
     }
   });
 
-  test("isolates a re-created Nango connection from legacy and prior stream identities", async () => {
+  test("archives an exact source revision before permanently deleting its object", async () => {
+    const store = new MemoryMarkdownStore();
+    const records = new SourceRecordRepository(pool, store);
+    const created = await records.write({
+      integration: "granola",
+      connectionInstanceId: 801,
+      connectionId: `lifecycle-${crypto.randomUUID()}`,
+      model: "GranolaMeeting",
+      sourceRecordId: `meeting-${crypto.randomUUID()}`,
+      action: "added",
+      sourceCreatedAt: "2026-08-26T08:00:00.000Z",
+      sourceUpdatedAt: "2026-08-26T09:00:00.000Z",
+      markdown: "# Lifecycle meeting\n\nRetained source evidence.\n",
+    });
+    expect(created.current_revision_id).not.toBeNull();
+
+    expect(await records.archive(created.object_id, crypto.randomUUID()))
+      .toBe("revision_conflict");
+    expect(await records.delete(created.object_id, created.current_revision_id))
+      .toBe("not_archived");
+    expect((await records.metadata(created.object_id))?.deleted_at).toBeNull();
+
+    expect(await records.archive(created.object_id, created.current_revision_id))
+      .toBe("archived");
+    expect(await records.archive(created.object_id, created.current_revision_id))
+      .toBe("archived");
+    expect((await records.metadata(created.object_id))?.deleted_at).not.toBeNull();
+    expect((await pool.query(
+      "SELECT 1 FROM source_record_search_chunks WHERE document_id=$1",
+      [created.object_id],
+    )).rowCount).toBe(0);
+    expect((await pool.query<{ empty: boolean }>(
+      "SELECT search_vector=''::tsvector AS empty FROM source_records WHERE document_id=$1",
+      [created.object_id],
+    )).rows[0]?.empty).toBe(true);
+
+    expect(await records.delete(created.object_id, crypto.randomUUID()))
+      .toBe("revision_conflict");
+    expect(await records.delete(created.object_id, created.current_revision_id))
+      .toBe("deleted");
+    expect(await records.metadata(created.object_id)).toBeNull();
+    expect((await pool.query(
+      "SELECT 1 FROM hypermedia_documents WHERE id=$1",
+      [created.object_id],
+    )).rowCount).toBe(0);
+    expect((await pool.query(
+      "SELECT 1 FROM hypermedia_document_revisions WHERE document_id=$1",
+      [created.object_id],
+    )).rowCount).toBe(0);
+    expect(await records.delete(created.object_id, created.current_revision_id))
+      .toBe("not_found");
+  });
+
+  test("adopts a legacy record and preserves it across a re-created Nango connection", async () => {
     const connectionId = `reused-connection-${crypto.randomUUID()}`;
     const sourceRecordId = `reused-record-${crypto.randomUUID()}`;
     const legacyDocumentId = crypto.randomUUID();
@@ -270,29 +324,32 @@ describeDatabase("object-backed source records", () => {
         sourceUpdatedAt: "2026-08-20T10:00:00.000Z",
         markdown: "# Reused issue\n\nOriginal connection.\n",
       });
+      expect(original.object_id).toBe(legacyDocumentId);
+      expect(await records.metadata(original.object_id)).toMatchObject({
+        connection_instance_id: 701,
+        connection_id: connectionId,
+      });
+
+      const replacementConnectionId = `${connectionId}-replacement`;
       const reconnected = await records.write({
         ...base,
         connectionInstanceId: 702,
+        connectionId: replacementConnectionId,
         action: "added",
         sourceUpdatedAt: "2026-08-20T10:00:00.000Z",
         markdown: "# Reused issue\n\nRe-created connection.\n",
       });
 
-      expect(reconnected.object_id).not.toBe(original.object_id);
-      expect(original.object_id).not.toBe(legacyDocumentId);
-      expect(reconnected.object_id).not.toBe(legacyDocumentId);
-      expect(await records.metadata(original.object_id)).toMatchObject({
-        connection_instance_id: 701,
-        connection_id: connectionId,
-      });
+      expect(reconnected.object_id).toBe(original.object_id);
       expect(await records.metadata(reconnected.object_id)).toMatchObject({
         connection_instance_id: 702,
-        connection_id: connectionId,
+        connection_id: replacementConnectionId,
       });
 
       await records.write({
         ...base,
         connectionInstanceId: 702,
+        connectionId: replacementConnectionId,
         action: "deleted",
         sourceUpdatedAt: "2026-08-20T11:00:00.000Z",
         markdown: null,
@@ -310,9 +367,7 @@ describeDatabase("object-backed source records", () => {
         [base.integration, base.model, sourceRecordId],
       );
       expect(streams.rows).toEqual([
-        { document_id: legacyDocumentId, connection_instance_id: null, deleted: false },
-        { document_id: original.object_id, connection_instance_id: "701", deleted: false },
-        { document_id: reconnected.object_id, connection_instance_id: "702", deleted: true },
+        { document_id: legacyDocumentId, connection_instance_id: "702", deleted: true },
       ]);
     } finally {
       await pool.query(
