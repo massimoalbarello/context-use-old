@@ -1,6 +1,6 @@
 {
   "name": "@context-use/database",
-  "version": "0.1.96",
+  "version": "0.1.97",
   "private": true,
   "type": "module",
   "exports": {
