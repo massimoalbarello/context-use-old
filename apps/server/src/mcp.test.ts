@@ -200,6 +200,11 @@ describe("MCP knowledge tools", () => {
     const pages = documentsWithGuidance({
       async get(id: string) { return id === documentId ? document : null; },
       async create(input: unknown) { mutations.push(input); return document; },
+      async update(id: string, input: unknown) {
+        if (id !== documentId) return null;
+        mutations.push(input);
+        return { ...document, revision_number: 2, entity_type: "thing" as const };
+      },
       async changesSince() {
         return {
           changes: [{
@@ -280,6 +285,8 @@ describe("MCP knowledge tools", () => {
       ?.inputSchema?.properties).toHaveProperty("entity_types");
     expect(tools.result?.tools?.find((tool) => tool.name === "create_page")
       ?.inputSchema?.properties).toHaveProperty("entity_type");
+    expect(tools.result?.tools?.find((tool) => tool.name === "update_page")
+      ?.inputSchema?.properties).toHaveProperty("entity_type");
 
     const changes = await mcpRequest(serverWith(pages, { documents }), {
       jsonrpc: "2.0",
@@ -351,7 +358,35 @@ describe("MCP knowledge tools", () => {
       entity_type: "person",
       reference: `context-use://object/${documentId}`,
     });
-    expect(mutations).toEqual([expect.objectContaining({ entity_type: "person" })]);
+    const updated = await mcpRequest(serverWith(pages, { documents }), {
+      jsonrpc: "2.0",
+      id: 5,
+      method: "tools/call",
+      params: {
+        name: "update_page",
+        arguments: {
+          object_id: documentId,
+          title: document.title,
+          summary: document.summary,
+          body_markdown: document.body_markdown,
+          entity_type: "thing",
+          commit_message: "Change canonical entity type",
+          expected_revision_number: 1,
+          knowledge_session_receipt: rootGuidanceReceipt,
+        },
+      },
+    });
+    expect(JSON.parse(updated.result?.content?.[0]?.text ?? "null")).toMatchObject({
+      object_id: documentId,
+      current_revision_id: revisionId,
+      revision_number: 2,
+      entity_type: "thing",
+      reference: `context-use://object/${documentId}`,
+    });
+    expect(mutations).toEqual([
+      expect.objectContaining({ entity_type: "person" }),
+      expect.objectContaining({ entity_type: "thing" }),
+    ]);
   });
 
   test("reads a fixed, deduplicated knowledge-change window with harness-owned cursors", async () => {
