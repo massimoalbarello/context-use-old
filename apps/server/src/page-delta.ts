@@ -1,15 +1,17 @@
 import { diffLines, type Change } from "diff";
+import type { PageEntityType } from "@context-use/shared";
 
 export type DocumentRevisionForDelta = {
   title: string;
   summary: string;
+  entity_type: PageEntityType | null;
   body_markdown: string;
 };
 
 export type DocumentMetadataChange = {
-  field: "title" | "summary";
+  field: "title" | "summary" | "entity_type";
   before: string | null;
-  after: string;
+  after: string | null;
 };
 
 export type MarkdownChange = {
@@ -63,7 +65,7 @@ export async function pageDelta(
   current: DocumentRevisionForDelta,
 ): Promise<{ metadata_changes: DocumentMetadataChange[]; markdown_changes: MarkdownChange[] }> {
   const metadataChanges: DocumentMetadataChange[] = [];
-  for (const field of ["title", "summary"] as const) {
+  for (const field of ["title", "summary", "entity_type"] as const) {
     const before = previous?.[field] ?? null;
     if (before !== current[field]) {
       metadataChanges.push({ field, before, after: current[field] });

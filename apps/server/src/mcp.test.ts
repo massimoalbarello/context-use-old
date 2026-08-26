@@ -170,6 +170,7 @@ describe("MCP knowledge tools", () => {
       current_revision_id: revisionId,
       public_id: null,
       revision_number: 1,
+      entity_type: "person" as const,
       title: "Stable document",
       summary: "An identity-based knowledge document.",
       archived_at: null,
@@ -186,6 +187,7 @@ describe("MCP knowledge tools", () => {
       representation: "markdown",
       lifecycle: "active",
       current_revision_id: revisionId,
+      entity_type: "person" as const,
       title: document.title,
       summary: document.summary,
       filename: null,
@@ -193,9 +195,11 @@ describe("MCP knowledge tools", () => {
       operational_roles: [],
       updated_at: document.updated_at,
     };
+    const mutations: unknown[] = [];
+    const searches: unknown[] = [];
     const pages = documentsWithGuidance({
       async get(id: string) { return id === documentId ? document : null; },
-      async create() { return document; },
+      async create(input: unknown) { mutations.push(input); return document; },
       async changesSince() {
         return {
           changes: [{
@@ -221,7 +225,8 @@ describe("MCP knowledge tools", () => {
       assets: {} as AssetRepository,
       objectCatalog: {
         async get(id: string) { return id === documentId ? catalogItem : null; },
-        async search() {
+        async search(query: string, options: unknown) {
+          searches.push({ query, options });
           return { objects: [catalogItem], next_cursor: null, has_more: false };
         },
       } as unknown as PrivateObjectCatalogRepository,
@@ -271,6 +276,10 @@ describe("MCP knowledge tools", () => {
       expect(tools.result?.tools?.find((tool) => tool.name === name)?.inputSchema?.properties)
         .not.toHaveProperty("path");
     }
+    expect(tools.result?.tools?.find((tool) => tool.name === "search_objects")
+      ?.inputSchema?.properties).toHaveProperty("entity_types");
+    expect(tools.result?.tools?.find((tool) => tool.name === "create_page")
+      ?.inputSchema?.properties).toHaveProperty("entity_type");
 
     const changes = await mcpRequest(serverWith(pages, { documents }), {
       jsonrpc: "2.0",
@@ -292,7 +301,10 @@ describe("MCP knowledge tools", () => {
       jsonrpc: "2.0",
       id: 3,
       method: "tools/call",
-      params: { name: "search_objects", arguments: { query: "stable" } },
+      params: {
+        name: "search_objects",
+        arguments: { query: "stable", entity_types: ["person"] },
+      },
     });
     const searchResult = JSON.parse(searched.result?.content?.[0]?.text ?? "null");
     expect(searchResult.objects[0]).toMatchObject({
@@ -300,7 +312,23 @@ describe("MCP knowledge tools", () => {
       reference: `context-use://object/${documentId}`,
       title: "Stable document",
       summary: "An identity-based knowledge document.",
+      entity_type: "person",
     });
+    expect(searches).toEqual([{
+      query: "stable",
+      options: { entity_types: ["person"], include_retired: false, limit: 30 },
+    }]);
+    const invalidEntitySearch = await mcpRequest(serverWith(pages, { documents }), {
+      jsonrpc: "2.0",
+      id: 31,
+      method: "tools/call",
+      params: {
+        name: "search_objects",
+        arguments: { query: "stable", object_kind: "record", entity_types: ["person"] },
+      },
+    });
+    expect(invalidEntitySearch.result?.isError).toBe(true);
+    expect(searches).toHaveLength(1);
     const created = await mcpRequest(serverWith(pages, { documents }), {
       jsonrpc: "2.0",
       id: 4,
@@ -311,6 +339,7 @@ describe("MCP knowledge tools", () => {
           title: document.title,
           summary: document.summary,
           body_markdown: document.body_markdown,
+          entity_type: "person",
           commit_message: "Create stable document",
           knowledge_session_receipt: rootGuidanceReceipt,
         },
@@ -319,8 +348,10 @@ describe("MCP knowledge tools", () => {
     expect(JSON.parse(created.result?.content?.[0]?.text ?? "null")).toMatchObject({
       object_id: documentId,
       current_revision_id: revisionId,
+      entity_type: "person",
       reference: `context-use://object/${documentId}`,
     });
+    expect(mutations).toEqual([expect.objectContaining({ entity_type: "person" })]);
   });
 
   test("reads a fixed, deduplicated knowledge-change window with harness-owned cursors", async () => {
@@ -381,6 +412,7 @@ describe("MCP knowledge tools", () => {
             path: "projects/context-use/timeline",
             title: "Context Use timeline",
             summary: "Important project developments.",
+            entity_type: null,
             body_markdown: [
               "# Timeline\n",
               "\n",
@@ -397,6 +429,7 @@ describe("MCP knowledge tools", () => {
             path: "projects/context-use/timeline",
             title: "Context Use timeline",
             summary: "Important project developments.",
+            entity_type: null,
             body_markdown: [
               "# Timeline\n",
               "\n",
@@ -463,6 +496,7 @@ describe("MCP knowledge tools", () => {
           path: "people/ada/intro",
           title: "Ada",
           summary: "A collaborator.",
+          entity_type: "person",
           body_markdown: "# Ada\n\nStarted a new role.\n",
         } : null;
       },
@@ -476,6 +510,7 @@ describe("MCP knowledge tools", () => {
           revision_number: 4,
           title: "Ada",
           summary: "A collaborator.",
+          entity_type: "person",
           body_markdown: "# Ada\n\nConsidered a new role.\n",
         };
       },

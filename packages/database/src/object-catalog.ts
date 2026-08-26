@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
+import type { PageEntityType } from "@context-use/shared";
 
 export type PrivateObjectKind = "page" | "record" | "asset";
 export type PrivateObjectLifecycle = "active" | "archived" | "deleted";
@@ -15,6 +16,7 @@ export type PrivateObjectCatalogFilters = {
   object_kind?: PrivateObjectKind;
   lifecycle?: PrivateObjectLifecycle;
   catalog_types?: PrivateObjectCatalogType[];
+  entity_types?: PageEntityType[];
   integration?: string;
   operational_role?: PrivateObjectOperationalRole;
 };
@@ -27,6 +29,7 @@ export type PrivateObjectCatalogItem = {
   lifecycle: PrivateObjectLifecycle;
   current_revision_id: string | null;
   current_revision_number: number | null;
+  entity_type: PageEntityType | null;
   title: string | null;
   summary: string | null;
   filename: string | null;
@@ -205,6 +208,7 @@ function searchFingerprint(
     object_kind: options.object_kind ?? null,
     lifecycle: options.lifecycle ?? null,
     catalog_types: options.catalog_types?.slice().sort() ?? null,
+    entity_types: options.entity_types?.slice().sort() ?? null,
     integration: options.integration ?? null,
     operational_role: options.operational_role ?? null,
   })).digest("hex");
@@ -226,6 +230,18 @@ function databaseCatalogTypes(
   return types?.length
     ? types.map((type) => type === "page" ? "knowledge" : type)
     : null;
+}
+
+function assertPageEntityFilters(
+  options: PrivateObjectCatalogFilters,
+): void {
+  if (!options.entity_types?.length) return;
+  if (options.object_kind && options.object_kind !== "page") {
+    throw new Error("Entity type filters apply only to pages");
+  }
+  if (options.catalog_types?.some((type) => type === "record" || type === "asset")) {
+    throw new Error("Entity type filters cannot be combined with record or asset filters");
+  }
 }
 
 function decodeListCursor(
@@ -337,6 +353,7 @@ export class PrivateObjectCatalogRepository {
     limit?: number;
     include_retired?: boolean;
   } = {}): Promise<PrivateObjectCatalogPage> {
+    assertPageEntityFilters(options);
     const limit = boundedLimit(options.limit, 50, 200);
     const fingerprint = listFingerprint(options);
     const cursor = decodeListCursor(options.cursor, fingerprint);
@@ -377,14 +394,15 @@ export class PrivateObjectCatalogRepository {
          AND ($8::text IS NULL OR integration=$8)
          AND ($9::private_document_operational_role IS NULL
            OR $9::private_document_operational_role::text=ANY(operational_roles))
+         AND ($11::knowledge_entity_type[] IS NULL OR entity_type=ANY($11))
        ORDER BY updated_at DESC,document_id::text COLLATE "C"
-       LIMIT $11`,
+       LIMIT $12`,
       [cursor?.updated_at_epoch_micros ?? null, cursor?.document_id ?? null,
         options.include_retired ?? false,
         options.authority ?? null, options.representation ?? null,
         databaseKind(options.object_kind), options.lifecycle ?? null,
         options.integration ?? null, options.operational_role ?? null,
-        databaseCatalogTypes(options.catalog_types), limit + 1],
+        databaseCatalogTypes(options.catalog_types), options.entity_types ?? null, limit + 1],
     );
     const rows = result.rows.slice(0, limit);
     const objects = rows.map(({ cursor_updated_at_epoch_micros: _cursor, ...object }) => (
@@ -404,20 +422,21 @@ export class PrivateObjectCatalogRepository {
     limit?: number;
     include_retired?: boolean;
   } = {}): Promise<PrivateObjectCatalogPage> {
+    assertPageEntityFilters(options);
     if (!query.trim()) return { objects: [], next_cursor: null, has_more: false };
     const limit = boundedLimit(options.limit, 30, 100);
     const fingerprint = searchFingerprint(query, options);
     const cursor = decodeSearchCursor(options.cursor, fingerprint);
     const result = await this.pool.query<PrivateObjectSearchRow>(
       `SELECT * FROM search_private_document_catalog(
-         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14
        )`,
       [query.trim(), cursor?.rank ?? null, cursor?.updated_at_epoch_micros ?? null,
         cursor?.document_id ?? null, options.include_retired ?? false, limit + 1,
         options.authority ?? null, options.representation ?? null,
         databaseKind(options.object_kind), options.lifecycle ?? null,
         options.integration ?? null, options.operational_role ?? null,
-        databaseCatalogTypes(options.catalog_types)],
+        databaseCatalogTypes(options.catalog_types), options.entity_types ?? null],
     );
     const rows = result.rows.slice(0, limit);
     const objects = rows.map((row) => normalizeCatalogItem(row.document));

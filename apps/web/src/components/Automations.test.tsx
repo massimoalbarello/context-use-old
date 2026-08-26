@@ -11,6 +11,7 @@ const document: DashboardObjectSummary = {
   representation: "markdown",
   lifecycle: "active",
   current_revision_id: "22222222-2222-4222-8222-222222222222",
+  entity_type: null,
   title: "Activity distiller",
   summary: "Reconcile connected activity into linked knowledge.",
   filename: null,

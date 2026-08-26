@@ -6,11 +6,20 @@ import type {
   PublicationPreview,
   RepublicationReview as Review,
 } from "../types.ts";
+import { entityTypeLabel } from "./EntityType.tsx";
 
 const FIELD_LABELS = {
   title: "Title",
   summary: "Summary",
+  entity_type: "Entity type",
 } as const;
+
+function metadataValue(field: keyof typeof FIELD_LABELS, value: string | null): string {
+  if (value === null) return "—";
+  return field === "entity_type"
+    ? entityTypeLabel(value as NonNullable<KnowledgePage["entity_type"]>)
+    : value;
+}
 
 function versionAuthor(version: Review["queued_versions"][number]): string {
   if (version.actor_kind === "mcp") {
@@ -48,8 +57,8 @@ export function RepublicationReview({ review, candidateVersionNumber }: {
       : <>
         {review.metadata_changes.map((change) => <div className="republication-metadata" key={change.field}>
           <span>{FIELD_LABELS[change.field]}</span>
-          <del>{change.before ?? "—"}</del>
-          <ins>{change.after}</ins>
+          <del>{metadataValue(change.field, change.before)}</del>
+          <ins>{metadataValue(change.field, change.after)}</ins>
         </div>)}
         {review.markdown_changes.map((change, index) => <div className="republication-hunk" key={index}>
           {change.before && <del>{change.before}</del>}

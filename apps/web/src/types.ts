@@ -1,3 +1,5 @@
+import type { PageEntityType } from "@context-use/shared";
+
 export type KnowledgePage = {
   id: string;
   current_version_id: string;
@@ -6,6 +8,7 @@ export type KnowledgePage = {
   public_id: string | null;
   archived_at: string | null;
   version_number: number;
+  entity_type: PageEntityType | null;
   title: string;
   summary: string;
   body_markdown: string;
@@ -30,6 +33,7 @@ export type Version = {
   id: string;
   page_id: string;
   version_number: number;
+  entity_type: PageEntityType | null;
   title: string;
   summary: string;
   body_markdown?: string;
@@ -51,9 +55,9 @@ export type PageVersionDiff = {
     to_version: number;
   };
   metadata_changes: Array<{
-    field: "title" | "summary";
+    field: "title" | "summary" | "entity_type";
     before: string | null;
-    after: string;
+    after: string | null;
   }>;
   markdown_changes: Array<{
     before: string;
@@ -105,7 +109,11 @@ export type AssetStatus = {
  */
 export type RepublicationReview = {
   published_version_number: number;
-  metadata_changes: Array<{ field: "title" | "summary"; before: string | null; after: string }>;
+  metadata_changes: Array<{
+    field: "title" | "summary" | "entity_type";
+    before: string | null;
+    after: string | null;
+  }>;
   markdown_changes: Array<{ before: string; after: string }>;
   queued_versions: Array<{
     version_number: number;

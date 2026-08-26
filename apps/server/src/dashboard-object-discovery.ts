@@ -8,6 +8,7 @@ import {
   dashboardObjectCatalogPageSchema,
   dashboardObjectNeighborhoodSchema,
   dashboardObjectSummarySchema,
+  pageEntityTypeSchema,
   type DashboardObjectCatalogPage,
   type DashboardObjectNeighborhood,
   type DashboardObjectSummary,
@@ -44,6 +45,16 @@ const OptionalCatalogTypes = z.preprocess(
     .refine((entries) => new Set(entries).size === entries.length, "Types must be unique")
     .optional(),
 );
+const OptionalEntityTypes = z.preprocess(
+  (value) => typeof value === "string" && value.trim()
+    ? value.split(",").map((entry) => entry.trim())
+    : undefined,
+  z.array(pageEntityTypeSchema)
+    .min(1)
+    .max(5)
+    .refine((entries) => new Set(entries).size === entries.length, "Entity types must be unique")
+    .optional(),
+);
 
 const catalogQuerySchema = z.object({
   q: OptionalQuery,
@@ -54,7 +65,24 @@ const catalogQuerySchema = z.object({
   kind: z.enum(["page", "record", "asset"]).optional(),
   lifecycle: z.enum(["active", "archived", "deleted"]).optional(),
   types: OptionalCatalogTypes,
-}).strict();
+  entities: OptionalEntityTypes,
+}).strict().superRefine((value, context) => {
+  if (!value.entities) return;
+  if (value.kind && value.kind !== "page") {
+    context.addIssue({
+      code: "custom",
+      path: ["entities"],
+      message: "Entity filters apply only to pages",
+    });
+  }
+  if (value.types?.some((type) => type === "record" || type === "asset")) {
+    context.addIssue({
+      code: "custom",
+      path: ["entities"],
+      message: "Entity filters cannot be combined with record or asset filters",
+    });
+  }
+});
 
 const neighborhoodQuerySchema = z.object({
   revision_id: OptionalUuid,
@@ -96,6 +124,7 @@ export function parseDashboardObjectCatalogQuery(
       ...(parsed.kind ? { object_kind: parsed.kind } : {}),
       ...(parsed.lifecycle ? { lifecycle: parsed.lifecycle } : {}),
       ...(parsed.types ? { catalog_types: parsed.types } : {}),
+      ...(parsed.entities ? { entity_types: parsed.entities } : {}),
     },
   };
 }
@@ -128,6 +157,7 @@ export function dashboardObjectSummary(
     representation: object.representation,
     lifecycle: object.lifecycle,
     current_revision_id: object.current_revision_id,
+    entity_type: object.entity_type,
     title: object.title,
     summary: object.summary,
     filename: object.filename,

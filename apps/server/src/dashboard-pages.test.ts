@@ -11,6 +11,7 @@ const revision: PageRevision = {
   object_id: "11111111-1111-4111-8111-111111111111",
   revision_id: "22222222-2222-4222-8222-222222222222",
   revision_number: 2,
+  entity_type: "thing",
   title: "Hypermedia navigation",
   summary: "Navigation follows stable documents and their links.",
   body_markdown: "[Related](context-use://object/33333333-3333-4333-8333-333333333333)",
@@ -30,6 +31,7 @@ describe("canonical dashboard knowledge responses", () => {
       current_revision_id: revision.revision_id,
       public_id: null,
       revision_number: revision.revision_number,
+      entity_type: revision.entity_type,
       title: revision.title,
       summary: revision.summary,
       archived_at: null,
@@ -56,11 +58,12 @@ describe("canonical dashboard knowledge responses", () => {
     expect(projected).not.toHaveProperty("canonical_published");
   });
 
-  test("projects revisions and computes title, summary and Markdown changes only", async () => {
+  test("projects revisions and computes page-detail and Markdown changes", async () => {
     expect(dashboardPageRevision(revision)).toEqual({
       id: revision.revision_id,
       page_id: revision.object_id,
       version_number: revision.revision_number,
+      entity_type: revision.entity_type,
       title: revision.title,
       summary: revision.summary,
       body_markdown: revision.body_markdown,
@@ -73,11 +76,13 @@ describe("canonical dashboard knowledge responses", () => {
       ...revision,
       revision_number: 1,
       revision_id: "44444444-4444-4444-8444-444444444444",
+      entity_type: null,
       title: "Previous navigation",
       summary: "Navigation used an older structure.",
       body_markdown: "Old body",
     }, revision);
-    expect(delta.metadata_changes.map(({ field }) => field)).toEqual(["title", "summary"]);
+    expect(delta.metadata_changes.map(({ field }) => field))
+      .toEqual(["title", "summary", "entity_type"]);
     expect(delta.markdown_changes).toEqual([{ before: "Old body", after: revision.body_markdown }]);
   });
 

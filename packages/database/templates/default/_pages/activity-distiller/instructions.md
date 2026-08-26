@@ -100,9 +100,10 @@ For the particulars extracted in step 4:
 - **c.** Reuse and revise coherent existing pages. Create a page only for an atomic,
   self-contained unit of understanding; a named subject need not receive a page merely for
   being mentioned.
-- **d.** Link claims to the source record when provenance is useful and link related
-  knowledge only where the relationship is supported and explained. Similarity alone never
-  creates a link.
+- **d.** Apply the global guide's entity-anchor and link-completeness rules before moving on.
+  After creating a canonical entity page, search the earlier active candidates again and
+  revise every confidently resolved plain-text mention that now has a useful destination.
+  Link claims to the source record when provenance is useful.
 - **e.** Maintain a useful hub, entrypoint, timeline or history page when the evidence affects
   it, but treat each as an ordinary knowledge page. None is required and no timeline has an
   exclusive claim on dated knowledge.
@@ -125,6 +126,8 @@ particulars with the resulting knowledge:
   synthesis is yet supported;
 - every ambiguous reference remains explicit rather than guessed or duplicated;
 - every source and knowledge link exists and its surrounding text explains the relationship;
+- every confidently resolved mention found in the affected search set that should now use a
+  stable page or section destination was backfilled;
 - every contradiction, stale hub link or broken explanation introduced in the affected
   neighborhood was reconciled;
 - owner-authored and unrelated material was preserved, and no private material crossed the
