@@ -6,9 +6,12 @@ import {
   inspectLegacySchema,
   type LegacySchemaInspection,
 } from "./legacy-schema.ts";
-import type { MigrationStreams } from "./migrations/catalog.ts";
+import { releaseMigrationCatalog, type MigrationStreams } from "./migrations/catalog.ts";
 import { MIGRATION_LEDGERS } from "./migrations/ledger.ts";
-import { restoreOwnershipContractPending } from "./restore-ownership.ts";
+import {
+  restoreOwnershipContractPending,
+  validatePendingRestoreOwnershipForRelease,
+} from "./restore-ownership.ts";
 
 export const LEGACY_ADOPTION_ENV = "CONTEXT_USE_ADOPT_LEGACY_SCHEMA";
 export const LEGACY_ADOPTION_CONFIRMATION = "v0.1.97";
@@ -271,11 +274,13 @@ export async function adoptLegacySchema({
   client,
   targetMigrationStreams,
   applicationMigrationSql,
+  allowPendingRestore = false,
   afterTableMoved,
 }: {
   client: Client;
   targetMigrationStreams: MigrationStreams;
   applicationMigrationSql: string;
+  allowPendingRestore?: boolean;
   afterTableMoved?: (table: string) => void | Promise<void>;
 }): Promise<LegacyAdoptionResult> {
   assertTargetMigrationCatalog(targetMigrationStreams);
@@ -285,9 +290,17 @@ export async function adoptLegacySchema({
       "SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('context-use:migrate',0))",
     );
     if (await restoreOwnershipContractPending(client)) {
-      throw new Error(
-        "Refusing legacy schema adoption while a restore ownership contract is pending",
+      if (!allowPendingRestore) {
+        throw new Error(
+          "Refusing legacy schema adoption while a restore ownership contract is pending",
+        );
+      }
+      await validatePendingRestoreOwnershipForRelease(
+        client,
+        releaseMigrationCatalog(targetMigrationStreams),
+        { withinTransaction: true },
       );
+      await client.query("SET LOCAL search_path=pg_catalog,public");
     }
     if (await migrationLedgersMatch({ client, streams: targetMigrationStreams })) {
       const target = await assertTargetSchema(client);
