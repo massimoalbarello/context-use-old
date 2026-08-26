@@ -382,14 +382,19 @@ test("development compose confines the corpus credential to the audited one-shot
 });
 
 test("database initialization provisions the dedicated corpus role password", async () => {
-  const [migrator, migrationState, testDatabase] = await Promise.all([
-    Bun.file(new URL("../../../packages/database/src/migrate.ts", import.meta.url)).text(),
+  const [rolePasswords, migrationState, testDatabase] = await Promise.all([
+    Bun.file(
+      new URL(
+        "../../../packages/database/src/migrations/role-passwords.ts",
+        import.meta.url,
+      ),
+    ).text(),
     Bun.file(new URL("../../../packages/database/src/migration-state.ts", import.meta.url)).text(),
     Bun.file(new URL("../../../scripts/test-database.ts", import.meta.url)).text(),
   ]);
   expect(migrationState).toContain('context_use_corpus: "DB_CORPUS_PASSWORD"');
-  expect(migrator).toContain("configuredExistingRolePasswords");
-  expect(migrator).toContain("SELECT rolname::text FROM pg_roles");
+  expect(rolePasswords).toContain("configuredExistingRolePasswords");
+  expect(rolePasswords).toContain("SELECT rolname::text FROM pg_roles");
   expect(testDatabase).toContain('DB_CORPUS_PASSWORD: "test-only"');
 });
 

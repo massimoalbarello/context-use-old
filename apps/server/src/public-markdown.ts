@@ -1,4 +1,4 @@
-import type { PublicationProjectionTarget } from "@context-use/database";
+import type { PublicationProjectionTarget } from "@context-use/database/publication";
 
 const UUID_SOURCE = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const UUID_GLOBAL = new RegExp(UUID_SOURCE, "gi");

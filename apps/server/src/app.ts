@@ -7,14 +7,16 @@ import {
   KNOWLEDGE_BUNDLE_PART_SIZE,
   PrivateObjectCatalogRepository,
   PageDeletionRepository,
-  PublicationRepository,
-  PublicEntrypointRepository,
   SourceRecordRepository,
   createPool,
   extractObjectLinks,
   mapConcurrently,
   normalizeLegacyObjectLinks,
 } from "@context-use/database";
+import {
+  PublicationRepository,
+  PublicEntrypointRepository,
+} from "@context-use/database/publication";
 import {
   archiveSourceRecordSchema,
   archivePageSchema,
@@ -92,7 +94,7 @@ async function dashboardAssetPublication(asset: {
   content_hash: string;
   created_at: Date | string;
 }) {
-  const status = await publications.status("asset", asset.object_id);
+  const status = await publications.status({ targetKind: "asset", targetObjectId: asset.object_id });
   return {
     id: asset.object_id,
     filename: asset.filename,
@@ -148,7 +150,7 @@ function privateObjectResolvers() {
 async function dashboardPageResponse(objectId: string) {
   const [page, publicationStatus] = await Promise.all([
     dashboardPages.get(objectId),
-    publications.status("page", objectId),
+    publications.status({ targetKind: "page", targetObjectId: objectId }),
   ]);
   if (!page) return null;
   const renderedHtml = await renderMarkdown(
@@ -209,7 +211,7 @@ function publicationPreviewTargets(
         };
       }
       if (object.object_kind === "asset") {
-        const status = await publications.status("asset", id);
+        const status = await publications.status({ targetKind: "asset", targetObjectId: id });
         return {
           kind: "asset",
           id,
@@ -222,7 +224,7 @@ function publicationPreviewTargets(
         };
       }
       if (object.object_kind === "page") {
-        const status = await publications.status("page", id);
+        const status = await publications.status({ targetKind: "page", targetObjectId: id });
         return {
           kind: "page",
           id,
@@ -721,7 +723,7 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     const pageId = z.string().uuid().parse(params.id);
     const [page, status] = await Promise.all([
       dashboardPages.get(pageId),
-      publications.status("page", pageId),
+      publications.status({ targetKind: "page", targetObjectId: pageId }),
     ]);
     if (!page || page.archived_at) {
       return problem("Active page not found", 404, "not_found");
@@ -802,7 +804,7 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     const pageId = z.string().uuid().parse(params.id);
     const [page, publication] = await Promise.all([
       dashboardPages.get(pageId),
-      publications.status("page", pageId),
+      publications.status({ targetKind: "page", targetObjectId: pageId }),
     ]);
     if (!page) return problem("Page not found", 404, "not_found");
     if (!page.archived_at || publication.active) {
@@ -918,7 +920,10 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     await ownerRequest(request);
     const asset = await dashboardAssets.getForStorage(z.string().uuid().parse(params.id));
     if (!asset) return problem("Asset not found", 404, "not_found");
-    const publicationStatus = await publications.status("asset", asset.object_id);
+    const publicationStatus = await publications.status({
+      targetKind: "asset",
+      targetObjectId: asset.object_id,
+    });
     return json({
       content_available: await storage.verify(
         asset.blob_key,
@@ -952,10 +957,14 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
     const intentId = suppliedIntentId === null
       ? undefined
       : z.string().uuid().parse(suppliedIntentId);
-    const intent = await publications.begin(input, {
-      ownerUserId: principal.userId,
-      sessionId: principal.sessionId,
-    }, intentId);
+    const intent = await publications.begin({
+      intent: input,
+      principal: {
+        ownerUserId: principal.userId,
+        sessionId: principal.sessionId,
+      },
+      ...(intentId === undefined ? {} : { intentId }),
+    });
     if (intent.action === "publish") {
       await storage.materializePublicationArtifact(intent.id);
     }
@@ -964,9 +973,12 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
   })
   .delete("/api/dashboard/publication-intents/:id", async ({ request, params }) => {
     const principal = await ownerRequest(request, true);
-    await publications.cancel(z.string().uuid().parse(params.id), {
-      ownerUserId: principal.userId,
-      sessionId: principal.sessionId,
+    await publications.cancel({
+      intentId: z.string().uuid().parse(params.id),
+      principal: {
+        ownerUserId: principal.userId,
+        sessionId: principal.sessionId,
+      },
     });
     return json({ cancelled: true });
   })

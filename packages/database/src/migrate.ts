@@ -1,13 +1,9 @@
-import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHash } from "node:crypto";
 import { Client } from "pg";
-import {
-  MIGRATION_ROLE_PASSWORD_ENV,
-  assertMigrationState,
-  configuredExistingRolePasswords,
-} from "./migration-state.ts";
+import { loadMigrationCatalog } from "./migrations/catalog.ts";
+import { applyPendingMigrations, validateMigrationLedger } from "./migrations/ledger.ts";
+import { configureMigrationRolePasswords } from "./migrations/role-passwords.ts";
 import {
   PREPARE_RESTORE_OWNERSHIP_ENV,
   RECONCILE_RESTORE_OWNERSHIP_ENV,
@@ -31,15 +27,7 @@ const prepareRequested = restorePhase === "prepare";
 const reconcileRequested = restorePhase === "reconcile";
 
 const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
-const files = (await readdir(migrationsDirectory)).filter((file) => file.endsWith(".sql")).sort();
-const migrations = await Promise.all(files.map(async (version) => {
-  const sql = await readFile(join(migrationsDirectory, version), "utf8");
-  return {
-    version,
-    sql,
-    checksum: createHash("sha256").update(sql).digest("hex"),
-  };
-}));
+const migrations = await loadMigrationCatalog({ directory: migrationsDirectory });
 const targetMigrations = migrations;
 
 const client = new Client({ connectionString: migrationUrl });
@@ -68,69 +56,19 @@ try {
       );
     }
 
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS schema_migrations (
-        version text PRIMARY KEY,
-        checksum text NOT NULL,
-        applied_at timestamptz NOT NULL DEFAULT now()
-      )
-    `);
-    await client.query("ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS checksum text");
-
-    const applied = await client.query<{ version: string; checksum: string | null }>(
-      "SELECT version,checksum FROM schema_migrations ORDER BY version",
-    );
-    const baseline = "001_baseline.sql";
-
-    const existingRelations = await client.query<{ relation: string }>(
-      `SELECT relname AS relation
-       FROM pg_class
-       WHERE relnamespace='public'::regnamespace
-         AND relkind IN ('r','p','v','m','S')
-         AND relname<>'schema_migrations'
-       ORDER BY relname`,
-    );
-    assertMigrationState(
+    await validateMigrationLedger({ client, migrations, baseline: "001_baseline.sql" });
+    await applyPendingMigrations({
+      client,
       migrations,
-      applied.rows,
-      existingRelations.rows.map(({ relation }) => relation),
-      baseline,
-    );
-    await client.query("ALTER TABLE schema_migrations ALTER COLUMN checksum SET NOT NULL");
-    for (const migration of migrations) {
-      const existing = await client.query("SELECT 1 FROM schema_migrations WHERE version = $1", [migration.version]);
-      if (existing.rowCount) continue;
-      await client.query("BEGIN");
-      try {
-        await client.query(migration.sql);
-        await client.query(
-          "INSERT INTO schema_migrations(version,checksum) VALUES ($1,$2)",
-          [migration.version, migration.checksum],
-        );
-        await client.query("COMMIT");
-        console.info(`Applied ${migration.version}`);
-      } catch (error) {
-        await client.query("ROLLBACK");
-        throw error;
-      }
-    }
+      onApplied: (version) => console.info(`Applied ${version}`),
+    });
 
     if (reconcileRequested) {
       const reconciledOwnerships = await reconcilePendingRestoreOwnership(client, targetMigrations);
       console.info(`Reconciled ${reconciledOwnerships} restored routine/view ownerships`);
     }
 
-    const existingPasswordRoles = await client.query<{ rolname: string }>(
-      "SELECT rolname::text FROM pg_roles WHERE rolname::text=ANY($1::text[])",
-      [Object.keys(MIGRATION_ROLE_PASSWORD_ENV)],
-    );
-    for (const { role, password } of configuredExistingRolePasswords(
-      process.env,
-      existingPasswordRoles.rows.map(({ rolname }) => rolname),
-    )) {
-      const literal = password.replaceAll("'", "''");
-      await client.query(`ALTER ROLE ${role} LOGIN PASSWORD '${literal}'`);
-    }
+    await configureMigrationRolePasswords({ client, environment: process.env });
 
     if (prepareRequested) {
       const protectedOwnerships = await prepareRestoreOwnership(client, targetMigrations);

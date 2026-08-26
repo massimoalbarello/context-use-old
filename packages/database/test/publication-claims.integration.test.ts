@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { Client, type Pool } from "pg";
 import { disposableDatabaseUrl } from "../src/disposable-database.ts";
-import { StoragePublicationRepository } from "../src/publication.ts";
+import { StoragePublicationRepository } from "../src/publication/index.ts";
 import { cleanupPublicationFixtures } from "./publication-fixture-cleanup.ts";
 
 const databaseUrl = await disposableDatabaseUrl();
@@ -107,7 +107,10 @@ describeDatabase("publication object claims", () => {
     );
 
     const repository = storageRepository(client);
-    const intentClaim = await repository.claimIntent(intentId, randomUUID());
+    const intentClaim = await repository.claimIntent({
+      intentId,
+      requestedClaimToken: randomUUID(),
+    });
     expect(intentClaim.finalized).toBe(false);
     if (intentClaim.finalized) throw new Error("Expected a pending intent claim");
     expect(intentClaim.authorization.intent_id).toBe(intentId);

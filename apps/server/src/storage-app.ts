@@ -6,12 +6,14 @@ import {
   BlobMaintenanceRepository,
   KnowledgeBundleRepository,
   MAX_MARKDOWN_BLOB_BYTES,
-  StoragePublicationRepository,
   createPool,
   extractObjectLinks,
+} from "@context-use/database";
+import {
+  StoragePublicationRepository,
   type PublicationObjectClaim,
   type PublicationWriteAuthorization,
-} from "@context-use/database";
+} from "@context-use/database/publication";
 import type { PublicationArtifactReceipt } from "@context-use/shared";
 import { Elysia } from "elysia";
 import { z } from "zod";
@@ -294,13 +296,16 @@ export async function materializePublicationArtifact(input: {
   claims: PublicationClaims;
   allocationId: string;
 }): Promise<void> {
-  const claim = await input.claims.claimIntent(input.allocationId);
+  const claim = await input.claims.claimIntent({ intentId: input.allocationId });
   const written = await writeClaimedArtifact({
     storage: input.storage,
     claim,
   });
   if (!written.receipt) return;
-  await input.claims.finalizeIntent(written.claimToken, written.receipt);
+  await input.claims.finalizeIntent({
+    claimToken: written.claimToken,
+    receipt: written.receipt,
+  });
 }
 
 export function createStorageBrokerApp(input: {

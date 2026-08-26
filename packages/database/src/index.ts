@@ -133,7 +133,7 @@ export {
   type PublicationProjectionTarget,
   type PublicationWriteAuthorization,
   type StorageRoute,
-} from "./publication.ts";
+} from "./publication/index.ts";
 export {
   extractObjectLinks,
   MAX_OBJECT_LINKS_PER_REVISION,

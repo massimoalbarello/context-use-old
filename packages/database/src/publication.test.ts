@@ -13,7 +13,7 @@ import {
   type PublicationIntent,
   type PublicationWriteAuthorization,
   type StorageRoute,
-} from "./publication.ts";
+} from "./publication/index.ts";
 
 const documentId = "00000000-0000-4000-8000-000000000010";
 const revisionId = "00000000-0000-4000-8000-000000000020";
@@ -64,11 +64,14 @@ describe("publication dashboard boundary", () => {
     }]);
 
     const intent = await new PublicationRepository(pool).begin({
-      action: "publish",
-      target_kind: "page",
-      target_object_id: documentId,
-      expected_revision_id: revisionId,
-    }, { ownerUserId: "context-use-owner", sessionId: "session-1" });
+      intent: {
+        action: "publish",
+        target_kind: "page",
+        target_object_id: documentId,
+        expected_revision_id: revisionId,
+      },
+      principal: { ownerUserId: "context-use-owner", sessionId: "session-1" },
+    });
 
     expect(intent).toMatchObject({ id: intentId, candidate_public_id: publicId });
     expect(calls).toHaveLength(1);
@@ -99,13 +102,19 @@ describe("publication dashboard boundary", () => {
     const publications = new PublicationRepository(pool);
 
     await publications.begin({
-      action: "unpublish",
-      target_kind: "asset",
-      target_object_id: documentId,
-    }, { ownerUserId: "context-use-owner", sessionId: "session-2" });
-    await publications.cancel(intentId, {
-      ownerUserId: "context-use-owner",
-      sessionId: "session-2",
+      intent: {
+        action: "unpublish",
+        target_kind: "asset",
+        target_object_id: documentId,
+      },
+      principal: { ownerUserId: "context-use-owner", sessionId: "session-2" },
+    });
+    await publications.cancel({
+      intentId,
+      principal: {
+        ownerUserId: "context-use-owner",
+        sessionId: "session-2",
+      },
     });
 
     expect(calls[0]!.values?.[4]).toBeNull();
@@ -134,8 +143,8 @@ describe("publication dashboard boundary", () => {
     };
     const principal = { ownerUserId: "context-use-owner", sessionId: "retry-session" };
 
-    expect(await publications.begin(input, principal, intentId)).toEqual(row);
-    expect(await publications.begin(input, principal, intentId)).toEqual(row);
+    expect(await publications.begin({ intent: input, principal, intentId })).toEqual(row);
+    expect(await publications.begin({ intent: input, principal, intentId })).toEqual(row);
     expect(calls.map(({ values }) => values?.[0])).toEqual([intentId, intentId]);
     expect(calls[0]!.values).toEqual(calls[1]!.values);
   });
@@ -150,7 +159,9 @@ describe("publication dashboard boundary", () => {
     const dashboard = recordingPool([status]);
     const publications = new PublicationRepository(dashboard.pool);
 
-    expect(await publications.status("page", documentId)).toEqual(status);
+    expect(
+      await publications.status({ targetKind: "page", targetObjectId: documentId }),
+    ).toEqual(status);
     expect(dashboard.calls.at(-1)).toEqual({
       sql: expect.stringContaining("FROM get_dashboard_publication_status($1,$2)"),
       values: ["page", documentId],
@@ -205,7 +216,7 @@ describe("publication storage boundary", () => {
     const { calls, pool } = recordingPool([row]);
     const storage = new StoragePublicationRepository(pool);
 
-    expect(await storage.claimIntent(intentId, claimToken)).toEqual({
+    expect(await storage.claimIntent({ intentId, requestedClaimToken: claimToken })).toEqual({
       claim_token: claimToken,
       finalized: false,
       artifact_id: artifactId,
@@ -234,7 +245,7 @@ describe("publication storage boundary", () => {
     } satisfies PublicationArtifactReceipt;
     const { calls, pool } = recordingPool();
 
-    await new StoragePublicationRepository(pool).finalizeIntent(claimToken, receipt);
+    await new StoragePublicationRepository(pool).finalizeIntent({ claimToken, receipt });
 
     expect(calls[0]!.sql).toContain("finalize_publication_artifact_claim");
     expect(calls[0]!.sql).not.toContain("representation_token");
@@ -272,7 +283,7 @@ describe("publication storage boundary", () => {
     } satisfies PublicationArtifactReceipt;
     const { calls, pool } = recordingPool();
 
-    await new StoragePublicationRepository(pool).finalizeIntent(claimToken, receipt);
+    await new StoragePublicationRepository(pool).finalizeIntent({ claimToken, receipt });
 
     expect(calls[0]!.values).toEqual([
       claimToken,
