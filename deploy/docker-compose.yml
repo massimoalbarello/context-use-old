@@ -826,7 +826,7 @@ services:
       BACKUP_BUCKET: ${BACKUP_BUCKET}
       KMS_KEY_ID: ${KMS_KEY_ID}
       VERSION: ${VERSION}
-      SCHEMA_VERSION: auth/002_better_auth.sql+application/002_harden_owner_auth.sql
+      SCHEMA_VERSION: auth/002_better_auth.sql+application/003_grant_bootstrap_and_migration_ledgers.sql
       AWS_REGION: ${AWS_REGION}
       AWS_CONFIG_FILE: /etc/context-use/aws-config
       AWS_PROFILE: context-use-backup

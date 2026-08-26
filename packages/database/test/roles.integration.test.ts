@@ -452,6 +452,27 @@ describeDatabase("PostgreSQL security roles", () => {
     expect((await admin.query<{ allowed: boolean }>(
       "SELECT has_table_privilege('context_use_backup','knowledge_bundle_import_policy','SELECT') AS allowed",
     )).rows[0]?.allowed).toBe(true);
+    expect((await admin.query<{ allowed: boolean }>(
+      "SELECT has_table_privilege('context_use_backup','auth_schema_migrations','SELECT') AS allowed",
+    )).rows[0]?.allowed).toBe(true);
+    expect((await admin.query<{ allowed: boolean }>(
+      "SELECT has_table_privilege('context_use_backup','schema_migrations','SELECT') AS allowed",
+    )).rows[0]?.allowed).toBe(true);
+    for (const table of [
+      "knowledge_bundle_import_policy",
+      "knowledge_settings",
+      "publication_settings",
+    ]) {
+      expect((await admin.query<{ allowed: boolean }>(
+        "SELECT has_table_privilege('context_use_boundary_owner',$1,'INSERT') AS allowed",
+        [table],
+      )).rows[0]?.allowed).toBe(true);
+    }
+    expect((await admin.query<{ allowed: boolean }>(
+      `SELECT has_column_privilege(
+         'context_use_boundary_owner','knowledge_bundle_import_policy','singleton','SELECT'
+       ) AS allowed`,
+    )).rows[0]?.allowed).toBe(true);
     for (const column of ["confirmed_at", "consumed_at"]) {
       expect((await admin.query<{ allowed: boolean }>(
         "SELECT has_column_privilege('context_use_dashboard','knowledge_bundle_imports',$1,'INSERT') AS allowed",

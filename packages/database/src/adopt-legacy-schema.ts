@@ -22,7 +22,11 @@ export const TARGET_ROUTINE_FINGERPRINT =
 
 const TARGET_MIGRATION_VERSIONS = {
   auth: ["001_create_auth_schema.sql", "002_better_auth.sql"],
-  application: ["001_application_schema.sql", "002_harden_owner_auth.sql"],
+  application: [
+    "001_application_schema.sql",
+    "002_harden_owner_auth.sql",
+    "003_grant_bootstrap_and_migration_ledgers.sql",
+  ],
 } as const;
 
 const NORMALIZED_ROUTINES = [
@@ -97,28 +101,49 @@ function assertTargetMigrationCatalog(streams: MigrationStreams): void {
   }
 }
 
-async function migrationLedgersMatch({
+async function migrationLedgerState({
   client,
   streams,
 }: {
   client: Client;
   streams: MigrationStreams;
-}): Promise<boolean> {
+}): Promise<"target" | "previous-target" | "other"> {
+  const appliedByStream: Partial<Record<keyof MigrationStreams, Array<{
+    version: string;
+    checksum: string;
+  }>>> = {};
   for (const stream of ["auth", "application"] as const) {
     const ledger = MIGRATION_LEDGERS[stream];
     const present = await client.query<{ present: boolean }>(
       `SELECT pg_catalog.to_regclass('public.${ledger}') IS NOT NULL AS present`,
     );
-    if (!present.rows[0]?.present) return false;
-    const applied = (
+    if (!present.rows[0]?.present) return "other";
+    appliedByStream[stream] = (
       await client.query<{ version: string; checksum: string }>(
         `SELECT version,checksum FROM public.${ledger} ORDER BY version`,
       )
     ).rows;
-    const expected = streams[stream].map(({ version, checksum }) => ({ version, checksum }));
-    if (JSON.stringify(applied) !== JSON.stringify(expected)) return false;
   }
-  return true;
+  const expected = Object.fromEntries(
+    (["auth", "application"] as const).map((stream) => [
+      stream,
+      streams[stream].map(({ version, checksum }) => ({ version, checksum })),
+    ]),
+  ) as Record<keyof MigrationStreams, Array<{ version: string; checksum: string }>>;
+  if (
+    JSON.stringify(appliedByStream.auth) === JSON.stringify(expected.auth) &&
+    JSON.stringify(appliedByStream.application) === JSON.stringify(expected.application)
+  ) {
+    return "target";
+  }
+  if (
+    JSON.stringify(appliedByStream.auth) === JSON.stringify(expected.auth) &&
+    JSON.stringify(appliedByStream.application) ===
+      JSON.stringify(expected.application.slice(0, -1))
+  ) {
+    return "previous-target";
+  }
+  return "other";
 }
 
 export function replacementFunctionDefinitions({
@@ -180,7 +205,10 @@ export async function transitionRoutineFingerprint(client: Client): Promise<stri
     .digest("hex");
 }
 
-async function assertTargetSchema(client: Client): Promise<{
+async function assertTargetSchema(
+  client: Client,
+  { requireRuntimePrivileges = true }: { requireRuntimePrivileges?: boolean } = {},
+): Promise<{
   authStructureFingerprint: string;
   routineFingerprint: string;
 }> {
@@ -206,6 +234,43 @@ async function assertTargetSchema(client: Client): Promise<{
     JSON.stringify(["search_path=pg_catalog, auth, public"])
   ) {
     throw new Error("context_use_auth does not have the target search path");
+  }
+  if (!requireRuntimePrivileges) {
+    return { authStructureFingerprint: authFingerprint, routineFingerprint };
+  }
+  const privileges = (await client.query<{
+    backupAuthLedger: boolean;
+    backupApplicationLedger: boolean;
+    boundaryPolicyInsert: boolean;
+    boundaryPolicySingletonSelect: boolean;
+    boundarySettingsInsert: boolean;
+    boundaryPublicationInsert: boolean;
+  }>(`
+    SELECT
+      has_table_privilege(
+        'context_use_backup','public.auth_schema_migrations','SELECT'
+      ) AS "backupAuthLedger",
+      has_table_privilege(
+        'context_use_backup','public.schema_migrations','SELECT'
+      ) AS "backupApplicationLedger",
+      has_table_privilege(
+        'context_use_boundary_owner','public.knowledge_bundle_import_policy','INSERT'
+      ) AS "boundaryPolicyInsert",
+      has_column_privilege(
+        'context_use_boundary_owner',
+        'public.knowledge_bundle_import_policy',
+        'singleton',
+        'SELECT'
+      ) AS "boundaryPolicySingletonSelect",
+      has_table_privilege(
+        'context_use_boundary_owner','public.knowledge_settings','INSERT'
+      ) AS "boundarySettingsInsert",
+      has_table_privilege(
+        'context_use_boundary_owner','public.publication_settings','INSERT'
+      ) AS "boundaryPublicationInsert"
+  `)).rows[0];
+  if (!privileges || Object.values(privileges).some((allowed) => !allowed)) {
+    throw new Error("Transition roles do not have the target bootstrap and backup privileges");
   }
   return { authStructureFingerprint: authFingerprint, routineFingerprint };
 }
@@ -236,6 +301,13 @@ async function normalizeAdoptedSchema({
     CREATE INDEX "passkey_userId_idx" ON auth.passkey ("userId");
     GRANT USAGE ON SCHEMA auth TO
       context_use_auth,context_use_backup,context_use_boundary_owner,context_use_confirmation;
+    GRANT INSERT ON TABLE
+      public.knowledge_bundle_import_policy,
+      public.knowledge_settings,
+      public.publication_settings
+    TO context_use_boundary_owner;
+    GRANT SELECT (singleton) ON TABLE public.knowledge_bundle_import_policy
+    TO context_use_boundary_owner;
     ALTER ROLE context_use_auth SET search_path TO pg_catalog, auth, public;
     COMMENT ON SCHEMA public IS NULL;
   `);
@@ -256,7 +328,11 @@ async function replaceMigrationLedger({
       version text PRIMARY KEY,
       checksum text NOT NULL,
       applied_at timestamptz NOT NULL DEFAULT now()
-    )
+    );
+    GRANT SELECT ON TABLE
+      public.auth_schema_migrations,
+      public.schema_migrations
+    TO context_use_backup
   `);
   for (const stream of ["auth", "application"] as const) {
     const ledger = MIGRATION_LEDGERS[stream];
@@ -302,8 +378,14 @@ export async function adoptLegacySchema({
       );
       await client.query("SET LOCAL search_path=pg_catalog,public");
     }
-    if (await migrationLedgersMatch({ client, streams: targetMigrationStreams })) {
-      const target = await assertTargetSchema(client);
+    const ledgerState = await migrationLedgerState({
+      client,
+      streams: targetMigrationStreams,
+    });
+    if (ledgerState !== "other") {
+      const target = await assertTargetSchema(client, {
+        requireRuntimePrivileges: ledgerState === "target",
+      });
       await client.query("COMMIT");
       return { action: "already-transitioned", ...target };
     }
@@ -333,8 +415,8 @@ export async function adoptLegacySchema({
     }
 
     await normalizeAdoptedSchema({ client, applicationMigrationSql });
-    const target = await assertTargetSchema(client);
     await replaceMigrationLedger({ client, streams: targetMigrationStreams });
+    const target = await assertTargetSchema(client);
     await client.query("COMMIT");
     return { action: "transitioned", ...target };
   } catch (error) {

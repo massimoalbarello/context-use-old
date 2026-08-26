@@ -9,6 +9,7 @@ import {
   LEGACY_MIGRATIONS,
 } from "../src/legacy-schema.ts";
 import { loadMigrationStreams } from "../src/migrations/catalog.ts";
+import { applyPendingMigrations } from "../src/migrations/ledger.ts";
 
 const serverUrl = await disposableDatabaseUrl();
 const describeDatabase = serverUrl ? describe : describe.skip;
@@ -83,6 +84,15 @@ describeDatabase("legacy auth schema adoption", () => {
     }
     await target.query("DROP SCHEMA auth");
     await target.query("DROP TABLE public.auth_schema_migrations");
+    await target.query(`
+      REVOKE INSERT ON TABLE
+        public.knowledge_bundle_import_policy,
+        public.knowledge_settings,
+        public.publication_settings
+      FROM context_use_boundary_owner;
+      REVOKE SELECT (singleton) ON TABLE public.knowledge_bundle_import_policy
+      FROM context_use_boundary_owner;
+    `);
     await target.query("DELETE FROM public.schema_migrations");
     for (const migration of LEGACY_MIGRATIONS) {
       await target.query("INSERT INTO public.schema_migrations(version,checksum) VALUES ($1,$2)", [
@@ -106,7 +116,7 @@ describeDatabase("legacy auth schema adoption", () => {
     }
   });
 
-  test("rolls back a partial move, preserves data, and converges on retry", async () => {
+  test("rolls back a partial move, preserves data, and converges across later migrations", async () => {
     expect(await inspectLegacySchema(target)).toMatchObject({ state: "legacy-v0.1.97" });
     let moved = 0;
     await expect(
@@ -137,6 +147,27 @@ describeDatabase("legacy auth schema adoption", () => {
     expect((await target.query('SELECT 1 FROM auth."user" WHERE id=$1', [ownerId])).rowCount).toBe(
       1,
     );
+    for (const table of [
+      "knowledge_bundle_import_policy",
+      "knowledge_settings",
+      "publication_settings",
+    ]) {
+      expect((await target.query<{ allowed: boolean }>(
+        "SELECT has_table_privilege('context_use_boundary_owner',$1,'INSERT') AS allowed",
+        [table],
+      )).rows[0]?.allowed).toBe(true);
+    }
+    expect((await target.query<{ allowed: boolean }>(
+      `SELECT has_column_privilege(
+         'context_use_boundary_owner','knowledge_bundle_import_policy','singleton','SELECT'
+       ) AS allowed`,
+    )).rows[0]?.allowed).toBe(true);
+    expect((await target.query<{ allowed: boolean }>(
+      "SELECT has_table_privilege('context_use_backup','auth_schema_migrations','SELECT') AS allowed",
+    )).rows[0]?.allowed).toBe(true);
+    expect((await target.query<{ allowed: boolean }>(
+      "SELECT has_table_privilege('context_use_backup','schema_migrations','SELECT') AS allowed",
+    )).rows[0]?.allowed).toBe(true);
     expect(
       await adoptLegacySchema({
         client: target,
@@ -146,5 +177,43 @@ describeDatabase("legacy auth schema adoption", () => {
     ).toMatchObject({
       action: "already-transitioned",
     });
+
+    await target.query(`
+      DELETE FROM public.schema_migrations
+      WHERE version='003_grant_bootstrap_and_migration_ledgers.sql';
+      REVOKE INSERT ON TABLE
+        public.knowledge_bundle_import_policy,
+        public.knowledge_settings,
+        public.publication_settings
+      FROM context_use_boundary_owner;
+      REVOKE SELECT (singleton) ON TABLE public.knowledge_bundle_import_policy
+      FROM context_use_boundary_owner;
+      REVOKE SELECT ON TABLE
+        public.auth_schema_migrations,
+        public.schema_migrations
+      FROM context_use_backup;
+    `);
+    expect(
+      await adoptLegacySchema({
+        client: target,
+        targetMigrationStreams,
+        applicationMigrationSql,
+      }),
+    ).toMatchObject({ action: "already-transitioned" });
+    expect((await target.query<{ version: string }>(
+      "SELECT version FROM public.schema_migrations ORDER BY version",
+    )).rows.map(({ version }) => version)).toEqual([
+      "001_application_schema.sql",
+      "002_harden_owner_auth.sql",
+    ]);
+
+    await applyPendingMigrations({
+      client: target,
+      migrations: targetMigrationStreams.application,
+      stream: "application",
+    });
+    expect((await target.query<{ allowed: boolean }>(
+      "SELECT has_table_privilege('context_use_backup','schema_migrations','SELECT') AS allowed",
+    )).rows[0]?.allowed).toBe(true);
   });
 });
