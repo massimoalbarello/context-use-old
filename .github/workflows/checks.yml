@@ -1,0 +1,64 @@
+name: Checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Types, style, migrations, tests, and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: 1.3.11 }
+      - run: bun install --frozen-lockfile
+      - run: bun run check:all
+      - run: bun run build
+
+  database:
+    name: PostgreSQL invariants
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+        env:
+          POSTGRES_DB: context_use_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d context_use_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      MIGRATOR_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/context_use_test
+      TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/context_use_test
+      DB_AUTH_PASSWORD: test-only
+      DB_DASHBOARD_PASSWORD: test-only
+      DB_CORPUS_PASSWORD: test-only
+      DB_MCP_PASSWORD: test-only
+      DB_PUBLIC_PASSWORD: test-only
+      DB_CONFIRMATION_PASSWORD: test-only
+      DB_STORAGE_PASSWORD: test-only
+      DB_BACKUP_PASSWORD: test-only
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: 1.3.11 }
+      - run: bun install --frozen-lockfile
+      - run: bun --cwd packages/database migrate
+      - run: bun --cwd packages/database mark:disposable
+      - run: bun run test:database
