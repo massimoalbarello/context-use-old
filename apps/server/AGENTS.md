@@ -36,8 +36,15 @@ Dynamic folders name the value they identify (`[pageId]`, never `[id]`). A schem
 routes belongs in their parent `model.ts`. One controller may implement multiple methods on the same
 resource; unrelated paths get separate controllers.
 
-Every JSON route declares request and response schemas. Streaming uploads, downloads, range
-responses, Better Auth, and MCP transport are explicit exceptions with dedicated boundary code.
+Every parsed JSON request has a schema at the controller boundary. Response contracts belong beside
+the route or in the shared API contract consumed by the frontend. Streaming uploads, downloads,
+range responses, Better Auth, and MCP transport are explicit exceptions with dedicated boundary
+code.
+
+For the dashboard process, `src/app.ts` is the composition root and contains no handlers.
+`routes/dashboard/controller.ts` only assembles the path controllers; it must not absorb feature
+logic. Keep cross-route workflows in narrowly named services—for example, knowledge bundle exports
+and knowledge imports are separate services even though they share a repository.
 
 ## Security boundaries
 
