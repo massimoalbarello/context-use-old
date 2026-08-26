@@ -21,6 +21,14 @@ export const PublicRouteSuffix = z
   .regex(/^[a-z0-9][a-z0-9/_-]*$/, "Use lowercase path segments only")
   .refine((value) => !value.includes("//") && !value.endsWith("/"), "Invalid path");
 export const CommitMessage = z.string().trim().min(3).max(240);
+export const pageEntityTypeSchema = z.enum([
+  "person",
+  "organization",
+  "place",
+  "event",
+  "thing",
+]);
+export type PageEntityType = z.infer<typeof pageEntityTypeSchema>;
 export const KnowledgeSummary = z
   .string()
   .trim()
@@ -37,6 +45,9 @@ export const createPageSchema = z
       "Required one-sentence summary used in object search and private link previews.",
     ),
     body_markdown: PageBodyMarkdown,
+    entity_type: pageEntityTypeSchema.nullable().optional().describe(
+      "Optional bounded entity designation for the one canonical introductory page of a person, organization, place, event, or thing. Do not apply it to pages that merely mention an entity.",
+    ),
     commit_message: CommitMessage,
   })
   .strict();
@@ -48,6 +59,9 @@ export const updatePageSchema = z
       "Required one-sentence summary used in object search and private link previews.",
     ),
     body_markdown: PageBodyMarkdown,
+    entity_type: pageEntityTypeSchema.nullable().optional().describe(
+      "Set the canonical entity designation, clear it with null, or omit it to preserve the current designation.",
+    ),
     commit_message: CommitMessage,
     expected_revision_number: z.number().int().positive(),
   })
@@ -237,6 +251,7 @@ export const dashboardObjectSummarySchema = z.object({
   representation: z.enum(["markdown", "asset"]),
   lifecycle: dashboardObjectLifecycleSchema,
   current_revision_id: UUID.nullable(),
+  entity_type: pageEntityTypeSchema.nullable(),
   title: z.string().nullable(),
   summary: z.string().nullable(),
   filename: z.string().nullable(),

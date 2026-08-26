@@ -23,6 +23,7 @@ const catalogItem: PrivateObjectCatalogItem = {
   lifecycle: "active",
   current_revision_id: revisionId,
   current_revision_number: 7,
+  entity_type: "organization",
   title: "Investment notes",
   summary: "A concise summary of the current investment thesis.",
   filename: null,
@@ -57,6 +58,7 @@ describe("dashboard object discovery", () => {
       kind: "page",
       lifecycle: "archived",
       types: "page,public,archived",
+      entities: "person,organization",
     })).toEqual({
       query: "investment notes",
       options: {
@@ -67,6 +69,7 @@ describe("dashboard object discovery", () => {
         object_kind: "page",
         lifecycle: "archived",
         catalog_types: ["page", "public", "archived"],
+        entity_types: ["person", "organization"],
       },
     });
     expect(parseDashboardObjectCatalogQuery({ q: "" })).toEqual({
@@ -76,6 +79,10 @@ describe("dashboard object discovery", () => {
     expect(() => parseDashboardObjectCatalogQuery({ limit: "101" })).toThrow();
     expect(() => parseDashboardObjectCatalogQuery({ types: "public,public" })).toThrow();
     expect(() => parseDashboardObjectCatalogQuery({ types: "public,private" })).toThrow();
+    expect(() => parseDashboardObjectCatalogQuery({ entities: "person,person" })).toThrow();
+    expect(() => parseDashboardObjectCatalogQuery({ entities: "project" })).toThrow();
+    expect(() => parseDashboardObjectCatalogQuery({ kind: "record", entities: "person" })).toThrow();
+    expect(() => parseDashboardObjectCatalogQuery({ types: "page,asset", entities: "person" })).toThrow();
     expect(() => parseDashboardObjectCatalogQuery({ extra: "private" })).toThrow();
 
     expect(parseDashboardObjectNeighborhoodQuery({
@@ -104,6 +111,7 @@ describe("dashboard object discovery", () => {
       representation: "markdown",
       lifecycle: "active",
       current_revision_id: revisionId,
+      entity_type: "organization",
       title: "Investment notes",
       summary: "A concise summary of the current investment thesis.",
       filename: null,

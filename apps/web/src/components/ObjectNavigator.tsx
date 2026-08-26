@@ -2,9 +2,16 @@ import type {
   DashboardObjectCatalogPage,
   DashboardObjectKind,
   DashboardObjectSummary,
+  PageEntityType,
 } from "@context-use/shared";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { api } from "../api.ts";
+import {
+  ENTITY_TYPE_OPTIONS,
+  EntityIdentity,
+  EntityTypeIcon,
+  entityTypeLabel,
+} from "./EntityType.tsx";
 
 export type ObjectFilter = DashboardObjectKind | "public" | "archived";
 
@@ -52,6 +59,7 @@ function objectKindLabel(object: DashboardObjectSummary): string {
 }
 
 function ObjectIcon({ object }: { object: DashboardObjectSummary }) {
+  if (object.entity_type) return <EntityTypeIcon type={object.entity_type} />;
   if (object.object_kind === "asset") {
     return <svg viewBox="0 0 20 20" aria-hidden="true">
       <rect x="3" y="3" width="14" height="14" rx="2" />
@@ -75,10 +83,12 @@ export function objectCatalogUrl(
   query: string,
   filters: readonly ObjectFilter[],
   cursor?: string,
+  entityTypes: readonly PageEntityType[] = [],
 ): string {
   const parameters = new URLSearchParams({ limit: "40" });
   if (query.trim()) parameters.set("q", query.trim());
   if (filters.length) parameters.set("types", filters.join(","));
+  if (entityTypes.length) parameters.set("entities", entityTypes.join(","));
   if (cursor) parameters.set("cursor", cursor);
   return `/api/dashboard/objects?${parameters}`;
 }
@@ -97,6 +107,7 @@ export function ObjectNavigator({
   onSelect: (object: DashboardObjectSummary) => void;
 }) {
   const [filters, setFilters] = useState<ObjectFilter[]>([]);
+  const [entityTypes, setEntityTypes] = useState<PageEntityType[]>([]);
   const [filterOpen, setFilterOpen] = useState(false);
   const [page, setPage] = useState<DashboardObjectCatalogPage>({
     objects: [],
@@ -111,7 +122,8 @@ export function ObjectNavigator({
   const listRef = useRef<HTMLDivElement>(null);
   const infiniteLoaderRef = useRef<HTMLDivElement>(null);
   const filterKey = filters.join(",");
-  const queryKey = `${query.trim()}\u0000${filterKey}`;
+  const entityFilterKey = entityTypes.join(",");
+  const queryKey = `${query.trim()}\u0000${filterKey}\u0000${entityFilterKey}`;
   const queryKeyRef = useRef(queryKey);
   queryKeyRef.current = queryKey;
 
@@ -136,7 +148,7 @@ export function ObjectNavigator({
     setLoading(true);
     setError("");
     const timer = window.setTimeout(() => {
-      api<DashboardObjectCatalogPage>(objectCatalogUrl(query, filters), {
+      api<DashboardObjectCatalogPage>(objectCatalogUrl(query, filters, undefined, entityTypes), {
         signal: controller.signal,
       }).then(setPage).catch((caught: unknown) => {
         if (caught instanceof DOMException && caught.name === "AbortError") return;
@@ -149,7 +161,7 @@ export function ObjectNavigator({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [filterKey, query, refreshToken]);
+  }, [entityFilterKey, filterKey, query, refreshToken]);
 
   const loadMore = useCallback(async () => {
     if (!page.next_cursor || loadingMore) return;
@@ -158,7 +170,7 @@ export function ObjectNavigator({
     setError("");
     try {
       const next = await api<DashboardObjectCatalogPage>(
-        objectCatalogUrl(query, filters, page.next_cursor),
+        objectCatalogUrl(query, filters, page.next_cursor, entityTypes),
       );
       if (queryKeyRef.current !== requestedQueryKey) return;
       const seen = new Set(page.objects.map((object) => object.object_id));
@@ -173,7 +185,7 @@ export function ObjectNavigator({
     } finally {
       setLoadingMore(false);
     }
-  }, [filterKey, loadingMore, page, query, queryKey]);
+  }, [entityFilterKey, filterKey, loadingMore, page, query, queryKey]);
 
   useEffect(() => {
     const root = listRef.current;
@@ -198,15 +210,33 @@ export function ObjectNavigator({
   };
 
   const toggleFilter = (value: ObjectFilter) => {
+    if (value !== "page" || filters.includes("page")) setEntityTypes([]);
     setFilters((current) => {
       const next = new Set(current);
       if (next.has(value)) next.delete(value);
       else next.add(value);
-      return FILTER_OPTIONS.map(({ value: option }) => option).filter((option) => next.has(option));
+      return FILTER_OPTIONS.map(({ value: option }) => option)
+        .filter((option) => next.has(option));
     });
   };
 
-  const filterSummary = filters.length === 0
+  const toggleEntityType = (value: PageEntityType) => {
+    if (!entityTypes.includes(value)) setFilters(["page"]);
+    setEntityTypes((current) => {
+      const next = new Set(current);
+      if (next.has(value)) next.delete(value);
+      else next.add(value);
+      const ordered = ENTITY_TYPE_OPTIONS.map(({ value: option }) => option)
+        .filter((option) => next.has(option));
+      return ordered;
+    });
+  };
+
+  const filterSummary = entityTypes.length > 0
+    ? entityTypes.length === 1
+      ? entityTypeLabel(entityTypes[0]!)
+      : `${entityTypeLabel(entityTypes[0]!)} +${entityTypes.length - 1}`
+    : filters.length === 0
     ? "All types"
     : filters.length === 1
       ? FILTER_OPTIONS.find(({ value }) => value === filters[0])!.label
@@ -217,14 +247,14 @@ export function ObjectNavigator({
     <div ref={filterRef} className="object-filter">
       <button
         type="button"
-        className={`object-filter-toggle${filters.length ? " active" : ""}`}
-        aria-label={`Filter object types: ${filters.length ? filters.map((filter) => FILTER_OPTIONS.find(({ value }) => value === filter)!.label).join(", ") : "all types"}`}
+        className={`object-filter-toggle${filters.length || entityTypes.length ? " active" : ""}`}
+        aria-label={`Filter objects: ${entityTypes.length ? entityTypes.map(entityTypeLabel).join(", ") : filters.length ? filters.map((filter) => FILTER_OPTIONS.find(({ value }) => value === filter)!.label).join(", ") : "all types"}`}
         aria-expanded={filterOpen}
         aria-haspopup="true"
         onClick={() => setFilterOpen((open) => !open)}
       ><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 5h13M6 10h8M8.5 15h3" /></svg><span>Filter</span><strong>{filterSummary}</strong><i aria-hidden="true" /></button>
       {filterOpen && <div className="object-filter-menu" aria-label="Object type filter">
-        <div className="object-filter-menu-heading"><span>Select one or more</span>{filters.length > 0 && <button type="button" onClick={() => setFilters([])}>Clear</button>}</div>
+        <div className="object-filter-menu-heading"><span>Content</span>{(filters.length > 0 || entityTypes.length > 0) && <button type="button" onClick={() => { setFilters([]); setEntityTypes([]); }}>Clear all</button>}</div>
         {FILTER_OPTIONS.map(({ value, label }) => <label key={value}>
           <input
             type="checkbox"
@@ -234,19 +264,31 @@ export function ObjectNavigator({
           <span aria-hidden="true">✓</span>
           <strong>{label}</strong>
         </label>)}
+        <div className="object-filter-menu-divider" />
+        <div className="object-filter-menu-heading"><span>Entity pages</span></div>
+        {ENTITY_TYPE_OPTIONS.map(({ value, label }) => <label key={value}>
+          <input
+            type="checkbox"
+            checked={entityTypes.includes(value)}
+            onChange={() => toggleEntityType(value)}
+          />
+          <span aria-hidden="true">✓</span>
+          <EntityTypeIcon type={value} />
+          <strong>{label}</strong>
+        </label>)}
       </div>}
     </div>
     {onCreate && <button type="button" className="page-create" onClick={onCreate}>+ New page</button>}
     </div>
     <div className="object-list-heading">
-      <strong>{query.trim() ? "Search results" : "Recently updated"}</strong>
+      <strong>{query.trim() ? "Search results" : entityTypes.length ? "Entity pages" : "Recently updated"}</strong>
       {!loading && <span>{page.objects.length}{page.has_more ? "+" : ""}</span>}
     </div>
     <div ref={listRef} className="object-list" aria-live="polite">
       {loading && <div className="object-list-state">Searching your knowledge…</div>}
       {!loading && error && !page.objects.length && <div className="object-list-state error">{error}</div>}
       {!loading && !error && !page.objects.length && <div className="object-list-state">
-        {query.trim() ? "No matching objects" : filters.length ? "No objects match these filters" : "No active objects yet"}
+        {query.trim() ? "No matching objects" : filters.length || entityTypes.length ? "No objects match these filters" : "No active objects yet"}
       </div>}
       {!loading && page.objects.map((object, index) => <button
         type="button"
@@ -262,7 +304,9 @@ export function ObjectNavigator({
           <span className="object-result-title">{objectDisplayTitle(object)}</span>
           <span className="object-result-summary">{objectDisplaySummary(object)}</span>
           <span className="object-result-meta">
-            <i>{objectKindLabel(object)}</i>
+            <i>{object.entity_type
+              ? <EntityIdentity type={object.entity_type} />
+              : objectKindLabel(object)}</i>
             {object.lifecycle !== "active" && <i>{object.lifecycle}</i>}
             <time dateTime={object.updated_at}>{new Intl.DateTimeFormat(undefined, {
               month: "short",

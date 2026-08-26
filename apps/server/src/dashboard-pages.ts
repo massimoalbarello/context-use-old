@@ -2,6 +2,7 @@ import type {
   KnowledgePage,
   PageRevision,
 } from "@context-use/database";
+import type { PageEntityType } from "@context-use/shared";
 import { markdownChanges } from "./page-delta.ts";
 
 export type DashboardPage = {
@@ -12,6 +13,7 @@ export type DashboardPage = {
   public_id: string | null;
   archived_at: Date | string | null;
   version_number: number;
+  entity_type: PageEntityType | null;
   title: string;
   summary: string;
   body_markdown: string;
@@ -25,6 +27,7 @@ export type DashboardPageRevision = {
   id: string;
   page_id: string;
   version_number: number;
+  entity_type: PageEntityType | null;
   title: string;
   summary: string;
   body_markdown: string;
@@ -37,9 +40,9 @@ export type DashboardPageRevision = {
 export type DashboardRepublicationReview = {
   published_version_number: number;
   metadata_changes: Array<{
-    field: "title" | "summary";
+    field: "title" | "summary" | "entity_type";
     before: string | null;
-    after: string;
+    after: string | null;
   }>;
   markdown_changes: Array<{ before: string; after: string }>;
   queued_versions: Array<{
@@ -69,6 +72,7 @@ export function dashboardPage(
     public_id: page.public_id,
     archived_at: page.archived_at,
     version_number: page.revision_number,
+    entity_type: page.entity_type,
     title: page.title,
     summary: page.summary,
     body_markdown: page.body_markdown,
@@ -86,6 +90,7 @@ export function dashboardPageRevision(
     id: revision.revision_id,
     page_id: revision.object_id,
     version_number: revision.revision_number,
+    entity_type: revision.entity_type,
     title: revision.title,
     summary: revision.summary,
     body_markdown: revision.body_markdown,
@@ -101,11 +106,11 @@ export async function dashboardPageRevisionDelta(
   current: PageRevision,
 ) {
   const metadataChanges: Array<{
-    field: "title" | "summary";
+    field: "title" | "summary" | "entity_type";
     before: string | null;
-    after: string;
+    after: string | null;
   }> = [];
-  for (const field of ["title", "summary"] as const) {
+  for (const field of ["title", "summary", "entity_type"] as const) {
     const before = previous?.[field] ?? null;
     if (before !== current[field]) metadataChanges.push({ field, before, after: current[field] });
   }

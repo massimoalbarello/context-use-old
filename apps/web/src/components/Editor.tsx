@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { DashboardObjectSummary } from "@context-use/shared";
+import type { DashboardObjectSummary, PageEntityType } from "@context-use/shared";
 import { api } from "../api.ts";
 import { confirmPageDeletion } from "../page-deletion-auth.ts";
 import { confirmPublicationChange } from "../publication-auth.ts";
@@ -11,13 +11,20 @@ import type {
   Version,
 } from "../types.ts";
 import { ActionDialog } from "./ActionDialog.tsx";
+import { EntityIdentity, EntityTypeField, entityTypeLabel } from "./EntityType.tsx";
 import { ObjectNeighborhood } from "./ObjectNeighborhood.tsx";
 import { PublicationDialog } from "./PublicationDialog.tsx";
 
 const diffFieldLabels = {
   title: "Title",
   summary: "Summary",
+  entity_type: "Entity type",
 } as const;
+
+function diffFieldValue(field: keyof typeof diffFieldLabels, value: string | null): string {
+  if (value === null) return "None";
+  return field === "entity_type" ? entityTypeLabel(value as PageEntityType) : value;
+}
 
 export function PagePublicationStatus({
   archivedAt,
@@ -76,8 +83,8 @@ export function VersionDiffContents({ diff }: { diff: PageVersionDiff }) {
       <h4>Page details</h4>
       {diff.metadata_changes.map((change) => <div className="version-diff-field" key={change.field}>
         <strong>{diffFieldLabels[change.field]}</strong>
-        {change.before !== null && <pre className="diff-value removed"><span aria-hidden="true">−</span>{change.before}</pre>}
-        <pre className="diff-value added"><span aria-hidden="true">+</span>{change.after}</pre>
+        {change.before !== null && <pre className="diff-value removed"><span aria-hidden="true">−</span>{diffFieldValue(change.field, change.before)}</pre>}
+        <pre className="diff-value added"><span aria-hidden="true">+</span>{diffFieldValue(change.field, change.after)}</pre>
       </div>)}
     </section>}
     {diff.markdown_changes.length > 0 && <section className="version-diff-section">
@@ -152,7 +159,12 @@ export function Editor({
   const [page, setPage] = useState<KnowledgePage | null>(null);
   const [history, setHistory] = useState<Version[]>([]);
   const [historyHasMore, setHistoryHasMore] = useState(false);
-  const [draft, setDraft] = useState({ title: "", summary: "", body_markdown: "" });
+  const [draft, setDraft] = useState<{
+    title: string;
+    summary: string;
+    entity_type: PageEntityType | null;
+    body_markdown: string;
+  }>({ title: "", summary: "", entity_type: null, body_markdown: "" });
   const [commit, setCommit] = useState("");
   const [tab, setTab] = useState<"preview" | "links" | "history">("preview");
   const [isEditing, setIsEditing] = useState(false);
@@ -173,7 +185,7 @@ export function Editor({
       api<KnowledgePageHistory>(`/api/dashboard/pages/${pageId}/history`),
     ]);
     setPage(next);
-    if (!preserveDraft) setDraft({ title: next.title, summary: next.summary, body_markdown: next.body_markdown });
+    if (!preserveDraft) setDraft({ title: next.title, summary: next.summary, entity_type: next.entity_type, body_markdown: next.body_markdown });
     setHistory(historyPage.revisions);
     setHistoryHasMore(historyPage.has_more);
     return { page: next, history: historyPage.revisions };
@@ -218,13 +230,13 @@ export function Editor({
   const hasUnpublishedChanges = isPublishedPageOutdated(page);
 
   const edit = () => {
-    setDraft({ title: page.title, summary: page.summary, body_markdown: page.body_markdown });
+    setDraft({ title: page.title, summary: page.summary, entity_type: page.entity_type, body_markdown: page.body_markdown });
     setCommit("");
     setIsEditing(true);
   };
 
   const cancelEdit = () => {
-    setDraft({ title: page.title, summary: page.summary, body_markdown: page.body_markdown });
+    setDraft({ title: page.title, summary: page.summary, entity_type: page.entity_type, body_markdown: page.body_markdown });
     setCommit("");
     setIsEditing(false);
   };
@@ -308,7 +320,7 @@ export function Editor({
 
   return <main className="editor">
     <header className="editor-header">
-      <div><span className="object-kicker">Knowledge page</span><h1>{page.title}</h1><p className="knowledge-summary">{page.summary}</p><time className="page-last-edited" dateTime={new Date(lastEditedAt).toISOString()}>Last edited {new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(lastEditedAt))}</time></div>
+      <div><span className="object-kicker">{page.entity_type ? <EntityIdentity type={page.entity_type} /> : "Knowledge page"}</span><h1>{page.title}</h1><p className="knowledge-summary">{page.summary}</p><time className="page-last-edited" dateTime={new Date(lastEditedAt).toISOString()}>Last edited {new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(lastEditedAt))}</time></div>
       <div className="button-row">
         <PagePublicationStatus
           archivedAt={page.archived_at}
@@ -343,7 +355,7 @@ export function Editor({
             <span>Saving edits creates a new private version. The published page will not update automatically.</span>
           </div>
         </div>}
-        <div className="editor-fields single-column"><label>Title<input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label><label className="summary-field">Summary<input maxLength={320} required value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} /></label></div>
+        <div className="editor-fields"><label>Title<input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label><EntityTypeField value={draft.entity_type} onChange={(entity_type) => setDraft({ ...draft, entity_type })} /><label className="summary-field">Summary<input maxLength={320} required value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} /></label></div>
       </div>
       <textarea className="markdown-editor" value={draft.body_markdown} onChange={(event) => setDraft({ ...draft, body_markdown: event.target.value })} spellCheck />
       <footer className="save-bar"><input placeholder="Describe this change (required)" value={commit} onChange={(event) => setCommit(event.target.value)} /><div className="button-row"><button onClick={cancelEdit}>Cancel</button><button className="primary" disabled={commit.trim().length < 3 || !draft.summary.trim()} onClick={save}>Save version</button></div></footer>

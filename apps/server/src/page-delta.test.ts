@@ -89,13 +89,18 @@ describe("page delta", () => {
     expect(await pageDelta({
       title: "Old title",
       summary: "Stable summary",
+      entity_type: null,
       body_markdown: "Old body\n",
     }, {
       title: "New title",
       summary: "Stable summary",
+      entity_type: "person",
       body_markdown: "New body\n",
     })).toEqual({
-      metadata_changes: [{ field: "title", before: "Old title", after: "New title" }],
+      metadata_changes: [
+        { field: "title", before: "Old title", after: "New title" },
+        { field: "entity_type", before: null, after: "person" },
+      ],
       markdown_changes: [{ before: "Old body\n", after: "New body\n" }],
     });
   });

@@ -75,4 +75,17 @@ describe("republication review", () => {
       metadata_changes: [{ field: "title", before: "Old", after: "New" }],
     })).toBe(true);
   });
+
+  test("uses human entity labels in publication review", () => {
+    const html = renderToStaticMarkup(<RepublicationReview
+      review={{
+        ...review,
+        markdown_changes: [],
+        metadata_changes: [{ field: "entity_type", before: null, after: "place" }],
+      }}
+      candidateVersionNumber={5}
+    />);
+    expect(html).toContain("Entity type");
+    expect(html).toContain("Place");
+  });
 });

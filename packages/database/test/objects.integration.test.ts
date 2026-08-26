@@ -110,12 +110,14 @@ describeDatabase("canonical private objects", () => {
       title: "Canonical lifecycle",
       summary: "A document used to verify identity-based mutation.",
       body_markdown: createdBody,
+      entity_type: "thing",
       commit_message: "Create canonical lifecycle document",
     }, actor);
     createdDocumentIds.add(created.object_id);
     expect(created).not.toHaveProperty("body_object_key");
     expect(created).toMatchObject({
       revision_number: 1,
+      entity_type: "thing",
       current_link_contract: "generic_document_v1",
       search_ready: true,
     });
@@ -169,6 +171,7 @@ describeDatabase("canonical private objects", () => {
       expected_revision_number: 1,
     }, actor);
     expect(updated?.revision_number).toBe(2);
+    expect(updated?.entity_type).toBe("thing");
     const deletedAsset = await assets.archive({ object_id: asset.object.object_id });
     expect(deletedAsset?.deleted_at).not.toBeNull();
     expect(await assets.getForStorage(asset.object.object_id)).toBeNull();
@@ -181,6 +184,7 @@ describeDatabase("canonical private objects", () => {
       title: "Canonical lifecycle updated",
       summary: "Deleted asset identity remains linkable without retaining its bytes.",
       body_markdown: `[Deleted asset](context-use://object/${asset.object.object_id})`,
+      entity_type: null,
       commit_message: "Link asset tombstone",
       expected_revision_number: 2,
     }, actor);
@@ -192,9 +196,11 @@ describeDatabase("canonical private objects", () => {
       "SELECT 1 FROM knowledge_asset_links WHERE source_version_id=$1",
       [tombstoneLinked!.current_revision_id],
     )).rowCount).toBe(0);
+    expect(tombstoneLinked?.entity_type).toBeNull();
 
     const history = await knowledge.history(created.object_id, { limit: Number.NaN });
     expect(history.revisions.map(({ revision_number }) => revision_number)).toEqual([3, 2, 1]);
+    expect(history.revisions.map(({ entity_type }) => entity_type)).toEqual([null, "thing", "thing"]);
     expect(await knowledge.revision(created.object_id, 2)).toMatchObject({
       object_id: created.object_id,
       revision_number: 2,
@@ -250,6 +256,7 @@ describeDatabase("canonical private objects", () => {
       title: "Running résumé playbook",
       summary: "The strongest title match for a ranked search.",
       body_markdown: "target body",
+      entity_type: "person",
       commit_message: "Create ranked target",
     }, actor);
     createdDocumentIds.add(target.object_id);
@@ -307,6 +314,40 @@ describeDatabase("canonical private objects", () => {
 
     const ranked = await catalog.search("Running", { object_kind: "page" });
     expect(ranked.objects[0]?.object_id).toBe(target.object_id);
+    expect(ranked.objects[0]?.entity_type).toBe("person");
+    expect((await catalog.list({ entity_types: ["person"] })).objects
+      .map(({ object_id }) => object_id)).toContain(target.object_id);
+    expect((await catalog.search("Running", { entity_types: ["person"] })).objects
+      .map(({ object_id }) => object_id)).toEqual([target.object_id]);
+    expect((await catalog.search("person", { entity_types: ["person"] })).objects)
+      .toEqual([]);
+    await expect(catalog.search("Running", {
+      object_kind: "record",
+      entity_types: ["person"],
+    })).rejects.toThrow("only to pages");
+    await expect(catalog.list({
+      catalog_types: ["page", "asset"],
+      entity_types: ["person"],
+    })).rejects.toThrow("record or asset");
+
+    const boostedAnchor = await knowledge.create({
+      title: "Lattice ranking fixture",
+      summary: "An exact shared search fixture.",
+      body_markdown: "shared lattice body",
+      entity_type: "organization",
+      commit_message: "Create ranking anchor",
+    }, actor);
+    createdDocumentIds.add(boostedAnchor.object_id);
+    const untaggedAspect = await knowledge.create({
+      title: "Lattice ranking fixture",
+      summary: "An exact shared search fixture.",
+      body_markdown: "shared lattice body",
+      commit_message: "Create ranking aspect",
+    }, actor);
+    createdDocumentIds.add(untaggedAspect.object_id);
+    expect((await catalog.search("Lattice ranking fixture", {
+      object_kind: "page",
+    })).objects[0]?.object_id).toBe(boostedAnchor.object_id);
     const mixedVector = await knowledge.create({
       title: "Running metadata-only term",
       summary: "The second term exists only in the body search chunks.",

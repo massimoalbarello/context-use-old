@@ -3,6 +3,7 @@ import type { DashboardObjectSummary } from "@context-use/shared";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ObjectDetails } from "./ObjectDetails.tsx";
+import { EntityIdentity } from "./EntityType.tsx";
 import { NewPage } from "./NewPage.tsx";
 import {
   ObjectNavigator,
@@ -18,6 +19,7 @@ const document: DashboardObjectSummary = {
   representation: "markdown",
   lifecycle: "active",
   current_revision_id: "22222222-2222-4222-8222-222222222222",
+  entity_type: null,
   title: "Investment notes",
   summary: "A concise summary of the current investment thesis.",
   filename: null,
@@ -82,6 +84,8 @@ describe("search-first object navigation", () => {
       .toBe("/api/dashboard/objects?limit=40&q=quarterly+plan&types=record%2Cpublic");
     expect(objectCatalogUrl("quarterly plan", ["public", "archived"]))
       .toBe("/api/dashboard/objects?limit=40&q=quarterly+plan&types=public%2Carchived");
+    expect(objectCatalogUrl("quarterly plan", ["page"], undefined, ["person", "place"]))
+      .toBe("/api/dashboard/objects?limit=40&q=quarterly+plan&types=page&entities=person%2Cplace");
   });
 
   test("creates pages without asking for a directory or path", () => {
@@ -92,9 +96,19 @@ describe("search-first object navigation", () => {
     expect(html).toContain("Create a standalone page");
     expect(html).toContain("Title");
     expect(html).toContain("Summary");
+    expect(html).toContain("Entity type");
+    expect(html).toContain("None — ordinary page");
+    expect(html).toContain("Organization");
     expect(html).toContain("context-use://object/&lt;uuid&gt;");
     expect(html).not.toContain("name=\"path\"");
     expect(html.toLowerCase()).not.toContain("folder");
+  });
+
+  test("renders a legible entity identity with the shared label and icon", () => {
+    const html = renderToStaticMarkup(createElement(EntityIdentity, { type: "place" }));
+    expect(html).toContain("entity-identity entity-place");
+    expect(html).toContain("Place");
+    expect(html).toContain("<svg");
   });
 
   test("fallback object details expose stable references and titles", () => {

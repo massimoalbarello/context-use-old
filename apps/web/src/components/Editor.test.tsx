@@ -38,7 +38,10 @@ describe("page version diff", () => {
     const diff: PageVersionDiff = {
       page_id: "11111111-1111-4111-8111-111111111111",
       comparison: { from_version: 2, to_version: 3 },
-      metadata_changes: [{ field: "title", before: "Old title", after: "New title" }],
+      metadata_changes: [
+        { field: "title", before: "Old title", after: "New title" },
+        { field: "entity_type", before: null, after: "organization" },
+      ],
       markdown_changes: [{
         before: "A sentence that changed.\n",
         after: "A clearer sentence.\n",
@@ -50,6 +53,8 @@ describe("page version diff", () => {
     expect(html).toContain("Page details");
     expect(html).toContain("Old title");
     expect(html).toContain("New title");
+    expect(html).toContain("Entity type");
+    expect(html).toContain("Organization");
     expect(html).toContain("Page content");
     expect(html).toContain("A sentence that changed.");
     expect(html).toContain("A clearer sentence.");

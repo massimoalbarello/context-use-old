@@ -4,6 +4,7 @@ import type {
   Actor,
   ArchivePageInput,
   CreatePageInput,
+  PageEntityType,
   UpdatePageInput,
 } from "@context-use/shared";
 import {
@@ -38,6 +39,7 @@ export type PageMetadata = {
   current_revision_id: string;
   public_id: string | null;
   revision_number: number;
+  entity_type: PageEntityType | null;
   title: string;
   summary: string;
   archived_at: Date | string | null;
@@ -55,6 +57,7 @@ export type PageRevision = {
   object_id: string;
   revision_id: string;
   revision_number: number;
+  entity_type: PageEntityType | null;
   title: string;
   summary: string;
   commit_message: string;
@@ -178,7 +181,8 @@ function activePublicationBlocked(error: unknown): boolean {
 const CURRENT_DOCUMENT_SELECT = `
   SELECT page.id AS object_id,page.current_version_id AS current_revision_id,
     resource.public_id,
-    version.version_number AS revision_number,version.title,version.summary,
+    version.version_number AS revision_number,version.entity_type,
+    version.title,version.summary,
     page.archived_at,
     contract.link_contract::text AS current_link_contract,
     coalesce(search.revision_id=page.current_version_id,false) AS search_ready,
@@ -290,9 +294,10 @@ export class KnowledgePageRepository {
       );
       await client.query(
         `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,title,summary,commit_message,actor_kind,actor_subject
-         ) VALUES ($1,$2,1,$3,$4,$5,$6,$7)`,
-        [revisionId, documentId, input.title, input.summary,
+           id,page_id,version_number,entity_type,title,summary,
+           commit_message,actor_kind,actor_subject
+         ) VALUES ($1,$2,1,$3,$4,$5,$6,$7,$8)`,
+        [revisionId, documentId, input.entity_type ?? null, input.title, input.summary,
           input.commit_message, actor.kind, actor.subject],
       );
       await client.query(
@@ -320,8 +325,9 @@ export class KnowledgePageRepository {
       await client.query("SELECT lock_operational_document($1)", [documentId]);
       const current = await client.query<{
         version_number: number;
+        entity_type: PageEntityType | null;
       }>(
-        `SELECT version.version_number
+        `SELECT version.version_number,version.entity_type
          FROM knowledge_pages page
          JOIN knowledge_page_versions version
            ON version.id=page.current_version_id AND version.page_id=page.id
@@ -344,10 +350,12 @@ export class KnowledgePageRepository {
       );
       await client.query(
         `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,title,summary,commit_message,actor_kind,actor_subject
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [revisionId, documentId, revisionNumber, input.title, input.summary,
-          input.commit_message, actor.kind, actor.subject],
+           id,page_id,version_number,entity_type,title,summary,
+           commit_message,actor_kind,actor_subject
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [revisionId, documentId, revisionNumber,
+          input.entity_type === undefined ? row.entity_type : input.entity_type,
+          input.title, input.summary, input.commit_message, actor.kind, actor.subject],
       );
       await client.query(
         `UPDATE knowledge_pages
@@ -387,10 +395,11 @@ export class KnowledgePageRepository {
       await client.query("SELECT lock_operational_document($1)", [documentId]);
       const current = await client.query<{
         version_number: number;
+        entity_type: PageEntityType | null;
         title: string;
         summary: string;
       }>(
-        `SELECT version.version_number,version.title,version.summary
+        `SELECT version.version_number,version.entity_type,version.title,version.summary
          FROM knowledge_pages page
          JOIN knowledge_page_versions version
            ON version.id=page.current_version_id AND version.page_id=page.id
@@ -413,9 +422,10 @@ export class KnowledgePageRepository {
       );
       await client.query(
         `INSERT INTO knowledge_page_versions(
-           id,page_id,version_number,title,summary,commit_message,actor_kind,actor_subject
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [revisionId, documentId, revisionNumber, row.title, row.summary,
+           id,page_id,version_number,entity_type,title,summary,
+           commit_message,actor_kind,actor_subject
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [revisionId, documentId, revisionNumber, row.entity_type, row.title, row.summary,
           input.commit_message, actor.kind, actor.subject],
       );
       await client.query(
@@ -457,7 +467,7 @@ export class KnowledgePageRepository {
     const limit = boundedLimit(options.limit, 50, 100);
     const result = await this.pool.query<StoredKnowledgeRevisionRow>(
       `SELECT version.page_id AS object_id,version.id AS revision_id,
-         version.version_number AS revision_number,
+         version.version_number AS revision_number,version.entity_type,
          version.title,version.summary,version.commit_message,
          version.actor_kind,version.actor_subject,version.created_at,
          contract.link_contract::text AS link_contract,
@@ -492,7 +502,7 @@ export class KnowledgePageRepository {
   ): Promise<PageRevision | null> {
     const result = await this.pool.query<StoredKnowledgeRevisionRow>(
       `SELECT version.page_id AS object_id,version.id AS revision_id,
-         version.version_number AS revision_number,
+         version.version_number AS revision_number,version.entity_type,
          version.title,version.summary,version.commit_message,
          version.actor_kind,version.actor_subject,version.created_at,
          contract.link_contract::text AS link_contract,

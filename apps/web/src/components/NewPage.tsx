@@ -1,6 +1,8 @@
 import { useState } from "react";
+import type { PageEntityType } from "@context-use/shared";
 import { api } from "../api.ts";
 import type { KnowledgePage } from "../types.ts";
+import { EntityTypeField } from "./EntityType.tsx";
 
 export function NewPage({
   onCancel,
@@ -9,7 +11,12 @@ export function NewPage({
   onCancel: () => void;
   onCreated: (objectId: string) => void;
 }) {
-  const [draft, setDraft] = useState({ title: "", summary: "", body_markdown: "" });
+  const [draft, setDraft] = useState<{
+    title: string;
+    summary: string;
+    entity_type: PageEntityType | null;
+    body_markdown: string;
+  }>({ title: "", summary: "", entity_type: null, body_markdown: "" });
   const [commit, setCommit] = useState("");
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("");
@@ -40,8 +47,9 @@ export function NewPage({
     </header>
     <section className="edit-grid">
       <div className="edit-top">
-        <div className="editor-fields single-column">
+        <div className="editor-fields">
           <label>Title<input autoFocus maxLength={240} value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label>
+          <EntityTypeField value={draft.entity_type} onChange={(entity_type) => setDraft({ ...draft, entity_type })} />
           <label className="summary-field">Summary<input maxLength={320} required value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} /></label>
         </div>
       </div>

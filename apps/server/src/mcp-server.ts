@@ -11,6 +11,7 @@ import {
   archivePageSchema,
   createAssetSchema,
   createPageSchema,
+  pageEntityTypeSchema,
   updatePageSchema,
 } from "@context-use/shared";
 import type { PrivateObjectCatalogItem } from "@context-use/database";
@@ -89,6 +90,7 @@ function objectCatalogSummary(object: PrivateObjectCatalogItem) {
     representation: object.representation,
     lifecycle: object.lifecycle,
     current_revision_id: object.current_revision_id,
+    entity_type: object.entity_type,
     title: object.title,
     summary: object.summary,
     filename: object.filename,
@@ -170,14 +172,29 @@ export async function createMcpServer(
       inputSchema: z.object({
         query: z.string().trim().min(1).max(500),
         object_kind: z.enum(["page", "record", "asset"]).optional(),
+        entity_types: z.array(pageEntityTypeSchema)
+          .min(1)
+          .max(5)
+          .refine((entries) => new Set(entries).size === entries.length, "Entity types must be unique")
+          .optional()
+          .describe("Filter canonical entity pages by one or more entity types. Cannot be combined with record or asset object_kind."),
         include_retired: z.boolean().default(false),
         cursor: z.string().min(1).max(4096).optional(),
         limit: z.number().int().min(1).max(100).default(30),
-      }).strict(),
+      }).strict().superRefine((value, refinement) => {
+        if (value.entity_types && value.object_kind && value.object_kind !== "page") {
+          refinement.addIssue({
+            code: "custom",
+            path: ["entity_types"],
+            message: "Entity type filters apply only to pages",
+          });
+        }
+      }),
       annotations: { readOnlyHint: true },
-    }, async ({ query, object_kind, include_retired, cursor, limit }) => {
+    }, async ({ query, object_kind, entity_types, include_retired, cursor, limit }) => {
       const result = await objects.objectCatalog.search(query, {
         ...(object_kind ? { object_kind } : {}),
+        ...(entity_types ? { entity_types } : {}),
         include_retired,
         ...(cursor ? { cursor } : {}),
         limit,
@@ -248,6 +265,7 @@ export async function createMcpServer(
         object_id: page.object_id,
         current_revision_id: page.current_revision_id,
         revision_number: page.revision_number,
+        entity_type: page.entity_type,
         title: page.title,
         summary: page.summary,
         body_markdown: page.body_markdown,
@@ -278,6 +296,7 @@ export async function createMcpServer(
         object_id: updated.object_id,
         current_revision_id: updated.current_revision_id,
         revision_number: updated.revision_number,
+        entity_type: updated.entity_type,
         title: updated.title,
         summary: updated.summary,
         body_markdown: updated.body_markdown,

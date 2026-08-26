@@ -54,10 +54,10 @@ describe("strict mutation schemas", () => {
 
   test("knowledge page writes are canonical and reject publication fields", () => {
     expect(Object.keys(createPageSchema.shape).sort()).toEqual([
-      "body_markdown", "commit_message", "summary", "title",
+      "body_markdown", "commit_message", "entity_type", "summary", "title",
     ]);
     expect(Object.keys(updatePageSchema.shape).sort()).toEqual([
-      "body_markdown", "commit_message", "expected_revision_number", "summary", "title",
+      "body_markdown", "commit_message", "entity_type", "expected_revision_number", "summary", "title",
     ]);
     expect(Object.keys(archivePageSchema.shape).sort()).toEqual([
       "commit_message", "expected_revision_number",
@@ -76,6 +76,10 @@ describe("strict mutation schemas", () => {
       .toBe(false);
     expect(createPageSchema.safeParse({ ...create, summary: "first\nsecond" }).success)
       .toBe(false);
+    expect(createPageSchema.parse({ ...create, entity_type: "person" }).entity_type)
+      .toBe("person");
+    expect(createPageSchema.safeParse({ ...create, entity_type: "project" }).success)
+      .toBe(false);
 
     const update = { ...create, commit_message: "Update private note", expected_revision_number: 2 };
     expect(updatePageSchema.parse(update)).toEqual(update);
@@ -83,6 +87,7 @@ describe("strict mutation schemas", () => {
       .toBe(false);
     expect(updatePageSchema.safeParse({ ...update, expected_revision_number: 0 }).success)
       .toBe(false);
+    expect(updatePageSchema.parse({ ...update, entity_type: null }).entity_type).toBeNull();
     expect(updatePageSchema.safeParse({
       ...update,
       expected_revision_number: undefined,
@@ -138,6 +143,7 @@ describe("strict mutation schemas", () => {
       representation: "markdown" as const,
       lifecycle: "active" as const,
       current_revision_id: versionId,
+      entity_type: "person" as const,
       title: "Private note",
       summary: "A private knowledge document.",
       filename: null,
