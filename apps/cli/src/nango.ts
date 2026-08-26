@@ -1,6 +1,7 @@
 import { sendSsmCommands } from "./aws.ts";
 import {
   createInternalNangoFetcher,
+  INTERNAL_NANGO_REQUEST_TIMEOUT_MILLISECONDS,
   type InternalNangoDependencies,
   verifyExternalNangoBoundary,
 } from "./nango-internal.ts";
@@ -171,13 +172,16 @@ export async function verifyNangoDashboardAuthentication(
   const authorizedFetcher = dependencies.authorizedFetcher
     ?? createInternalNangoFetcher(config, data, instanceId, "dashboard", dependencies.internal);
   const endpoint = `https://${config.nangoHostname}/api/v1/user`;
-  const anonymous = await anonymousFetcher(endpoint, { redirect: "error", signal: AbortSignal.timeout(5_000) });
+  const anonymous = await anonymousFetcher(endpoint, {
+    redirect: "error",
+    signal: AbortSignal.timeout(INTERNAL_NANGO_REQUEST_TIMEOUT_MILLISECONDS),
+  });
   if (anonymous.status !== 401) {
     throw new Error(`unauthenticated request returned HTTP ${anonymous.status}, expected 401`);
   }
   const authorized = await authorizedFetcher(endpoint, {
     redirect: "error",
-    signal: AbortSignal.timeout(5_000),
+    signal: AbortSignal.timeout(INTERNAL_NANGO_REQUEST_TIMEOUT_MILLISECONDS),
   });
   if (!authorized.ok) throw new Error(`Internal Basic authentication returned HTTP ${authorized.status}`);
   return true;

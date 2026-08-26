@@ -41,6 +41,7 @@ const responseMarker = "CONTEXT_USE_NANGO_RESPONSE:";
 const maximumParameterValueBytes = 4_096;
 const maximumResponseBytes = 8 * 1_024;
 export const NANGO_CONNECTION_PAGE_SIZE = 25;
+export const INTERNAL_NANGO_REQUEST_TIMEOUT_MILLISECONDS = 60_000;
 const managedIntegrations = {
   github: { provider: "github", displayName: "GitHub", create: true, oauth: true },
   granola: { provider: "granola-mcp", displayName: "Granola", create: false, oauth: false },
@@ -264,6 +265,11 @@ const boundedString = (value, maximum = 512) => {
   if (typeof value !== "string" || value.length < 1 || value.length > maximum) throw new Error();
   return value;
 };
+const connectionId = (value) => {
+  const result = boundedString(value, 255);
+  if (/[\r\n\0]/.test(result)) throw new Error();
+  return result;
+};
 const projectIntegration = (payload) => {
   const value = payload && typeof payload === "object" ? payload.data : null;
   if (!value || typeof value !== "object" || typeof value.forward_webhooks !== "boolean") throw new Error();
@@ -377,7 +383,7 @@ const assertRequestBody = (request, url) => {
 const projectConnection = (value, includeMetadata) => {
   if (!value || typeof value !== "object") throw new Error();
   const result = {
-    connection_id: identifier(value.connection_id),
+    connection_id: connectionId(value.connection_id),
     provider_config_key: identifier(value.provider_config_key),
   };
   if (includeMetadata) {
@@ -685,6 +691,18 @@ export function createInternalNangoFetcher(
       await deleteRequest(config.awsProfile, config.awsRegion, requestParameter);
     }
   }) as typeof fetch;
+}
+
+export function createInternalNangoApi(
+  config: DeploymentConfig,
+  data: DataOutputs,
+  instanceId: string,
+  access: InternalNangoAccess,
+): { fetcher: typeof fetch; requestTimeoutMilliseconds: number } {
+  return {
+    fetcher: createInternalNangoFetcher(config, data, instanceId, access),
+    requestTimeoutMilliseconds: INTERNAL_NANGO_REQUEST_TIMEOUT_MILLISECONDS,
+  };
 }
 
 export async function probeInternalNangoReady(

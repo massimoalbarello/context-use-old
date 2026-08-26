@@ -5,7 +5,7 @@ import { readInfrastructure } from "../../../lifecycle.ts";
 import { refreshNangoPipelineRuntime } from "../../../deploy.ts";
 import { deployManagedNangoFunctions } from "../../../nango-integration-deployment.ts";
 import { resolveSelectableIntegration, selectableIntegrations } from "../../../nango-integration-selection.ts";
-import { createInternalNangoFetcher } from "../../../nango-internal.ts";
+import { createInternalNangoApi } from "../../../nango-internal.ts";
 import { getNangoIntegration } from "../../../nango-integrations.ts";
 import { ensureNangoApiKeys } from "../../../nango.ts";
 
@@ -32,7 +32,7 @@ export const command = defineCommand("nango integrations deploy", {
 
     const managerKey = "";
     const baseUrl = `https://${config.nangoHostname}`;
-    const nango = { fetcher: createInternalNangoFetcher(config, data, compute.instance_id, "integration-manager") };
+    const nango = createInternalNangoApi(config, data, compute.instance_id, "integration-manager");
 
     // Deploying every integration is a maintenance action, so an integration the
     // user never added is skipped rather than treated as an error. Naming one

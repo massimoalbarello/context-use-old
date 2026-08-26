@@ -3,9 +3,11 @@ import {
   assertInternalNangoRequestBody,
   assertInternalNangoRoute,
   cleanupStaleNangoRequestParameters,
+  createInternalNangoApi,
   createInternalNangoFetcher,
   externalNangoBoundaryCommands,
   internalNangoRequestCommands,
+  INTERNAL_NANGO_REQUEST_TIMEOUT_MILLISECONDS,
   probeInternalNangoReady,
   verifyExternalNangoBoundary,
 } from "./nango-internal.ts";
@@ -66,6 +68,39 @@ function decodedRemoteSource(access: "anonymous" | "dashboard" | "integration-ma
   const start = commands.indexOf(marker) + marker.length;
   const end = commands.indexOf("','base64'", start);
   return Buffer.from(commands.slice(start, end), "base64").toString("utf8");
+}
+
+async function executeRemoteProjection(path: string, payload: unknown): Promise<{
+  exitCode: number;
+  projectedBody: unknown;
+}> {
+  const source = `globalThis.fetch = async () => Response.json(${JSON.stringify(payload)});\n${decodedRemoteSource("integration-manager")}`;
+  const child = Bun.spawn([process.execPath, "-e", source], {
+    env: {
+      ...process.env,
+      CONTEXT_USE_NANGO_ACCESS: "integration-manager",
+      CONTEXT_USE_NANGO_REQUEST_METHOD: "GET",
+      CONTEXT_USE_NANGO_REQUEST_PATH_B64: Buffer.from(path).toString("base64"),
+      NANGO_INTERNAL_API_KEY: "test-key",
+      NANGO_PUBLIC_SERVER_URL: "https://nango.context.example.com",
+    },
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  child.stdin.write(JSON.stringify({ method: "GET", path, body: null }));
+  child.stdin.end();
+  const [exitCode, output] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+  ]);
+  const encoded = output
+    .split(/\r?\n/)
+    .find((line) => line.startsWith("CONTEXT_USE_NANGO_RESPONSE:"))
+    ?.slice("CONTEXT_USE_NANGO_RESPONSE:".length);
+  if (!encoded) return { exitCode, projectedBody: null };
+  const envelope = JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as { body: string };
+  return { exitCode, projectedBody: JSON.parse(envelope.body) };
 }
 
 test("internal Nango controller routes are an exact method and path allowlist", () => {
@@ -181,6 +216,37 @@ test("generic Nango responses use purpose-specific projections rather than redac
   expect(source).not.toContain("[REDACTED]");
   expect(source).not.toContain("sensitive.has");
   expect(source).not.toContain("api-keys");
+});
+
+test("connection-list projection accepts opaque UUID connection IDs and rejects control characters", async () => {
+  const path = "/connections?integrationId=github&limit=25&page=0";
+  const valid = await executeRemoteProjection(path, {
+    connections: [{
+      connection_id: "7a44e905-f305-4b93-95b8-e790e18c2ecc",
+      provider_config_key: "github",
+      ignored: "not projected",
+    }],
+  });
+  expect(valid).toEqual({
+    exitCode: 0,
+    projectedBody: {
+      connections: [{
+        connection_id: "7a44e905-f305-4b93-95b8-e790e18c2ecc",
+        provider_config_key: "github",
+      }],
+    },
+  });
+
+  const invalid = await executeRemoteProjection(path, {
+    connections: [{ connection_id: "unsafe\nvalue", provider_config_key: "github" }],
+  });
+  expect(invalid).toEqual({ exitCode: 1, projectedBody: null });
+});
+
+test("internal Nango API dependencies allow enough time for AWS orchestration", () => {
+  const dependencies = createInternalNangoApi(config, data, "i-123abc", "integration-manager");
+  expect(dependencies.requestTimeoutMilliseconds).toBe(INTERNAL_NANGO_REQUEST_TIMEOUT_MILLISECONDS);
+  expect(dependencies.requestTimeoutMilliseconds).toBeGreaterThan(10_000);
 });
 
 test("internal Nango requests keep bodies in encrypted SSM and credentials on-instance", async () => {
