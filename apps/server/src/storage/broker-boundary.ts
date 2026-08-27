@@ -1,5 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
-import type { BlobStorageBackend, ByteRange } from "../storage.ts";
+import type { BlobStorageBackend, ByteRange } from "#storage/object-storage.ts";
 import type { StorageBrokerTokens } from "./broker-contracts.ts";
 
 function sameSecret({ left, right }: { left: string; right: string }): boolean {
@@ -15,21 +15,15 @@ function bearer(request: Request): string {
   return request.headers.get("authorization")?.match(/^Bearer ([A-Za-z0-9_-]{32,256})$/)?.[1] ?? "";
 }
 
-export function privateCapability({
+export function privateAuthorized({
   request,
   tokens,
 }: {
   request: Request;
   tokens: StorageBrokerTokens;
-}): "dashboard" | "mcp" | null {
+}): boolean {
   const supplied = bearer(request);
-  if (sameSecret({ left: supplied, right: tokens.dashboard })) {
-    return "dashboard";
-  }
-  if (sameSecret({ left: supplied, right: tokens.mcp })) {
-    return "mcp";
-  }
-  return null;
+  return sameSecret({ left: supplied, right: tokens.private });
 }
 
 export function publicAuthorized({

@@ -3,10 +3,21 @@
   "version": "0.1.100",
   "private": true,
   "type": "module",
+  "imports": {
+    "#development/*": "./src/development/*",
+    "#http/*": "./src/http/*",
+    "#markdown/*": "./src/markdown/*",
+    "#private/*": "./src/private/*",
+    "#public/*": "./src/public/*",
+    "#storage/*": "./src/storage/*"
+  },
   "scripts": {
-    "dev": "bun --watch src/index.ts",
-    "start": "bun src/index.ts",
-    "build": "bun build src/index.ts --outdir dist --target bun",
+    "dev": "bun --watch src/development/index.ts",
+    "start": "bun src/development/index.ts",
+    "start:private": "bun src/private/index.ts",
+    "start:public": "bun src/public/index.ts",
+    "start:storage": "bun src/storage/index.ts",
+    "build": "bun build src/private/index.ts src/public/index.ts src/storage/index.ts src/development/index.ts --outdir dist --target bun",
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },

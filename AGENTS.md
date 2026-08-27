@@ -9,7 +9,7 @@ this file.
 
 ## Repository map
 
-- `apps/server` — dashboard, auth, MCP, public web, confirmation, storage, and edge processes.
+- `apps/server` — private application, anonymous public application, and storage broker processes.
 - `apps/web` — authenticated React dashboard.
 - `apps/cli` — installation and operational CLI.
 - `packages/database` — PostgreSQL schema, repositories, administrative commands, and test support.
@@ -21,8 +21,10 @@ this file.
 
 ## Non-negotiable boundaries
 
-- Preserve the separate backend trust domains. A process receives only its own database role,
-  secrets, networks, and internal capabilities.
+- Preserve the three backend trust domains. The private application owns dashboard, auth, MCP, and
+  confirmation in process; the public application owns anonymous publication; only the storage
+  broker receives AWS, S3, and KMS authority. Each process receives only its own database role,
+  secrets, networks, and storage capability.
 - HTTP controllers call services; services call repositories. Do not skip a layer.
 - SQL and external-system mechanics belong in repositories. Business policy does not.
 - Construct dependencies in an application composition root. Importing a module must not open a

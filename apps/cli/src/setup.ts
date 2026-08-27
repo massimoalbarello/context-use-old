@@ -67,12 +67,9 @@ export async function ensureRuntimeParameters(config: DeploymentConfig, data: Da
   const secrets = {
     BETTER_AUTH_SECRET: 48,
     POSTGRES_PASSWORD: 36,
-    DB_AUTH_PASSWORD: 36,
-    DB_DASHBOARD_PASSWORD: 36,
+    DB_PRIVATE_PASSWORD: 36,
     DB_CORPUS_PASSWORD: 36,
-    DB_MCP_PASSWORD: 36,
     DB_PUBLIC_PASSWORD: 36,
-    DB_CONFIRMATION_PASSWORD: 36,
     DB_STORAGE_PASSWORD: 36,
     DB_BACKUP_PASSWORD: 36,
     NANGO_DASHBOARD_PASSWORD: 36,
@@ -85,12 +82,7 @@ export async function ensureRuntimeParameters(config: DeploymentConfig, data: Da
     NANGO_DB_PASSWORD: 36,
     NANGO_BACKUP_DB_PASSWORD: 36,
     MCP_ASSET_CAPABILITY_SECRET: 48,
-    CONFIRMATION_GATEWAY_TOKEN: 48,
-    AUTH_DASHBOARD_TOKEN: 48,
-    AUTH_MCP_TOKEN: 48,
-    CONFIRMATION_DASHBOARD_TOKEN: 48,
-    STORAGE_DASHBOARD_TOKEN: 48,
-    STORAGE_MCP_TOKEN: 48,
+    STORAGE_PRIVATE_TOKEN: 48,
     STORAGE_PUBLIC_TOKEN: 48,
   } as const;
   const progress = p.progress({ max: Object.keys(fixed).length + Object.keys(secrets).length + 2 });

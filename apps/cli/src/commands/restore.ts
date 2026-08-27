@@ -24,7 +24,7 @@ export function restoreCommands(bucket: string, key: string): string[] {
     + "CREATE SCHEMA public AUTHORIZATION pg_database_owner; "
     + "GRANT USAGE ON SCHEMA public TO PUBLIC' -f -";
   const retainedContractCompletion = "INSERT INTO pg_temp.context_use_restore_guard SELECT true FROM pg_temp.context_use_restore_contract_snapshot AS captured WHERE captured.fingerprint=context_use_deployment_internal.restore_contract_fingerprint();";
-  const clients = "caddy dashboard-edge app auth private-mcp public-web confirmation storage";
+  const clients = "caddy private-app public-app storage";
   return [
     "set -euo pipefail",
     "cd /opt/context-use/deploy",
@@ -45,10 +45,8 @@ export function restoreCommands(bucket: string, key: string): string[] {
     `${compose} up --force-recreate --no-deps --abort-on-container-exit --exit-code-from hypermedia-bootstrap hypermedia-bootstrap`,
     // The one-shot succeeded above; explicit no-dependency starts keep Compose
     // from traversing back through it while restoring the long-lived services.
-    `${compose} up -d --wait --no-deps public-web`,
-    `${compose} up -d --wait --no-deps auth confirmation`,
-    `${compose} up -d --wait --no-deps app private-mcp`,
-    `${compose} up -d --wait --no-deps dashboard-edge`,
+    `${compose} up -d --wait --no-deps public-app`,
+    `${compose} up -d --wait --no-deps private-app`,
     `${compose} up -d --remove-orphans --no-deps caddy backup`,
     "trap - EXIT",
   ];

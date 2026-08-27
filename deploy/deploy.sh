@@ -88,8 +88,8 @@ printf '%s\n' \
   "OAUTH2_PROXY_OIDC_ISSUER_URL=https://${app_hostname}" \
   'OAUTH2_PROXY_SKIP_OIDC_DISCOVERY=true' \
   "OAUTH2_PROXY_LOGIN_URL=https://${app_hostname}/api/auth/oauth2/authorize" \
-  'OAUTH2_PROXY_REDEEM_URL=http://auth:3002/api/auth/oauth2/token' \
-  'OAUTH2_PROXY_OIDC_JWKS_URL=http://auth:3002/api/auth/jwks' \
+  'OAUTH2_PROXY_REDEEM_URL=http://private-app:3000/api/auth/oauth2/token' \
+  'OAUTH2_PROXY_OIDC_JWKS_URL=http://private-app:3000/api/auth/jwks' \
   'OAUTH2_PROXY_OIDC_ENABLED_SIGNING_ALGS=EdDSA' \
   'OAUTH2_PROXY_SKIP_CLAIMS_FROM_PROFILE_URL=true' \
   'OAUTH2_PROXY_CLIENT_ID=validation-client' \
@@ -150,12 +150,9 @@ OWNER_EMAIL=${owner_email_literal}
 OWNER_SETUP_TOKEN_HASH=$(get_secret OWNER_SETUP_TOKEN_HASH)
 BETTER_AUTH_SECRET=$(get_secret BETTER_AUTH_SECRET)
 POSTGRES_PASSWORD=$(get_secret POSTGRES_PASSWORD)
-DB_AUTH_PASSWORD=$(get_secret DB_AUTH_PASSWORD)
-DB_DASHBOARD_PASSWORD=$(get_secret DB_DASHBOARD_PASSWORD)
+DB_PRIVATE_PASSWORD=$(get_secret DB_PRIVATE_PASSWORD)
 DB_CORPUS_PASSWORD=$(get_secret DB_CORPUS_PASSWORD)
-DB_MCP_PASSWORD=$(get_secret DB_MCP_PASSWORD)
 DB_PUBLIC_PASSWORD=$(get_secret DB_PUBLIC_PASSWORD)
-DB_CONFIRMATION_PASSWORD=$(get_secret DB_CONFIRMATION_PASSWORD)
 DB_STORAGE_PASSWORD=$(get_secret DB_STORAGE_PASSWORD)
 DB_BACKUP_PASSWORD=$(get_secret DB_BACKUP_PASSWORD)
 NANGO_DB_PASSWORD=$(get_secret NANGO_DB_PASSWORD)
@@ -170,13 +167,8 @@ NANGO_OAUTH_CLIENT_SECRET=$(get_secret NANGO_OAUTH_CLIENT_SECRET)
 NANGO_AUTH_COOKIE_SECRET=$(get_secret NANGO_AUTH_COOKIE_SECRET)
 NANGO_PIPELINE_API_KEY=$(get_secret_if_present NANGO_PIPELINE_API_KEY)
 MCP_ASSET_CAPABILITY_SECRET=$(get_secret MCP_ASSET_CAPABILITY_SECRET)
-CONFIRMATION_GATEWAY_TOKEN=$(get_secret CONFIRMATION_GATEWAY_TOKEN)
-AUTH_DASHBOARD_TOKEN=$(get_secret AUTH_DASHBOARD_TOKEN)
-AUTH_MCP_TOKEN=$(get_secret AUTH_MCP_TOKEN)
 AUTH_NANGO_TOKEN=$(get_secret AUTH_NANGO_TOKEN)
-CONFIRMATION_DASHBOARD_TOKEN=$(get_secret CONFIRMATION_DASHBOARD_TOKEN)
-STORAGE_DASHBOARD_TOKEN=$(get_secret STORAGE_DASHBOARD_TOKEN)
-STORAGE_MCP_TOKEN=$(get_secret STORAGE_MCP_TOKEN)
+STORAGE_PRIVATE_TOKEN=$(get_secret STORAGE_PRIVATE_TOKEN)
 STORAGE_PUBLIC_TOKEN=$(get_secret STORAGE_PUBLIC_TOKEN)
 AWS_REGION=$(get_secret AWS_REGION)
 ASSET_BUCKET=$(get_secret ASSET_BUCKET)
@@ -247,7 +239,7 @@ fi
 # failure, and it keeps the previous release's code off the database while
 # migrations run.
 docker compose --env-file "${secrets}/runtime.env" stop \
-  dashboard-edge app auth private-mcp public-web confirmation storage backup
+  private-app public-app storage backup
 docker compose --env-file "${secrets}/runtime.env" stop \
   nango-auth-gateway nango-public-gateway oauth2-proxy nango-sso-redis \
   nango-jobs nango-backup nango-server nango-persist nango-orchestrator nango-redis
@@ -299,16 +291,11 @@ docker compose --env-file "${secrets}/runtime.env" up \
 # Public pages are the availability priority once preparation succeeds. Bring
 # them back before the dashboard, MCP, and auth services start competing for
 # the same two cores.
-docker compose --env-file "${secrets}/runtime.env" up -d --wait --no-deps public-web
+docker compose --env-file "${secrets}/runtime.env" up -d --wait --no-deps public-app
 # The hypermedia bootstrap and managed-guide synchronization one-shot has
 # already completed above. Start its long-lived consumers without traversing
 # `depends_on`, otherwise Compose starts the one-shot a second time.
-docker compose --env-file "${secrets}/runtime.env" up -d --wait --no-deps \
-  auth confirmation
-docker compose --env-file "${secrets}/runtime.env" up -d --wait --no-deps \
-  app private-mcp
-docker compose --env-file "${secrets}/runtime.env" up -d --wait --no-deps \
-  dashboard-edge
+docker compose --env-file "${secrets}/runtime.env" up -d --wait --no-deps private-app
 # A running Caddy was never stopped and stays untouched; a first install starts
 # it here so the edge still opens before the Nango stack.
 docker compose --env-file "${secrets}/runtime.env" up -d --no-deps caddy
@@ -340,7 +327,7 @@ docker compose --env-file "${secrets}/runtime.env" --profile nango-init run --rm
 # Start only the remaining long-lived services. A bare `compose up` would also
 # restart the completed hypermedia-bootstrap one-shot without observing its exit.
 docker compose --env-file "${secrets}/runtime.env" up -d --remove-orphans \
-  confirmation backup nango-backup
+  backup nango-backup
 # Compose does not recreate a service when only bind-mounted file contents
 # change, and every gateway runs with `admin off`, so there is no reload
 # endpoint either: a changed Caddyfile needs a recreate. Compare the release

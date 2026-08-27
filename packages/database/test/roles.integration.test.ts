@@ -65,6 +65,63 @@ describeDatabase("PostgreSQL security roles", () => {
 
   const challenge = (): string => randomBytes(32).toString("base64url");
 
+  test("three deployed runtime roles retain the intended capability boundaries", async () => {
+    const roles = await admin.query<{
+      rolname: string;
+      rolcanlogin: boolean;
+      rolinherit: boolean;
+    }>(
+      `SELECT rolname::text,rolcanlogin,rolinherit
+       FROM pg_roles
+       WHERE rolname=ANY($1::text[])
+       ORDER BY rolname`,
+      [[
+        "context_use_auth",
+        "context_use_confirmation",
+        "context_use_dashboard",
+        "context_use_mcp",
+        "context_use_private",
+        "context_use_public",
+        "context_use_storage",
+      ]],
+    );
+    expect(roles.rows.find(({ rolname }) => rolname === "context_use_private"))
+      .toMatchObject({ rolcanlogin: true, rolinherit: true });
+    for (const legacyRole of [
+      "context_use_auth",
+      "context_use_dashboard",
+      "context_use_mcp",
+      "context_use_confirmation",
+    ]) {
+      expect(roles.rows.find(({ rolname }) => rolname === legacyRole)?.rolcanlogin)
+        .toBe(false);
+      expect((await admin.query<{ member: boolean }>(
+        "SELECT pg_has_role('context_use_private',$1,'MEMBER') AS member",
+        [legacyRole],
+      )).rows[0]?.member).toBe(true);
+    }
+
+    expect((await admin.query<{ allowed: boolean }>(
+      "SELECT has_table_privilege('context_use_private','auth.session','SELECT') AS allowed",
+    )).rows[0]?.allowed).toBe(true);
+    expect((await admin.query<{ allowed: boolean }>(
+      "SELECT has_table_privilege('context_use_private','knowledge_pages','SELECT') AS allowed",
+    )).rows[0]?.allowed).toBe(true);
+    expect((await admin.query<{ allowed: boolean }>(
+      `SELECT has_function_privilege(
+         'context_use_private',
+         'issue_confirmation_challenge(confirmation_intent_kind,uuid,text)',
+         'EXECUTE'
+       ) AS allowed`,
+    )).rows[0]?.allowed).toBe(true);
+    for (const role of ["context_use_public", "context_use_storage"]) {
+      expect((await admin.query<{ allowed: boolean }>(
+        "SELECT has_table_privilege($1,'auth.session','SELECT') AS allowed",
+        [role],
+      )).rows[0]?.allowed).toBe(false);
+    }
+  });
+
   async function ensureOwnerPasskey(counter = 0): Promise<void> {
     await admin.query(
       `INSERT INTO auth."user"(id,name,email,"emailVerified")

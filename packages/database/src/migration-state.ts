@@ -9,12 +9,9 @@ export type AppliedMigration = {
 };
 
 export const MIGRATION_ROLE_PASSWORD_ENV = {
-  context_use_auth: "DB_AUTH_PASSWORD",
-  context_use_dashboard: "DB_DASHBOARD_PASSWORD",
+  context_use_private: "DB_PRIVATE_PASSWORD",
   context_use_corpus: "DB_CORPUS_PASSWORD",
-  context_use_mcp: "DB_MCP_PASSWORD",
   context_use_public: "DB_PUBLIC_PASSWORD",
-  context_use_confirmation: "DB_CONFIRMATION_PASSWORD",
   context_use_storage: "DB_STORAGE_PASSWORD",
   context_use_backup: "DB_BACKUP_PASSWORD",
 } as const;

@@ -8,6 +8,7 @@ import {
 } from "./migrations/catalog.ts";
 import { applyPendingMigrations, validateMigrationLedger } from "./migrations/ledger.ts";
 import { configureMigrationRolePasswords } from "./migrations/role-passwords.ts";
+import { ensurePrivateRuntimeRole } from "./migrations/runtime-roles.ts";
 import {
   PREPARE_RESTORE_OWNERSHIP_ENV,
   RECONCILE_RESTORE_OWNERSHIP_ENV,
@@ -68,6 +69,9 @@ try {
         baseline: stream === "auth" ? "001_create_auth_schema.sql" : "001_application_schema.sql",
         stream,
       });
+      if (stream === "application") {
+        await ensurePrivateRuntimeRole(client);
+      }
       await applyPendingMigrations({
         client,
         migrations,

@@ -1,9 +1,8 @@
 import type { StoragePublicationRepository } from "@context-use/database/publication";
-import type { BlobStorageBackend } from "../storage.ts";
+import type { BlobStorageBackend } from "#storage/object-storage.ts";
 
 export type StorageBrokerTokens = {
-  dashboard: string;
-  mcp: string;
+  private: string;
   public: string;
 };
 

@@ -47,12 +47,9 @@ jobs:
     env:
       MIGRATOR_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/context_use_test
       TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/context_use_test
-      DB_AUTH_PASSWORD: test-only
-      DB_DASHBOARD_PASSWORD: test-only
+      DB_PRIVATE_PASSWORD: test-only
       DB_CORPUS_PASSWORD: test-only
-      DB_MCP_PASSWORD: test-only
       DB_PUBLIC_PASSWORD: test-only
-      DB_CONFIRMATION_PASSWORD: test-only
       DB_STORAGE_PASSWORD: test-only
       DB_BACKUP_PASSWORD: test-only
     steps:
