@@ -2,7 +2,7 @@ import { z } from "zod";
 import { config } from "./config.ts";
 
 export type DashboardPrincipal = { userId: string; sessionId: string; email: string };
-export type DashboardAuthorizationKind = "read" | "json" | "upload" | "download";
+export type DashboardAuthorizationKind = "read" | "json" | "upload";
 
 const principalSchema = z.object({
   userId: z.string().min(1),

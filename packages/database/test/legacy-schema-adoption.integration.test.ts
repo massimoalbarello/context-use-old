@@ -9,7 +9,10 @@ import {
   LEGACY_MIGRATIONS,
 } from "../src/legacy-schema.ts";
 import { loadMigrationStreams } from "../src/migrations/catalog.ts";
-import { applyPendingMigrations } from "../src/migrations/ledger.ts";
+import {
+  applyPendingMigrations,
+  validateMigrationLedger,
+} from "../src/migrations/ledger.ts";
 
 const serverUrl = await disposableDatabaseUrl();
 const describeDatabase = serverUrl ? describe : describe.skip;
@@ -35,10 +38,6 @@ function databaseUrl({ source, database }: { source: string; database: string })
 
 describeDatabase("legacy auth schema adoption", () => {
   const database = `context_use_adoption_${randomUUID().replaceAll("-", "")}`;
-  const sourceDatabase = new URL(serverUrl ?? "postgres://localhost/postgres").pathname.replace(
-    /^\//,
-    "",
-  );
   const maintenanceUrl = databaseUrl({
     source: serverUrl ?? "postgres://localhost/postgres",
     database: "postgres",
@@ -55,11 +54,31 @@ describeDatabase("legacy auth schema adoption", () => {
   beforeAll(async () => {
     maintenance = new Client({ connectionString: maintenanceUrl });
     await maintenance.connect();
-    await maintenance.query(
-      `CREATE DATABASE ${identifier(database)} TEMPLATE ${identifier(sourceDatabase)}`,
-    );
+    await maintenance.query(`CREATE DATABASE ${identifier(database)} TEMPLATE template0`);
     target = new Client({ connectionString: targetUrl });
     await target.connect();
+    await validateMigrationLedger({
+      client: target,
+      migrations: targetMigrationStreams.auth,
+      baseline: "001_create_auth_schema.sql",
+      stream: "auth",
+    });
+    await applyPendingMigrations({
+      client: target,
+      migrations: targetMigrationStreams.auth,
+      stream: "auth",
+    });
+    await validateMigrationLedger({
+      client: target,
+      migrations: targetMigrationStreams.application.slice(0, 3),
+      baseline: "001_application_schema.sql",
+      stream: "application",
+    });
+    await applyPendingMigrations({
+      client: target,
+      migrations: targetMigrationStreams.application.slice(0, 3),
+      stream: "application",
+    });
     await target.query(`
       DROP INDEX auth."passkey_userId_idx";
       ALTER INDEX auth.passkey_credential_id_unique RENAME TO "passkey_credentialID_unique";
@@ -86,11 +105,8 @@ describeDatabase("legacy auth schema adoption", () => {
     await target.query("DROP TABLE public.auth_schema_migrations");
     await target.query(`
       REVOKE INSERT ON TABLE
-        public.knowledge_bundle_import_policy,
         public.knowledge_settings,
         public.publication_settings
-      FROM context_use_boundary_owner;
-      REVOKE SELECT (singleton) ON TABLE public.knowledge_bundle_import_policy
       FROM context_use_boundary_owner;
     `);
     await target.query("DELETE FROM public.schema_migrations");
@@ -147,21 +163,12 @@ describeDatabase("legacy auth schema adoption", () => {
     expect((await target.query('SELECT 1 FROM auth."user" WHERE id=$1', [ownerId])).rowCount).toBe(
       1,
     );
-    for (const table of [
-      "knowledge_bundle_import_policy",
-      "knowledge_settings",
-      "publication_settings",
-    ]) {
+    for (const table of ["knowledge_settings", "publication_settings"]) {
       expect((await target.query<{ allowed: boolean }>(
         "SELECT has_table_privilege('context_use_boundary_owner',$1,'INSERT') AS allowed",
         [table],
       )).rows[0]?.allowed).toBe(true);
     }
-    expect((await target.query<{ allowed: boolean }>(
-      `SELECT has_column_privilege(
-         'context_use_boundary_owner','knowledge_bundle_import_policy','singleton','SELECT'
-       ) AS allowed`,
-    )).rows[0]?.allowed).toBe(true);
     expect((await target.query<{ allowed: boolean }>(
       "SELECT has_table_privilege('context_use_backup','auth_schema_migrations','SELECT') AS allowed",
     )).rows[0]?.allowed).toBe(true);
@@ -182,11 +189,8 @@ describeDatabase("legacy auth schema adoption", () => {
       DELETE FROM public.schema_migrations
       WHERE version='003_grant_bootstrap_and_migration_ledgers.sql';
       REVOKE INSERT ON TABLE
-        public.knowledge_bundle_import_policy,
         public.knowledge_settings,
         public.publication_settings
-      FROM context_use_boundary_owner;
-      REVOKE SELECT (singleton) ON TABLE public.knowledge_bundle_import_policy
       FROM context_use_boundary_owner;
       REVOKE SELECT ON TABLE
         public.auth_schema_migrations,

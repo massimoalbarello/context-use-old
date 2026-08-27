@@ -118,7 +118,6 @@ export async function cleanupPublicationFixtures(
     await client.query("DELETE FROM public_page_artifacts WHERE artifact_id=ANY($1::uuid[])", [artifactIds]);
     await client.query("DELETE FROM public_asset_artifacts WHERE artifact_id=ANY($1::uuid[])", [artifactIds]);
     await client.query("DELETE FROM publication_intents WHERE id=ANY($1::uuid[])", [intentIds]);
-    await client.query("DELETE FROM knowledge_export_intents WHERE id=ANY($1::uuid[])", [intentIds]);
     await client.query("DELETE FROM page_deletion_intents WHERE id=ANY($1::uuid[])", [intentIds]);
     await client.query(
       "DELETE FROM publication_intent_id_reservations WHERE intent_id=ANY($1::uuid[])",

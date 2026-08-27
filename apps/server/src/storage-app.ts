@@ -2,7 +2,6 @@ import { chmod, unlink } from "node:fs/promises";
 import {
   AssetRepository,
   BlobMaintenanceRepository,
-  KnowledgeBundleRepository,
   createPool,
 } from "@context-use/database";
 import { StoragePublicationRepository } from "@context-use/database/publication";
@@ -26,14 +25,12 @@ const pool = createPool(config.STORAGE_DATABASE_URL, {
 });
 const privateAssets = new AssetRepository(pool);
 const publications = new StoragePublicationRepository(pool);
-const knowledgeBundles = new KnowledgeBundleRepository(pool);
 const blobMaintenance = new BlobMaintenanceRepository(pool);
 
 export const storageApp = createStorageBrokerApp({
   storage,
   privateAssets,
   publications,
-  knowledgeBundles,
   tokens: {
     dashboard: config.STORAGE_DASHBOARD_TOKEN,
     mcp: config.STORAGE_MCP_TOKEN,
@@ -75,10 +72,6 @@ export async function listenStorageSocket(): Promise<void> {
         [
           "/private/blob",
           "/private/markdown-blob",
-          "/private/bundle",
-          "/private/import-part",
-          "/private/import-blob",
-          "/private/bundle-source",
           "/private/publication-artifact",
         ].includes(new URL(request.url).pathname)
       ) {

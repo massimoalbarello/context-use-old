@@ -46,12 +46,6 @@ export function assertDashboardUploadSecurity(request: Request, principal: Dashb
   assertDashboardMutationSource(request, principal);
 }
 
-export function assertDashboardDownloadSecurity(request: Request): void {
-  if (request.headers.get("sec-fetch-site") !== "same-origin") {
-    throw new SecurityError("Missing or cross-site Fetch Metadata", 403);
-  }
-}
-
 export class SecurityError extends Error {
   constructor(message: string, readonly status = 401) {
     super(message);

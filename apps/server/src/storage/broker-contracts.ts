@@ -1,4 +1,3 @@
-import type { KnowledgeBundleRepository } from "@context-use/database";
 import type { StoragePublicationRepository } from "@context-use/database/publication";
 import type { BlobStorageBackend } from "../storage.ts";
 
@@ -33,7 +32,6 @@ export type StorageBrokerDependencies = {
   storage: BlobStorageBackend;
   privateAssets: PrivateAssetLookup;
   publications?: PublicationClaims;
-  knowledgeBundles?: Pick<KnowledgeBundleRepository, "importBlobAuthorization">;
   tokens: StorageBrokerTokens;
 };
 

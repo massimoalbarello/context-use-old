@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 
-export type ConfirmationIntentKind = "publication" | "knowledge_export" | "knowledge_import" | "page_deletion";
+export type ConfirmationIntentKind = "publication" | "page_deletion";
 
 export type ConfirmationPasskey = {
   id: string;
@@ -35,10 +35,11 @@ export class ConfirmationRepository {
   constructor(private readonly pool: Pool) {}
 
   async issueChallenge(kind: ConfirmationIntentKind, intentId: string, challenge: string): Promise<void> {
-    await this.pool.query(kind === "knowledge_import"
-      ? "SELECT issue_knowledge_bundle_import_challenge($1,$2)"
-      : "SELECT issue_confirmation_challenge($1,$2,$3)",
-    kind === "knowledge_import" ? [intentId, challenge] : [kind, intentId, challenge]);
+    await this.pool.query("SELECT issue_confirmation_challenge($1,$2,$3)", [
+      kind,
+      intentId,
+      challenge,
+    ]);
   }
 
   async passkeys(ownerUserId: string): Promise<ConfirmationPasskey[]> {
@@ -62,33 +63,6 @@ export class ConfirmationRepository {
          ON ledger.intent_kind='publication' AND ledger.intent_id=intent.id
        WHERE reservation.intent_id=$1
        `,
-      [id],
-    );
-    return result.rows[0] ?? null;
-  }
-
-  async exportIntent(id: string) {
-    const result = await this.pool.query(
-      `SELECT intent.id,intent.owner_user_id,intent.session_id,ledger.challenge,
-        intent.expires_at,intent.confirmed_at,intent.download_started_at
-       FROM knowledge_export_intents intent
-       JOIN knowledge_bundle_exports bundle ON bundle.intent_id=intent.id
-       LEFT JOIN confirmation_challenges ledger
-         ON ledger.intent_kind='knowledge_export' AND ledger.intent_id=intent.id
-       WHERE intent.id=$1`,
-      [id],
-    );
-    return result.rows[0] ?? null;
-  }
-
-  async importIntent(id: string) {
-    const result = await this.pool.query(
-      `SELECT job.id,job.owner_user_id,job.session_id,ledger.challenge,
-         job.expires_at,job.confirmed_at,job.status
-       FROM knowledge_bundle_imports job
-       LEFT JOIN confirmation_challenges ledger
-         ON ledger.intent_kind='knowledge_import' AND ledger.intent_id=job.id
-       WHERE job.id=$1`,
       [id],
     );
     return result.rows[0] ?? null;
@@ -119,30 +93,6 @@ export class ConfirmationRepository {
     );
   }
 
-  async confirmExport(
-    intentId: string,
-    principal: { ownerUserId: string; sessionId: string },
-    passkey: VerifiedPasskey,
-  ): Promise<void> {
-    await this.pool.query(
-      "SELECT confirm_knowledge_export_intent($1,$2,$3,$4,$5,$6)",
-      [intentId, principal.ownerUserId, principal.sessionId, passkey.credentialId,
-        passkey.expectedCounter, passkey.newCounter],
-    );
-  }
-
-  async confirmImport(
-    intentId: string,
-    principal: { ownerUserId: string; sessionId: string },
-    passkey: VerifiedPasskey,
-  ): Promise<void> {
-    await this.pool.query(
-      "SELECT confirm_knowledge_bundle_import($1,$2,$3,$4,$5,$6)",
-      [intentId, principal.ownerUserId, principal.sessionId, passkey.credentialId,
-        passkey.expectedCounter, passkey.newCounter],
-    );
-  }
-
   async confirmPageDeletion(
     intentId: string,
     principal: { ownerUserId: string; sessionId: string },
@@ -152,13 +102,6 @@ export class ConfirmationRepository {
       "SELECT confirm_page_deletion_intent($1,$2,$3,$4,$5,$6)",
       [intentId, principal.ownerUserId, principal.sessionId, passkey.credentialId,
         passkey.expectedCounter, passkey.newCounter],
-    );
-  }
-
-  async claimExport(intentId: string, principal: { ownerUserId: string; sessionId: string }): Promise<void> {
-    await this.pool.query(
-      "SELECT claim_knowledge_export_download($1,$2,$3)",
-      [intentId, principal.ownerUserId, principal.sessionId],
     );
   }
 

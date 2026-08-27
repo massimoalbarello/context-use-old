@@ -8,13 +8,8 @@ function store(overrides: Partial<ConfirmationStore> = {}): ConfirmationStore {
   return {
     passkeys: async () => [],
     issueChallenge: async () => undefined,
-    claimExport: async () => undefined,
     publicationIntent: async () => null,
     confirmPublication: async () => undefined,
-    exportIntent: async () => null,
-    confirmExport: async () => undefined,
-    importIntent: async () => null,
-    confirmImport: async () => undefined,
     pageDeletionIntent: async () => null,
     confirmPageDeletion: async () => undefined,
     ...overrides,

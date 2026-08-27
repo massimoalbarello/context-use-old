@@ -232,10 +232,6 @@ export class AssetRepository {
         [objectId],
       );
       if (referenced.rowCount) return null;
-      if ((await client.query(
-        `SELECT 1 FROM knowledge_export_intents
-         WHERE download_started_at IS NOT NULL AND expires_at>now() LIMIT 1`,
-      )).rowCount) return null;
       const deleted = await client.query<{ s3_object_key: string }>(
         `UPDATE assets SET deleted_at=now()
          WHERE id=$1 AND deleted_at IS NULL

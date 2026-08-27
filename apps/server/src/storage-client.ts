@@ -146,109 +146,15 @@ export class BrokeredStorage implements BlobStorage {
     // immutable blob key selected by their private metadata repository.
     const query = this.options.publicOnly
       ? `/public/object?path=${encodeURIComponent(blobKey)}`
-      : blobKey.startsWith("bundles/")
-          ? `/private/bundle?key=${encodeURIComponent(blobKey)}`
-          : blobKey.startsWith("imports/")
-            ? `/private/import-part?key=${encodeURIComponent(blobKey)}`
-            : blobKey.startsWith("documents/private/")
-              ? `/private/markdown-blob?key=${encodeURIComponent(blobKey)}`
-              : blobKey.startsWith("documents/public/") || blobKey.startsWith("artifacts/public/")
-                ? `/private/bundle-source?key=${encodeURIComponent(blobKey)}`
-                : `/private/blob?key=${encodeURIComponent(blobKey)}`;
+      : blobKey.startsWith("documents/private/")
+        ? `/private/markdown-blob?key=${encodeURIComponent(blobKey)}`
+        : `/private/blob?key=${encodeURIComponent(blobKey)}`;
     const response = await this.request(query, {
       headers: range ? { range: `bytes=${range.start}-${range.end}` } : {},
     });
     if (response.status === 404) throw new AssetNotFoundError();
     if (!response.ok || !response.body) throw new Error(`Storage read failed (${response.status})`);
     return response.body;
-  }
-
-  async writeBundle(
-    blobKey: string,
-    body: ReadableStream<Uint8Array> | null,
-  ): Promise<GeneratedBlobMetadata> {
-    if (this.options.publicOnly) throw new Error("Published storage is read-only");
-    const response = await this.request(`/private/bundle?key=${encodeURIComponent(blobKey)}`, {
-      method: "PUT",
-      headers: { "content-type": "application/vnd.context-use.knowledge-bundle" },
-      body,
-    });
-    if (!response.ok) throw new Error(`Knowledge bundle storage write failed (${response.status})`);
-    const result = await response.json() as { size_bytes?: unknown; content_hash?: unknown };
-    if (!Number.isSafeInteger(result.size_bytes) || Number(result.size_bytes) <= 0
-        || typeof result.content_hash !== "string" || !/^[a-f0-9]{64}$/.test(result.content_hash)) {
-      throw new Error("Knowledge bundle storage returned invalid metadata");
-    }
-    return { sizeBytes: Number(result.size_bytes), contentHash: result.content_hash };
-  }
-
-  async inspectBundle(blobKey: string): Promise<GeneratedBlobMetadata | null> {
-    const response = await this.request(`/private/bundle?key=${encodeURIComponent(blobKey)}`, { method: "HEAD" });
-    if (response.status === 404) return null;
-    if (!response.ok) throw new Error(`Knowledge bundle storage inspection failed (${response.status})`);
-    const sizeBytes = Number(response.headers.get("content-length"));
-    const contentHash = response.headers.get("x-content-sha256") ?? "";
-    return Number.isSafeInteger(sizeBytes) && sizeBytes > 0 && /^[a-f0-9]{64}$/.test(contentHash)
-      ? { sizeBytes, contentHash }
-      : null;
-  }
-
-  async deleteBundle(blobKey: string): Promise<void> {
-    const response = await this.request(`/private/bundle?key=${encodeURIComponent(blobKey)}`, { method: "DELETE" });
-    if (!response.ok) throw new Error(`Knowledge bundle storage deletion failed (${response.status})`);
-  }
-
-  async writeImportPart(input: {
-    importId: string;
-    partNumber: number;
-    blobKey: string;
-    sizeBytes: number;
-    contentHash: string;
-    body: ReadableStream<Uint8Array> | null;
-  }): Promise<void> {
-    const response = await this.request("/private/import-part", {
-      method: "PUT",
-      headers: {
-        "content-length": String(input.sizeBytes),
-        "x-import-id": input.importId,
-        "x-part-number": String(input.partNumber),
-        "x-blob-key": input.blobKey,
-        "x-content-sha256": input.contentHash,
-      },
-      body: input.body,
-    });
-    if (!response.ok) throw new Error(`Knowledge bundle part write failed (${response.status})`);
-  }
-
-  async deleteImportPart(blobKey: string): Promise<void> {
-    const response = await this.request(`/private/import-part?key=${encodeURIComponent(blobKey)}`, {
-      method: "DELETE",
-    });
-    if (!response.ok) throw new Error(`Knowledge bundle part deletion failed (${response.status})`);
-  }
-
-  async writeImportedBlob(input: {
-    importId: string;
-    blob: {
-      blob_key: string;
-      size_bytes: number | string;
-      content_hash: string;
-      content_type: string;
-    };
-    body: ReadableStream<Uint8Array> | null;
-  }): Promise<void> {
-    const response = await this.request("/private/import-blob", {
-      method: "PUT",
-      headers: {
-        "content-length": String(input.blob.size_bytes),
-        "x-import-id": input.importId,
-        "x-blob-key": input.blob.blob_key,
-        "x-content-type": input.blob.content_type,
-        "x-content-sha256": input.blob.content_hash,
-      },
-      body: input.body,
-    });
-    if (!response.ok) throw new Error(`Imported knowledge blob write failed (${response.status})`);
   }
 
   async materializePublicationArtifact(allocationId: string): Promise<void> {

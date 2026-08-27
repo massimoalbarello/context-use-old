@@ -1,7 +1,7 @@
 import { authorizeDashboardRequest, type DashboardPrincipal } from "../../auth-client.ts";
 import { requestMatchesOrigin, SecurityError } from "../../security.ts";
 
-export type OwnerRequestMode = "read" | "json" | "upload" | "download";
+export type OwnerRequestMode = "read" | "json" | "upload";
 
 export type AuthorizeOwner = (input: {
   request: Request;

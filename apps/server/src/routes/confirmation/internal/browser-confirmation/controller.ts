@@ -43,12 +43,6 @@ export function createBrowserConfirmationController({
     .post("/internal/browser-confirmation/publication", ({ request }) =>
       confirm({ request, kind: "publication" }),
     )
-    .post("/internal/browser-confirmation/knowledge_export", ({ request }) =>
-      confirm({ request, kind: "knowledge_export" }),
-    )
-    .post("/internal/browser-confirmation/knowledge_import", ({ request }) =>
-      confirm({ request, kind: "knowledge_import" }),
-    )
     .post("/internal/browser-confirmation/page_deletion", ({ request }) =>
       confirm({ request, kind: "page_deletion" }),
     );
