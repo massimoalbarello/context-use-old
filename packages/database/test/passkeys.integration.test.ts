@@ -33,6 +33,7 @@ describeDatabase("owner passkey schema", () => {
       "001_application_schema.sql",
       "002_harden_owner_auth.sql",
       "003_grant_bootstrap_and_migration_ledgers.sql",
+      "004_remove_knowledge_bundles.sql",
     ]);
 
     const relations = await admin.query<{ schema_name: string; relation_name: string }>(

@@ -13,6 +13,7 @@ import {
   applyPendingMigrations,
   validateMigrationLedger,
 } from "../src/migrations/ledger.ts";
+import { MIGRATION_ROLE_PASSWORD_ENV } from "../src/migration-state.ts";
 
 const serverUrl = await disposableDatabaseUrl();
 const describeDatabase = serverUrl ? describe : describe.skip;
@@ -50,6 +51,7 @@ describeDatabase("legacy auth schema adoption", () => {
   const ownerEmail = `adoption-fixture-${randomUUID()}@example.invalid`;
   let maintenance: Client;
   let target: Client;
+  let serviceRoleLoginStates: Array<{ rolname: string; rolcanlogin: boolean }> = [];
 
   beforeAll(async () => {
     maintenance = new Client({ connectionString: maintenanceUrl });
@@ -57,6 +59,11 @@ describeDatabase("legacy auth schema adoption", () => {
     await maintenance.query(`CREATE DATABASE ${identifier(database)} TEMPLATE template0`);
     target = new Client({ connectionString: targetUrl });
     await target.connect();
+    serviceRoleLoginStates = (await target.query<{ rolname: string; rolcanlogin: boolean }>(
+      `SELECT rolname,rolcanlogin FROM pg_roles
+       WHERE rolname=ANY($1::text[])`,
+      [Object.keys(MIGRATION_ROLE_PASSWORD_ENV)],
+    )).rows;
     await validateMigrationLedger({
       client: target,
       migrations: targetMigrationStreams.auth,
@@ -125,9 +132,13 @@ describeDatabase("legacy auth schema adoption", () => {
   });
 
   afterAll(async () => {
+    for (const { rolname, rolcanlogin } of serviceRoleLoginStates) {
+      await target?.query(`ALTER ROLE ${identifier(rolname)} ${rolcanlogin ? "LOGIN" : "NOLOGIN"}`);
+    }
     await target?.end().catch(() => {});
     if (maintenance) {
       await maintenance.query(`DROP DATABASE IF EXISTS ${identifier(database)} WITH (FORCE)`);
+      await maintenance.query("DROP ROLE IF EXISTS context_use_import_owner");
       await maintenance.end();
     }
   });
