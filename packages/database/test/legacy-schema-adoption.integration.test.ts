@@ -13,6 +13,7 @@ import {
   applyPendingMigrations,
   validateMigrationLedger,
 } from "../src/migrations/ledger.ts";
+import { ensurePrivateRuntimeRole } from "../src/migrations/runtime-roles.ts";
 import { MIGRATION_ROLE_PASSWORD_ENV } from "../src/migration-state.ts";
 
 const serverUrl = await disposableDatabaseUrl();
@@ -222,6 +223,7 @@ describeDatabase("legacy auth schema adoption", () => {
       "002_harden_owner_auth.sql",
     ]);
 
+    await ensurePrivateRuntimeRole(target);
     await applyPendingMigrations({
       client: target,
       migrations: targetMigrationStreams.application,

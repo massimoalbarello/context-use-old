@@ -27,6 +27,11 @@ confirmation grant roles so their SQL capabilities remain reviewable without cre
 networked runtimes. Corpus bootstrap and backup remain explicit operational roles. Do not grant a
 runtime login broad ownership merely to simplify composition.
 
+PostgreSQL roles are cluster-global. When a later release introduces a runtime role, provision its
+existence through a named migrator boundary after ledger validation; let the migration define its
+flags, memberships, and database grants. Do not add another anonymous `DO` block to make role
+creation conditional inside a forward migration.
+
 ## Migration streams
 
 Migration orchestration is split under `src/migrations`: catalog loading, ledger verification and
