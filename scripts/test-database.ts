@@ -13,12 +13,9 @@ export const TEST_DATABASE = {
 // matter to the suites that connect as an application role, and this server
 // holds nothing worth protecting.
 const ROLE_PASSWORDS = {
-  DB_AUTH_PASSWORD: "test-only",
-  DB_DASHBOARD_PASSWORD: "test-only",
+  DB_PRIVATE_PASSWORD: "test-only",
   DB_CORPUS_PASSWORD: "test-only",
-  DB_MCP_PASSWORD: "test-only",
   DB_PUBLIC_PASSWORD: "test-only",
-  DB_CONFIRMATION_PASSWORD: "test-only",
   DB_STORAGE_PASSWORD: "test-only",
   DB_BACKUP_PASSWORD: "test-only",
 } as const;

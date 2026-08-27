@@ -248,7 +248,7 @@ test("the scoped Nango pipeline key is installed remotely without crossing the c
   expect(commands).toContain("/context-use/abcdef123456/production/NANGO_PIPELINE_API_KEY");
   expect(commands).toContain("aws ssm get-parameter");
   expect(commands).toContain("awk -F= '$1 != \"NANGO_PIPELINE_API_KEY\"'");
-  expect(commands).toContain("up -d --wait --force-recreate --no-deps private-mcp");
+  expect(commands).toContain("up -d --wait --force-recreate --no-deps private-app");
   expect(commands).not.toContain("context-use-pipeline-secret");
   expect(() => nangoPipelineRuntimeCommands(deploymentConfig({ installationId: "bad;id" })))
     .toThrow("Invalid Nango pipeline parameter prefix");
@@ -408,7 +408,7 @@ test("restore verifies the backup, keeps traffic down on failure, migrates, and 
   expect(script).toContain("backup fetch 'postgres/2026-07-17T10-39-47Z.sql.gz'");
   expect(script).not.toContain("aws s3 cp");
   expect(script).toContain("stop backup");
-  expect(script).toContain("stop caddy dashboard-edge app auth private-mcp");
+  expect(script).toContain("stop caddy private-app public-app storage");
   expect(script).toContain("trap restore_failed EXIT");
   const failureHandler = script.slice(script.indexOf("restore_failed()"), script.indexOf("trap restore_failed EXIT"));
   expect(failureHandler).toContain("up -d postgres aws-credential-broker");
@@ -417,8 +417,8 @@ test("restore verifies the backup, keeps traffic down on failure, migrates, and 
   expect(script).toContain("CONTEXT_USE_ADOPT_PENDING_RESTORE=true");
   const storage = "up -d --wait storage";
   const prepare = "--exit-code-from hypermedia-bootstrap hypermedia-bootstrap";
-  const publicWeb = "up -d --wait --no-deps public-web";
-  const privateServices = "up -d --wait --no-deps app private-mcp";
+  const publicWeb = "up -d --wait --no-deps public-app";
+  const privateServices = "up -d --wait --no-deps private-app";
   expect(script).toContain("--force-recreate --no-deps --abort-on-container-exit");
   expect(script.indexOf("MIGRATOR_RECONCILE_RESTORE_OWNERSHIP=true")).toBeLessThan(script.indexOf(storage));
   expect(script.indexOf(storage)).toBeLessThan(script.indexOf(prepare));
@@ -524,7 +524,7 @@ test("manual dashboard, asset, and Nango DNS must resolve to the deployment IP",
 test("the Nango SSO edge can read a verified email out of the ID token", async () => {
   const [deployCompose, authSource] = await Promise.all([
     Bun.file(new URL("../../../deploy/docker-compose.yml", import.meta.url)).text(),
-    Bun.file(new URL("../../server/src/auth.ts", import.meta.url)).text(),
+    Bun.file(new URL("../../server/src/private/auth/auth-engine.ts", import.meta.url)).text(),
   ]);
   const compose = Bun.YAML.parse(deployCompose) as {
     services: Record<string, { environment?: Record<string, string> }>;
@@ -533,7 +533,7 @@ test("the Nango SSO edge can read a verified email out of the ID token", async (
   // OAuth2 Proxy never calls UserInfo here, so the ID token is its only claim
   // source, and it refuses to create a session without a verified email. The
   // provider guards every standard claim out of the ID token by default, so
-  // these settings only work while auth.ts issues both claims itself.
+  // these settings only work while the private auth engine issues both claims itself.
   expect(environment.OAUTH2_PROXY_SKIP_CLAIMS_FROM_PROFILE_URL).toBe("true");
   expect(environment.OAUTH2_PROXY_INSECURE_OIDC_ALLOW_UNVERIFIED_EMAIL).toBe("false");
   expect(environment.OAUTH2_PROXY_SCOPE).toContain("email");
@@ -624,7 +624,7 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   expect(deployScript).not.toContain("PUBLIC_MCP");
   expect(deployScript).toContain("NANGO_PIPELINE_API_KEY=$(get_secret_if_present NANGO_PIPELINE_API_KEY)");
   expect(deployScript).toContain("DB_CORPUS_PASSWORD=$(get_secret DB_CORPUS_PASSWORD)");
-  const finishServices = "up -d --remove-orphans \\\n  confirmation backup nango-backup";
+  const finishServices = "up -d --remove-orphans \\\n  backup nango-backup";
   expect(deployScript.indexOf("CONTEXT_USE_RECOVERY_BACKUP_KEY")).toBeLessThan(deployScript.indexOf(finishServices));
   expect(deployScript).toContain("psql -X --single-transaction -v ON_ERROR_STOP=1");
   expect(deployScript).toContain(
@@ -657,13 +657,13 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   // connection again, and leaving the upstreams up would run the previous
   // release's code against a migrating schema.
   expect(deployScript).not.toContain("stop caddy");
-  const stopClients = "stop \\\n  dashboard-edge app auth private-mcp public-web confirmation storage backup";
+  const stopClients = "stop \\\n  private-app public-app storage backup";
   const adoption = "-e CONTEXT_USE_ADOPT_LEGACY_SCHEMA=v0.1.97 migrate \\\n  bun packages/database/src/run-legacy-schema-adoption.ts";
   const migration = "--profile migration run --rm migrate";
   const restoreStorage = "up -d --wait storage";
   const prepareKnowledge = "--exit-code-from hypermedia-bootstrap hypermedia-bootstrap";
-  const restorePublic = "up -d --wait --no-deps public-web";
-  const restoreDashboard = "up -d --wait --no-deps \\\n  dashboard-edge";
+  const restorePublic = "up -d --wait --no-deps public-app";
+  const restoreDashboard = "up -d --wait --no-deps private-app";
   expect(deployScript.indexOf(stopClients)).toBeLessThan(deployScript.indexOf(adoption));
   expect(deployScript.indexOf(adoption)).toBeLessThan(deployScript.indexOf(migration));
   expect(deployScript.indexOf(migration)).toBeLessThan(deployScript.indexOf(restoreStorage));
@@ -703,13 +703,10 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   expect(caddy).not.toContain("handle /api/dashboard/publications/confirm");
   expect(caddy).not.toContain("handle /api/dashboard/session");
   expect(caddy).toContain("handle /api/auth/*");
-  expect(caddy).toContain("reverse_proxy auth:3002");
-  expect(caddy).toContain("reverse_proxy dashboard-edge:3007");
-  expect(caddy).toContain("reverse_proxy private-mcp:3003");
-  expect(caddy).toContain("reverse_proxy public-web:3005");
+  expect(caddy).toContain("reverse_proxy private-app:3000");
+  expect(caddy).toContain("reverse_proxy public-app:3005");
   expect(caddy).not.toContain("auth-edge");
   expect(caddy).not.toContain("private-mcp-edge");
-  expect(caddy).not.toContain("reverse_proxy app:3000");
   expect(caddy).not.toContain("handle /api/public/assets/*/content");
   expect(caddy).not.toContain("handle /public/mcp");
   expect(caddy).not.toContain("PUBLIC_MCP");
@@ -753,7 +750,7 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   expect(nangoPublicCaddy).not.toContain("NANGO_DASHBOARD_BASIC");
   expect(nangoPublicCaddy).not.toContain("AUTH_NANGO_TOKEN");
   expect(nangoAuthCaddy).toContain("forward_auth oauth2-proxy:4180");
-  expect(nangoAuthCaddy).toContain("forward_auth auth:3002");
+  expect(nangoAuthCaddy).toContain("forward_auth private-app:3000");
   expect(nangoAuthCaddy).toContain('header_up Authorization "Basic {$NANGO_DASHBOARD_BASIC}"');
   expect(nangoAuthCaddy).toContain("@non_dashboard_namespace");
   expect(nangoAuthCaddy).not.toContain("handle @connect_ui");
@@ -840,16 +837,15 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
     deployCompose.indexOf("\n  nango-db-init:\n"),
   );
   expect(knowledgePrepareService).toContain("CORPUS_DATABASE_URL: postgres://context_use_corpus");
-  expect(knowledgePrepareService).not.toContain("DATABASE_URL: postgres://context_use_dashboard");
+  expect(knowledgePrepareService).not.toContain("PRIVATE_DATABASE_URL");
   expect(knowledgePrepareService).toContain("NODE_ENV: production");
-  expect(knowledgePrepareService).toContain("STORAGE_DASHBOARD_TOKEN");
+  expect(knowledgePrepareService).toContain("STORAGE_PRIVATE_TOKEN");
   expect(knowledgePrepareService).toContain("storage-socket:/run/context-use-storage:ro");
   expect(knowledgePrepareService).toContain("storage: { condition: service_healthy }");
   expect(knowledgePrepareService).not.toContain("template-command.ts");
   expect(knowledgePrepareService).not.toContain("--force-template");
-  expect(knowledgePrepareService).toContain("hypermedia-bootstrap-command.ts");
+  expect(knowledgePrepareService).toContain("private/hypermedia-bootstrap/index.ts");
   expect(knowledgePrepareService).not.toContain("AWS_REGION:");
-  expect(knowledgePrepareService).not.toContain("STORAGE_MCP_TOKEN");
   expect(knowledgePrepareService).not.toContain("STORAGE_PUBLIC_TOKEN");
   expect(deployCompose.replace(knowledgePrepareService, "")).not.toContain("CORPUS_DATABASE_URL");
   const migrateService = deployCompose.slice(
@@ -857,11 +853,12 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
     deployCompose.indexOf("\n  hypermedia-bootstrap:\n"),
   );
   expect(migrateService).toContain("DB_CORPUS_PASSWORD: ${DB_CORPUS_PASSWORD}");
+  expect(migrateService).toContain("DB_PRIVATE_PASSWORD: ${DB_PRIVATE_PASSWORD}");
   expect(deployCompose.replace(migrateService, "").replace(knowledgePrepareService, ""))
     .not.toContain("DB_CORPUS_PASSWORD");
   const stopKnowledgeServices = [
     "stop \\",
-    "dashboard-edge app auth private-mcp public-web confirmation storage backup",
+    "private-app public-app storage backup",
   ].join("\n  ");
   expect(deployScript).toContain(stopKnowledgeServices);
   const storageStart = 'up -d --wait storage';
@@ -870,58 +867,53 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
     "--force-recreate --no-deps --abort-on-container-exit \\",
     "--exit-code-from hypermedia-bootstrap hypermedia-bootstrap",
   ].join("\n  ");
-  const publicStart = "up -d --wait --no-deps public-web";
+  const publicStart = "up -d --wait --no-deps public-app";
   expect(deployScript).toContain(prepareRun);
   expect(deployScript.indexOf(storageStart)).toBeLessThan(deployScript.indexOf(prepareRun));
   expect(deployScript.indexOf(prepareRun)).toBeLessThan(deployScript.indexOf(publicStart));
-  const appService = deployCompose.slice(
-    deployCompose.indexOf("\n  app:\n"),
-    deployCompose.indexOf("\n  auth:\n"),
+  const privateAppService = deployCompose.slice(
+    deployCompose.indexOf("\n  private-app:\n"),
+    deployCompose.indexOf("\n  public-app:\n"),
   );
-  expect(appService).toContain("DATABASE_URL: postgres://context_use_dashboard");
-  expect(appService).not.toContain("CORPUS_DATABASE_URL");
-  expect(appService).toContain('MCP_RESOURCE: https://${APP_HOSTNAME}/mcp');
-  expect(appService).not.toContain("AUTH_DATABASE_URL");
-  expect(appService).not.toContain("MCP_DATABASE_URL");
-  expect(appService).not.toContain("CONFIRMATION_DATABASE_URL");
-  expect(appService).not.toContain("BETTER_AUTH_SECRET");
-  expect(appService).not.toContain("AWS_REGION:");
-  expect(appService).toContain("STORAGE_DASHBOARD_TOKEN");
-  expect(appService).toContain("AUTH_DASHBOARD_TOKEN");
-  expect(appService).toContain("CONFIRMATION_DASHBOARD_TOKEN");
-  expect(appService).toContain("hypermedia-bootstrap: { condition: service_completed_successfully }");
-  expect(appService).not.toContain("AUTH_MCP_TOKEN");
-  expect(appService).not.toContain("CONFIRMATION_GATEWAY_TOKEN");
-  expect(appService).toContain("storage-socket:/run/context-use-storage:ro");
-  expect(appService).toContain("networks: [dashboard_data, dashboard_edge_internal, auth_dashboard_internal, confirmation_internal]");
+  const privateEnvironment = parsedCompose.services["private-app"]?.environment ?? {};
+  expect(privateEnvironment.PRIVATE_DATABASE_URL).toContain("context_use_private");
+  expect(privateEnvironment.MCP_RESOURCE).toBe("https://${APP_HOSTNAME}/mcp");
+  expect(privateEnvironment.STORAGE_PRIVATE_TOKEN).toBe("${STORAGE_PRIVATE_TOKEN}");
+  expect(privateEnvironment.NANGO_INTERNAL_URL).toBe("http://nango-server:3003");
+  expect(privateEnvironment.NANGO_PIPELINE_API_KEY).toBe("${NANGO_PIPELINE_API_KEY:-}");
+  expect(networkNames(parsedCompose.services["private-app"])).toEqual([
+    "private_data",
+    "private_web",
+    "auth_nango_internal",
+    "nango_pipeline_internal",
+  ]);
+  expect(privateAppService).toContain("hypermedia-bootstrap: { condition: service_completed_successfully }");
+  expect(privateAppService).toContain("storage-socket:/run/context-use-storage:ro");
+  expect(privateAppService).not.toContain("AWS_REGION:");
 
-  const dashboardEdgeService = deployCompose.slice(
-    deployCompose.indexOf("\n  dashboard-edge:\n"),
-    deployCompose.indexOf("\n  app:\n"),
-  );
-  expect(dashboardEdgeService).toContain("SERVICE_MODE: dashboard-edge");
-  expect(dashboardEdgeService).toContain("DASHBOARD_AUTHORITY_URL: http://app:3000");
-  expect(dashboardEdgeService).toContain("networks: [dashboard_web, dashboard_edge_internal]");
-  expect(dashboardEdgeService).not.toContain("DATABASE_URL");
-  expect(dashboardEdgeService).not.toContain("TOKEN");
-  expect(dashboardEdgeService).not.toContain("SECRET");
-
-  const authService = deployCompose.slice(
-    deployCompose.indexOf("\n  auth:\n"),
-    deployCompose.indexOf("\n  private-mcp:\n"),
-  );
-  expect(authService).toContain("AUTH_DATABASE_URL: postgres://context_use_auth");
-  expect(authService).toContain("BETTER_AUTH_SECRET");
-  expect(authService).not.toContain("AUTH_EDGE_TOKEN");
-  expect(authService).toContain("CONFIRMATION_GATEWAY_TOKEN");
-  expect(authService).toContain("AUTH_DASHBOARD_TOKEN");
-  expect(authService).toContain("AUTH_MCP_TOKEN");
-  expect(authService).not.toContain("CONFIRMATION_DASHBOARD_TOKEN");
-  expect(authService).toContain("CONFIRMATION_INTERNAL_URL: http://confirmation:3004");
-  expect(authService).not.toContain("DATABASE_URL: postgres://context_use_dashboard");
-  expect(authService).not.toContain("STORAGE_");
-  expect(authService).not.toContain("AWS_REGION:");
-  expect(authService).toContain("networks: [auth_data, auth_web, auth_dashboard_internal, auth_mcp_internal, auth_confirmation_internal, auth_nango_internal]");
+  for (const obsoleteService of [
+    "dashboard-edge",
+    "app",
+    "auth",
+    "private-mcp",
+    "public-web",
+    "confirmation",
+  ]) {
+    expect(parsedCompose.services[obsoleteService]).toBeUndefined();
+  }
+  for (const obsoleteCapability of [
+    "AUTH_DATABASE_URL",
+    "MCP_DATABASE_URL",
+    "CONFIRMATION_DATABASE_URL",
+    "AUTH_DASHBOARD_TOKEN",
+    "AUTH_MCP_TOKEN",
+    "CONFIRMATION_GATEWAY_TOKEN",
+    "CONFIRMATION_DASHBOARD_TOKEN",
+    "STORAGE_DASHBOARD_TOKEN",
+    "STORAGE_MCP_TOKEN",
+  ]) {
+    expect(privateEnvironment[obsoleteCapability]).toBeUndefined();
+  }
 
   const nangoServerService = deployCompose.slice(
     deployCompose.indexOf("\n  nango-server:\n"),
@@ -929,51 +921,31 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   );
   expect(nangoServerService).toContain("nango_pipeline_internal");
 
-  const privateMcpService = deployCompose.slice(
-    deployCompose.indexOf("\n  private-mcp:\n"),
-    deployCompose.indexOf("\n  public-web:\n"),
-  );
-  expect(privateMcpService).toContain("MCP_DATABASE_URL: postgres://context_use_mcp");
-  expect(privateMcpService).toContain("MCP_ASSET_CAPABILITY_SECRET");
-  expect(privateMcpService).toContain("AUTH_MCP_TOKEN");
-  expect(privateMcpService).not.toContain("AUTH_DASHBOARD_TOKEN");
-  expect(privateMcpService).toContain("STORAGE_MCP_TOKEN");
-  expect(privateMcpService).toContain("NANGO_INTERNAL_URL: http://nango-server:3003");
-  expect(privateMcpService).toContain("NANGO_PIPELINE_API_KEY: ${NANGO_PIPELINE_API_KEY:-}");
-  expect(deployCompose.replace(privateMcpService, "")).not.toContain("NANGO_PIPELINE_API_KEY");
-  expect(privateMcpService).toContain("storage-socket:/run/context-use-storage:ro");
-  expect(privateMcpService).not.toContain("DATABASE_URL: postgres://context_use_dashboard");
-  expect(privateMcpService).not.toContain("AUTH_DATABASE_URL");
-  expect(privateMcpService).not.toContain("AWS_REGION:");
-  expect(privateMcpService).toContain("networks: [mcp_data, mcp_web, auth_mcp_internal, nango_pipeline_internal]");
+  expect(
+    Object.entries(parsedCompose.services)
+      .filter(([, service]) => service.environment?.NANGO_PIPELINE_API_KEY !== undefined)
+      .map(([name]) => name),
+  ).toEqual(["private-app"]);
 
-  const publicWebService = deployCompose.slice(
-    deployCompose.indexOf("\n  public-web:\n"),
-    deployCompose.indexOf("\n  confirmation:\n"),
-  );
-  expect(publicWebService).toContain("PUBLIC_DATABASE_URL: postgres://context_use_public");
-  expect(publicWebService).toContain("STORAGE_PUBLIC_TOKEN");
-  expect(publicWebService).toContain("storage-socket:/run/context-use-storage:ro");
-  expect(publicWebService).not.toContain("DATABASE_URL: postgres://context_use_dashboard");
-  expect(publicWebService).not.toContain("AUTH_DATABASE_URL");
-  expect(publicWebService).not.toContain("AWS_REGION:");
-  expect(publicWebService).toContain("networks: [public_data, public_web]");
-
-  const confirmationService = deployCompose.slice(
-    deployCompose.indexOf("\n  confirmation:\n"),
+  const publicAppService = deployCompose.slice(
+    deployCompose.indexOf("\n  public-app:\n"),
     deployCompose.indexOf("\n  storage-socket-init:\n"),
   );
-  expect(confirmationService).toContain("CONFIRMATION_DATABASE_URL: postgres://context_use_confirmation");
-  expect(confirmationService).toContain("CONFIRMATION_GATEWAY_TOKEN");
-  expect(confirmationService).toContain("CONFIRMATION_DASHBOARD_TOKEN");
-  expect(confirmationService).not.toContain("AUTH_DASHBOARD_TOKEN");
-  expect(confirmationService).not.toContain("DATABASE_URL: postgres://context_use_dashboard");
-  expect(confirmationService).not.toContain("AUTH_DATABASE_URL");
-  expect(confirmationService).not.toContain("BETTER_AUTH_SECRET");
-  expect(confirmationService).not.toContain("STORAGE_");
-  expect(confirmationService).not.toContain("AWS_REGION:");
-  expect(confirmationService).toContain("networks: [confirmation_data, auth_confirmation_internal, confirmation_internal]");
-  expect(deployCompose).not.toContain("confirmation_web");
+  const publicEnvironment = parsedCompose.services["public-app"]?.environment ?? {};
+  expect(publicEnvironment.PUBLIC_DATABASE_URL).toContain("context_use_public");
+  expect(publicEnvironment.STORAGE_PUBLIC_TOKEN).toBe("${STORAGE_PUBLIC_TOKEN}");
+  expect(Object.keys(publicEnvironment).sort()).toEqual([
+    "APP_ORIGIN",
+    "ASSET_ORIGIN",
+    "NODE_ENV",
+    "PORT",
+    "PUBLIC_DATABASE_URL",
+    "STORAGE_PUBLIC_TOKEN",
+    "STORAGE_SOCKET_PATH",
+  ]);
+  expect(networkNames(parsedCompose.services["public-app"])).toEqual(["public_data", "public_web"]);
+  expect(publicAppService).toContain("storage-socket:/run/context-use-storage:ro");
+  expect(publicAppService).not.toContain("AWS_REGION:");
 
   const storageSocketInitService = deployCompose.slice(
     deployCompose.indexOf("\n  storage-socket-init:\n"),
@@ -990,8 +962,7 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   );
   expect(storageService).not.toContain("network_mode: host");
   expect(storageService).toContain("STORAGE_DATABASE_URL: postgres://context_use_storage");
-  expect(storageService).toContain("STORAGE_DASHBOARD_TOKEN");
-  expect(storageService).toContain("STORAGE_MCP_TOKEN");
+  expect(storageService).toContain("STORAGE_PRIVATE_TOKEN");
   expect(storageService).toContain("STORAGE_PUBLIC_TOKEN");
   expect(storageService).toContain("ASSET_BUCKET");
   expect(storageService).toContain('AWS_EC2_METADATA_DISABLED: "true"');
@@ -1014,13 +985,13 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   // The public pages are the availability priority, so a release detects the
   // services gating that path ready faster than the rest of the stack. The
   // retry count holds the same overall timeout budget as everywhere else.
-  for (const publicPathService of [publicWebService, storageService, credentialBroker]) {
+  for (const publicPathService of [publicAppService, storageService, credentialBroker]) {
     expect(publicPathService).toContain("interval: 2s");
     expect(publicPathService).toContain("retries: 75");
   }
   // Everything off that path keeps the cheaper steady-state probe rate, which
   // matters because those probes each spawn a runtime.
-  for (const offPathService of [appService, authService, dashboardEdgeService, confirmationService]) {
+  for (const offPathService of [privateAppService]) {
     expect(offPathService).toContain("interval: 5s");
   }
   const backupService = deployCompose.slice(deployCompose.indexOf("\n  backup:\n"));
@@ -1030,7 +1001,7 @@ test("instance bootstrap, proxy limits, and TLS configuration contain the live-d
   expect(backupService).toContain("backup-aws-credentials:/run/context-use-aws-backup:ro");
   expect(backupService).toContain("networks: [backup_data, backup_egress]");
   expect(backupService).toContain(
-    "SCHEMA_VERSION: auth/002_better_auth.sql+application/003_grant_bootstrap_and_migration_ledgers.sql",
+    "SCHEMA_VERSION: auth/002_better_auth.sql+application/005_consolidate_runtime_roles.sql",
   );
   expect(backupService).not.toContain("RETENTION_DAYS");
   expect(backupScript).toContain("context-use-postgres-v1");
@@ -1116,10 +1087,8 @@ test("deployment starts knowledge consumers without restarting the completed one
   const script = await Bun.file(new URL("../../../deploy/deploy.sh", import.meta.url)).text();
   const prepare = "--exit-code-from hypermedia-bootstrap hypermedia-bootstrap";
   const starts = [
-    "up -d --wait --no-deps public-web",
-    "up -d --wait --no-deps \\\n  auth confirmation",
-    "up -d --wait --no-deps \\\n  app private-mcp",
-    "up -d --wait --no-deps \\\n  dashboard-edge",
+    "up -d --wait --no-deps public-app",
+    "up -d --wait --no-deps private-app",
   ];
 
   expect(script.match(/--exit-code-from hypermedia-bootstrap/g)).toHaveLength(1);

@@ -16,4 +16,4 @@ ENV NODE_ENV=production WEB_DIST=/app/apps/web/dist PORT=3000
 USER bun
 EXPOSE 3000
 ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["bun", "apps/server/src/index.ts"]
+CMD ["bun", "apps/server/src/private/index.ts"]

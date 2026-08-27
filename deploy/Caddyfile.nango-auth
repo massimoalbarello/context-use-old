@@ -114,7 +114,7 @@
 		# A proxy cookie alone is not authorization. Context Use checks the token's
 		# fixed client/owner claims and its bound parent dashboard session online on
 		# every request, making logout and passkey removal effective immediately.
-		forward_auth auth:3002 {
+		forward_auth private-app:3000 {
 			uri /internal/authorize-nango
 			header_up -Cookie
 			header_up X-Context-Use-Nango-Gateway {$AUTH_NANGO_TOKEN}

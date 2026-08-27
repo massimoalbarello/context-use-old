@@ -65,7 +65,7 @@ export function nangoPipelineRuntimeCommands(config: DeploymentConfig): string[]
     'mv "$temporary_env" "$runtime_env"',
     "trap - EXIT",
     "cd /opt/context-use/deploy",
-    `${compose} up -d --wait --force-recreate --no-deps private-mcp`,
+    `${compose} up -d --wait --force-recreate --no-deps private-app`,
   ];
 }
 

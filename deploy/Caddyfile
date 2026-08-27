@@ -45,66 +45,66 @@
 		request_body {
 			max_size 3MB
 		}
-		reverse_proxy auth:3002
+		reverse_proxy private-app:3000
 	}
 	handle /.well-known/oauth-authorization-server {
-		reverse_proxy auth:3002
+		reverse_proxy private-app:3000
 	}
 	handle /.well-known/openid-configuration {
-		reverse_proxy auth:3002
+		reverse_proxy private-app:3000
 	}
 	handle /.well-known/oauth-protected-resource* {
-		reverse_proxy private-mcp:3003
+		reverse_proxy private-app:3000
 	}
 	handle /mcp {
 		request_body {
 			max_size 3MB
 		}
-		reverse_proxy private-mcp:3003
+		reverse_proxy private-app:3000
 	}
 	handle /api/mcp/assets/*/content {
 		request_body {
 			max_size 5GB
 		}
-		reverse_proxy private-mcp:3003
+		reverse_proxy private-app:3000
 	}
 
 	handle /api/dashboard/assets/*/content {
 		request_body {
 			max_size 5GB
 		}
-		reverse_proxy dashboard-edge:3007
+		reverse_proxy private-app:3000
 	}
 	handle /api/dashboard/* {
 		request_body {
 			max_size 3MB
 		}
-		reverse_proxy dashboard-edge:3007
+		reverse_proxy private-app:3000
 	}
 	handle /api/health {
-		reverse_proxy dashboard-edge:3007
+		reverse_proxy private-app:3000
 	}
 	handle /app* {
-		reverse_proxy dashboard-edge:3007
+		reverse_proxy private-app:3000
 	}
 	handle /assets/* {
-		reverse_proxy dashboard-edge:3007
+		reverse_proxy private-app:3000
 	}
 
 	handle /p/* {
-		reverse_proxy public-web:3005
+		reverse_proxy public-app:3005
 	}
 	handle /public.css {
-		reverse_proxy public-web:3005
+		reverse_proxy public-app:3005
 	}
 	handle /content.css {
-		reverse_proxy public-web:3005
+		reverse_proxy public-app:3005
 	}
 	handle {
 		request_body {
 			max_size 64KB
 		}
-		reverse_proxy public-web:3005
+		reverse_proxy public-app:3005
 	}
 
 	import maintenance
@@ -124,7 +124,7 @@
 		Strict-Transport-Security "max-age=63072000; includeSubDomains"
 	}
 	handle /a/* {
-		reverse_proxy public-web:3005
+		reverse_proxy public-app:3005
 	}
 	handle {
 		respond "Not found" 404

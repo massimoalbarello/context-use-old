@@ -21,6 +21,12 @@ Publication is the reference layout for a concern that spans trust domains:
 Do not put dashboard, storage, and anonymous-public queries back into one repository class merely
 because they operate on related tables.
 
+The deployed runtime login roles are `context_use_private`, `context_use_public`, and
+`context_use_storage`. Private inherits the narrower historical dashboard, auth, MCP, and
+confirmation grant roles so their SQL capabilities remain reviewable without creating more
+networked runtimes. Corpus bootstrap and backup remain explicit operational roles. Do not grant a
+runtime login broad ownership merely to simplify composition.
+
 ## Migration streams
 
 Migration orchestration is split under `src/migrations`: catalog loading, ledger verification and

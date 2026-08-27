@@ -90,7 +90,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 30
-    networks: [migration_data, dashboard_data, auth_data, mcp_data, public_data, confirmation_data, storage_data, backup_data, nango_data]
+    networks: [migration_data, private_data, public_data, storage_data, backup_data, nango_data]
     logging:
       <<: *logging
       options:
@@ -105,13 +105,9 @@ services:
       postgres: { condition: service_healthy }
     environment:
       MIGRATOR_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/context_use
-      DATABASE_URL: postgres://context_use_dashboard:${DB_DASHBOARD_PASSWORD}@postgres:5432/context_use
-      DB_AUTH_PASSWORD: ${DB_AUTH_PASSWORD}
-      DB_DASHBOARD_PASSWORD: ${DB_DASHBOARD_PASSWORD}
+      DB_PRIVATE_PASSWORD: ${DB_PRIVATE_PASSWORD}
       DB_CORPUS_PASSWORD: ${DB_CORPUS_PASSWORD}
-      DB_MCP_PASSWORD: ${DB_MCP_PASSWORD}
       DB_PUBLIC_PASSWORD: ${DB_PUBLIC_PASSWORD}
-      DB_CONFIRMATION_PASSWORD: ${DB_CONFIRMATION_PASSWORD}
       DB_STORAGE_PASSWORD: ${DB_STORAGE_PASSWORD}
       DB_BACKUP_PASSWORD: ${DB_BACKUP_PASSWORD}
     command: ["bun", "packages/database/src/initialize.ts"]
@@ -127,14 +123,14 @@ services:
       NODE_ENV: production
       CORPUS_DATABASE_URL: postgres://context_use_corpus:${DB_CORPUS_PASSWORD}@postgres:5432/context_use
       STORAGE_SOCKET_PATH: /run/context-use-storage/storage.sock
-      STORAGE_DASHBOARD_TOKEN: ${STORAGE_DASHBOARD_TOKEN}
+      STORAGE_PRIVATE_TOKEN: ${STORAGE_PRIVATE_TOKEN}
     command:
       - sh
       - -ec
       - >-
-        exec bun apps/server/src/hypermedia-bootstrap-command.ts
+        exec bun apps/server/src/private/hypermedia-bootstrap/index.ts
     volumes: [storage-socket:/run/context-use-storage:ro]
-    networks: [dashboard_data]
+    networks: [private_data]
 
   nango-db-init:
     image: ${BACKUP_IMAGE}
@@ -296,7 +292,7 @@ services:
     image: ${OAUTH2_PROXY_IMAGE}
     restart: unless-stopped
     depends_on:
-      auth: { condition: service_healthy }
+      private-app: { condition: service_healthy }
       nango-sso-redis: { condition: service_healthy }
     environment:
       OAUTH2_PROXY_HTTP_ADDRESS: 0.0.0.0:4180
@@ -305,8 +301,8 @@ services:
       OAUTH2_PROXY_OIDC_ISSUER_URL: https://${APP_HOSTNAME}
       OAUTH2_PROXY_SKIP_OIDC_DISCOVERY: "true"
       OAUTH2_PROXY_LOGIN_URL: https://${APP_HOSTNAME}/api/auth/oauth2/authorize
-      OAUTH2_PROXY_REDEEM_URL: http://auth:3002/api/auth/oauth2/token
-      OAUTH2_PROXY_OIDC_JWKS_URL: http://auth:3002/api/auth/jwks
+      OAUTH2_PROXY_REDEEM_URL: http://private-app:3000/api/auth/oauth2/token
+      OAUTH2_PROXY_OIDC_JWKS_URL: http://private-app:3000/api/auth/jwks
       OAUTH2_PROXY_OIDC_ENABLED_SIGNING_ALGS: EdDSA
       OAUTH2_PROXY_SKIP_CLAIMS_FROM_PROFILE_URL: "true"
       OAUTH2_PROXY_CLIENT_ID: ${NANGO_OAUTH_CLIENT_ID}
@@ -413,7 +409,7 @@ services:
   nango-auth-gateway:
     <<: *nango-gateway
     depends_on:
-      auth: { condition: service_healthy }
+      private-app: { condition: service_healthy }
       nango-server: { condition: service_healthy }
       oauth2-proxy: { condition: service_healthy }
     environment:
@@ -434,7 +430,7 @@ services:
         - >-
           wget -q -O /dev/null http://127.0.0.1:3000/healthz &&
           wget -q -O /dev/null http://oauth2-proxy:4180/ready &&
-          wget -q -O /dev/null http://auth:3002/health &&
+          wget -q -O /dev/null http://private-app:3000/health &&
           wget -q -O /dev/null http://nango-server:3003/ready
       interval: 5s
       timeout: 3s
@@ -479,141 +475,43 @@ services:
         awslogs-group: ${CLOUDWATCH_LOG_GROUP}
         awslogs-stream: nango-jobs
 
-  dashboard-edge:
-    <<: *locked-service
-    depends_on:
-      app: { condition: service_healthy }
-    environment:
-      NODE_ENV: production
-      SERVICE_MODE: dashboard-edge
-      PORT: "3007"
-      APP_ORIGIN: https://${APP_HOSTNAME}
-      ASSET_ORIGIN: https://${ASSET_HOSTNAME}
-      DASHBOARD_AUTHORITY_URL: http://app:3000
-    command: ["bun", "apps/server/src/dashboard-edge-index.ts"]
-    networks: [dashboard_web, dashboard_edge_internal]
-    healthcheck:
-      test: ["CMD", "bun", "-e", "const response = await fetch('http://localhost:3007/health'); if (!response.ok) process.exit(1)"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
-    logging:
-      <<: *logging
-      options:
-        awslogs-region: ${AWS_REGION}
-        awslogs-group: ${CLOUDWATCH_LOG_GROUP}
-        awslogs-stream: dashboard-edge
-
-  app:
+  private-app:
     <<: *locked-service
     depends_on:
       postgres: { condition: service_healthy }
-      auth: { condition: service_healthy }
-      confirmation: { condition: service_healthy }
       storage: { condition: service_healthy }
       hypermedia-bootstrap: { condition: service_completed_successfully }
     environment:
       NODE_ENV: production
-      SERVICE_MODE: dashboard
       PORT: "3000"
       APP_ORIGIN: https://${APP_HOSTNAME}
       ASSET_ORIGIN: https://${ASSET_HOSTNAME}
-      MCP_RESOURCE: https://${APP_HOSTNAME}/mcp
-      DATABASE_URL: postgres://context_use_dashboard:${DB_DASHBOARD_PASSWORD}@postgres:5432/context_use
-      AUTH_INTERNAL_URL: http://auth:3002
-      CONFIRMATION_INTERNAL_URL: http://confirmation:3004
-      AUTH_DASHBOARD_TOKEN: ${AUTH_DASHBOARD_TOKEN}
-      CONFIRMATION_DASHBOARD_TOKEN: ${CONFIRMATION_DASHBOARD_TOKEN}
-      STORAGE_SOCKET_PATH: /run/context-use-storage/storage.sock
-      STORAGE_DASHBOARD_TOKEN: ${STORAGE_DASHBOARD_TOKEN}
-      NANGO_PUBLIC_URL: https://${NANGO_HOSTNAME}
-      NANGO_IMAGE_REFERENCE: ${NANGO_IMAGE}
-      WEB_DIST: /app/apps/web/dist
-    command: ["bun", "apps/server/src/dashboard-index.ts"]
-    mem_limit: 2g
-    volumes:
-      - storage-socket:/run/context-use-storage:ro
-    networks: [dashboard_data, dashboard_edge_internal, auth_dashboard_internal, confirmation_internal]
-    healthcheck:
-      test: ["CMD", "bun", "-e", "const response = await fetch('http://localhost:3000/api/health'); if (!response.ok) process.exit(1)"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
-    logging:
-      <<: *logging
-      options:
-        awslogs-region: ${AWS_REGION}
-        awslogs-group: ${CLOUDWATCH_LOG_GROUP}
-        awslogs-stream: dashboard
-
-  auth:
-    <<: *locked-service
-    depends_on:
-      postgres: { condition: service_healthy }
-    environment:
-      NODE_ENV: production
-      SERVICE_MODE: auth
-      PORT: "3002"
-      APP_ORIGIN: https://${APP_HOSTNAME}
-      ASSET_ORIGIN: https://${ASSET_HOSTNAME}
-      OAUTH_ISSUER: https://${APP_HOSTNAME}
-      MCP_RESOURCE: https://${APP_HOSTNAME}/mcp
-      NANGO_ORIGIN: https://${NANGO_HOSTNAME}
-      WEBAUTHN_RP_ID: ${APP_HOSTNAME}
-      WEBAUTHN_RP_NAME: context-use
+      PRIVATE_DATABASE_URL: postgres://context_use_private:${DB_PRIVATE_PASSWORD}@postgres:5432/context_use
       OWNER_EMAIL: ${OWNER_EMAIL}
       OWNER_SETUP_TOKEN_HASH: ${OWNER_SETUP_TOKEN_HASH}
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
-      AUTH_DASHBOARD_TOKEN: ${AUTH_DASHBOARD_TOKEN}
-      AUTH_MCP_TOKEN: ${AUTH_MCP_TOKEN}
-      AUTH_NANGO_TOKEN: ${AUTH_NANGO_TOKEN}
-      NANGO_OAUTH_CLIENT_ID: ${NANGO_OAUTH_CLIENT_ID}
-      NANGO_OAUTH_CLIENT_SECRET: ${NANGO_OAUTH_CLIENT_SECRET}
-      CONFIRMATION_INTERNAL_URL: http://confirmation:3004
-      CONFIRMATION_GATEWAY_TOKEN: ${CONFIRMATION_GATEWAY_TOKEN}
-      AUTH_DATABASE_URL: postgres://context_use_auth:${DB_AUTH_PASSWORD}@postgres:5432/context_use
-    command: ["bun", "apps/server/src/auth-index.ts"]
-    networks: [auth_data, auth_web, auth_dashboard_internal, auth_mcp_internal, auth_confirmation_internal, auth_nango_internal]
-    healthcheck:
-      test: ["CMD", "bun", "-e", "const response = await fetch('http://localhost:3002/health'); if (!response.ok) process.exit(1)"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
-    logging:
-      <<: *logging
-      options:
-        awslogs-region: ${AWS_REGION}
-        awslogs-group: ${CLOUDWATCH_LOG_GROUP}
-        awslogs-stream: auth
-
-  private-mcp:
-    <<: *locked-service
-    depends_on:
-      postgres: { condition: service_healthy }
-      auth: { condition: service_healthy }
-      storage: { condition: service_healthy }
-      hypermedia-bootstrap: { condition: service_completed_successfully }
-    environment:
-      NODE_ENV: production
-      SERVICE_MODE: mcp
-      PORT: "3003"
-      APP_ORIGIN: https://${APP_HOSTNAME}
-      ASSET_ORIGIN: https://${ASSET_HOSTNAME}
       OAUTH_ISSUER: https://${APP_HOSTNAME}
       MCP_RESOURCE: https://${APP_HOSTNAME}/mcp
-      MCP_DATABASE_URL: postgres://context_use_mcp:${DB_MCP_PASSWORD}@postgres:5432/context_use
-      AUTH_INTERNAL_URL: http://auth:3002
-      AUTH_MCP_TOKEN: ${AUTH_MCP_TOKEN}
       MCP_ASSET_CAPABILITY_SECRET: ${MCP_ASSET_CAPABILITY_SECRET}
+      WEBAUTHN_RP_ID: ${APP_HOSTNAME}
+      WEBAUTHN_RP_NAME: context-use
       STORAGE_SOCKET_PATH: /run/context-use-storage/storage.sock
-      STORAGE_MCP_TOKEN: ${STORAGE_MCP_TOKEN}
+      STORAGE_PRIVATE_TOKEN: ${STORAGE_PRIVATE_TOKEN}
+      WEB_DIST: /app/apps/web/dist
+      NANGO_ORIGIN: https://${NANGO_HOSTNAME}
+      NANGO_OAUTH_CLIENT_ID: ${NANGO_OAUTH_CLIENT_ID}
+      NANGO_OAUTH_CLIENT_SECRET: ${NANGO_OAUTH_CLIENT_SECRET}
+      AUTH_NANGO_TOKEN: ${AUTH_NANGO_TOKEN}
+      NANGO_PUBLIC_URL: https://${NANGO_HOSTNAME}
+      NANGO_IMAGE_REFERENCE: ${NANGO_IMAGE}
       NANGO_INTERNAL_URL: http://nango-server:3003
       NANGO_PIPELINE_API_KEY: ${NANGO_PIPELINE_API_KEY:-}
-    command: ["bun", "apps/server/src/mcp-index.ts"]
+    command: ["bun", "apps/server/src/private/index.ts"]
+    mem_limit: 2g
     volumes: [storage-socket:/run/context-use-storage:ro]
-    networks: [mcp_data, mcp_web, auth_mcp_internal, nango_pipeline_internal]
+    networks: [private_data, private_web, auth_nango_internal, nango_pipeline_internal]
     healthcheck:
-      test: ["CMD", "bun", "-e", "const response = await fetch('http://localhost:3003/health'); if (!response.ok) process.exit(1)"]
+      test: ["CMD", "bun", "-e", "const response = await fetch('http://localhost:3000/health'); if (!response.ok) process.exit(1)"]
       interval: 5s
       timeout: 3s
       retries: 30
@@ -622,9 +520,9 @@ services:
       options:
         awslogs-region: ${AWS_REGION}
         awslogs-group: ${CLOUDWATCH_LOG_GROUP}
-        awslogs-stream: private-mcp
+        awslogs-stream: private-app
 
-  public-web:
+  public-app:
     <<: *locked-service
     depends_on:
       postgres: { condition: service_healthy }
@@ -632,22 +530,17 @@ services:
       hypermedia-bootstrap: { condition: service_completed_successfully }
     environment:
       NODE_ENV: production
-      SERVICE_MODE: public
       PORT: "3005"
       APP_ORIGIN: https://${APP_HOSTNAME}
       ASSET_ORIGIN: https://${ASSET_HOSTNAME}
       PUBLIC_DATABASE_URL: postgres://context_use_public:${DB_PUBLIC_PASSWORD}@postgres:5432/context_use
       STORAGE_SOCKET_PATH: /run/context-use-storage/storage.sock
       STORAGE_PUBLIC_TOKEN: ${STORAGE_PUBLIC_TOKEN}
-    command: ["bun", "apps/server/src/public-index.ts"]
+    command: ["bun", "apps/server/src/public/index.ts"]
     volumes: [storage-socket:/run/context-use-storage:ro]
     networks: [public_data, public_web]
     healthcheck:
       test: ["CMD", "bun", "-e", "const response = await fetch('http://localhost:3005/health'); if (!response.ok) process.exit(1)"]
-      # The public pages are the availability priority and a release waits on
-      # this check before it moves on, so detect readiness promptly. Only this
-      # service and storage carry the tighter interval; the retry count holds
-      # the same overall timeout budget as everywhere else.
       interval: 2s
       timeout: 2s
       retries: 75
@@ -656,35 +549,7 @@ services:
       options:
         awslogs-region: ${AWS_REGION}
         awslogs-group: ${CLOUDWATCH_LOG_GROUP}
-        awslogs-stream: public-web
-
-  confirmation:
-    <<: *locked-service
-    depends_on:
-      postgres: { condition: service_healthy }
-    environment:
-      NODE_ENV: production
-      SERVICE_MODE: confirmation
-      PORT: "3004"
-      APP_ORIGIN: https://${APP_HOSTNAME}
-      ASSET_ORIGIN: https://${ASSET_HOSTNAME}
-      WEBAUTHN_RP_ID: ${APP_HOSTNAME}
-      CONFIRMATION_DATABASE_URL: postgres://context_use_confirmation:${DB_CONFIRMATION_PASSWORD}@postgres:5432/context_use
-      CONFIRMATION_GATEWAY_TOKEN: ${CONFIRMATION_GATEWAY_TOKEN}
-      CONFIRMATION_DASHBOARD_TOKEN: ${CONFIRMATION_DASHBOARD_TOKEN}
-    command: ["bun", "apps/server/src/confirmation-index.ts"]
-    networks: [confirmation_data, auth_confirmation_internal, confirmation_internal]
-    healthcheck:
-      test: ["CMD", "bun", "-e", "const response = await fetch('http://localhost:3004/health'); if (!response.ok) process.exit(1)"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
-    logging:
-      <<: *logging
-      options:
-        awslogs-region: ${AWS_REGION}
-        awslogs-group: ${CLOUDWATCH_LOG_GROUP}
-        awslogs-stream: confirmation
+        awslogs-stream: public-app
 
   storage-socket-init:
     image: ${APP_IMAGE}
@@ -740,20 +605,16 @@ services:
       aws-credential-broker: { condition: service_healthy }
     environment:
       NODE_ENV: production
-      SERVICE_MODE: storage
-      APP_ORIGIN: https://${APP_HOSTNAME}
-      ASSET_ORIGIN: https://${ASSET_HOSTNAME}
       STORAGE_DATABASE_URL: postgres://context_use_storage:${DB_STORAGE_PASSWORD}@postgres:5432/context_use
       STORAGE_SOCKET_PATH: /run/context-use-storage/storage.sock
-      STORAGE_DASHBOARD_TOKEN: ${STORAGE_DASHBOARD_TOKEN}
-      STORAGE_MCP_TOKEN: ${STORAGE_MCP_TOKEN}
+      STORAGE_PRIVATE_TOKEN: ${STORAGE_PRIVATE_TOKEN}
       STORAGE_PUBLIC_TOKEN: ${STORAGE_PUBLIC_TOKEN}
       AWS_REGION: ${AWS_REGION}
       AWS_CREDENTIALS_FILE: /run/context-use-aws-storage/credentials.json
       AWS_EC2_METADATA_DISABLED: "true"
       ASSET_BUCKET: ${ASSET_BUCKET}
       KMS_KEY_ID: ${KMS_KEY_ID}
-    command: ["bun", "apps/server/src/storage-index.ts"]
+    command: ["bun", "apps/server/src/storage/index.ts"]
     volumes:
       - storage-socket:/run/context-use-storage
       - storage-aws-credentials:/run/context-use-aws-storage:ro
@@ -765,7 +626,7 @@ services:
     pids_limit: 128
     healthcheck:
       test: ["CMD", "bun", "-e", "const http=require('node:http');const request=http.request({socketPath:'/run/context-use-storage/storage.sock',path:'/health'},response=>process.exit(response.statusCode===200?0:1));request.on('error',()=>process.exit(1));request.end()"]
-      # public-web gates on this service, so it sits on the public critical path
+      # public-app gates on this service, so it sits on the public critical path
       # and uses the same tighter interval.
       interval: 2s
       timeout: 2s
@@ -781,10 +642,8 @@ services:
     image: caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
     restart: unless-stopped
     depends_on:
-      dashboard-edge: { condition: service_healthy }
-      auth: { condition: service_healthy }
-      private-mcp: { condition: service_healthy }
-      public-web: { condition: service_healthy }
+      private-app: { condition: service_healthy }
+      public-app: { condition: service_healthy }
     environment:
       APP_HOSTNAME: ${APP_HOSTNAME}
       ASSET_HOSTNAME: ${ASSET_HOSTNAME}
@@ -796,9 +655,7 @@ services:
       - /data/context-use/caddy/config:/config
     networks:
       edge: {}
-      dashboard_web: {}
-      auth_web: {}
-      mcp_web: {}
+      private_web: {}
       public_web: {}
       nango_public_edge: {}
       nango_auth_edge: {}
@@ -826,7 +683,7 @@ services:
       BACKUP_BUCKET: ${BACKUP_BUCKET}
       KMS_KEY_ID: ${KMS_KEY_ID}
       VERSION: ${VERSION}
-      SCHEMA_VERSION: auth/002_better_auth.sql+application/003_grant_bootstrap_and_migration_ledgers.sql
+      SCHEMA_VERSION: auth/002_better_auth.sql+application/005_consolidate_runtime_roles.sql
       AWS_REGION: ${AWS_REGION}
       AWS_CONFIG_FILE: /etc/context-use/aws-config
       AWS_PROFILE: context-use-backup
@@ -889,21 +746,11 @@ volumes:
 
 networks:
   edge: {}
-  dashboard_web: { internal: true }
-  dashboard_edge_internal: { internal: true }
-  auth_web: { internal: true }
-  mcp_web: { internal: true }
+  private_web: { internal: true }
   public_web: { internal: true }
-  auth_dashboard_internal: { internal: true }
-  auth_mcp_internal: { internal: true }
-  auth_confirmation_internal: { internal: true }
-  confirmation_internal: { internal: true }
   migration_data: { internal: true }
-  dashboard_data: { internal: true }
-  auth_data: { internal: true }
-  mcp_data: { internal: true }
+  private_data: { internal: true }
   public_data: { internal: true }
-  confirmation_data: { internal: true }
   storage_data: { internal: true }
   backup_data: { internal: true }
   nango_data: { internal: true }

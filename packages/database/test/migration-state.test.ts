@@ -46,18 +46,18 @@ describe("forward migration state", () => {
 describe("role password configuration", () => {
   test("skips a configured role below its introducing migration", () => {
     expect(configuredExistingRolePasswords({
-      DB_DASHBOARD_PASSWORD: "dashboard-secret",
+      DB_PRIVATE_PASSWORD: "private-secret",
       DB_CORPUS_PASSWORD: "corpus-secret",
-    }, ["context_use_dashboard"])).toEqual([{
-      role: "context_use_dashboard",
-      password: "dashboard-secret",
+    }, ["context_use_private"])).toEqual([{
+      role: "context_use_private",
+      password: "private-secret",
     }]);
   });
 
   test("configures the later role once its migration has created it", () => {
     expect(configuredExistingRolePasswords(
       { DB_CORPUS_PASSWORD: "corpus-secret" },
-      ["context_use_dashboard", "context_use_corpus"],
+      ["context_use_private", "context_use_corpus"],
     )).toEqual([{ role: "context_use_corpus", password: "corpus-secret" }]);
   });
 });
