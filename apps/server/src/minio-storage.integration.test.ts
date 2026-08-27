@@ -41,15 +41,14 @@ describeMinio("MinIO S3-compatible object storage", () => {
 
   afterAll(async () => {
     try {
-      await Promise.all(blobKeys.map((key) => storage!.deleteBundle(key)
-        .catch(() => storage!.delete(key))));
+      await Promise.all(blobKeys.map((key) => storage!.delete(key)));
       await client!.send(new DeleteBucketCommand({ Bucket: bucket }));
     } finally {
       client!.destroy();
     }
   });
 
-  test("matches the immutable-object and knowledge-bundle semantics used in production", async () => {
+  test("matches the immutable-object semantics used in production", async () => {
     const value = new TextEncoder().encode("MinIO follows the production S3 path.");
     const blobKey = `blobs/${randomUUID()}`;
     blobKeys.push(blobKey);
@@ -69,17 +68,5 @@ describeMinio("MinIO S3-compatible object storage", () => {
     expect(await new Response(await storage!.read(blobKey, { start: 0, end: 4 })).text())
       .toBe("MinIO");
 
-    const bundleKey = `bundles/${randomUUID()}.cuse`;
-    blobKeys.push(bundleKey);
-    const bundle = new TextEncoder().encode("CONTEXT-USE-KNOWLEDGE-BUNDLE-V1\ncomplete");
-    const metadata = await storage!.writeBundle(
-      bundleKey,
-      new Blob([Buffer.from(bundle)]).stream(),
-    );
-    expect(metadata).toEqual({
-      sizeBytes: bundle.byteLength,
-      contentHash: createHash("sha256").update(bundle).digest("hex"),
-    });
-    expect(await storage!.inspectBundle(bundleKey)).toEqual(metadata);
   }, 15_000);
 });

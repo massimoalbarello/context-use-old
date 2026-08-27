@@ -43,12 +43,6 @@ const bodies: MarkdownBlobStore = {
 };
 
 describeBootstrap("fresh hypermedia bootstrap", () => {
-  async function fullImportAvailable(): Promise<boolean> {
-    return (await admin!.query<{ available: boolean }>(
-      "SELECT full_knowledge_import_available() AS available",
-    )).rows[0]?.available === true;
-  }
-
   beforeAll(async () => {
     if (!corpusUrl) throw new Error("CORPUS_DATABASE_URL is required");
     await admin!.connect();
@@ -66,7 +60,6 @@ describeBootstrap("fresh hypermedia bootstrap", () => {
 
   test("installs and replays an identity-wired object-backed knowledge contract", async () => {
     const bootstrap = new HypermediaBootstrapRepository(corpus!, bodies);
-    expect(await fullImportAvailable()).toBe(false);
     const retainedDocumentId = crypto.randomUUID();
     await admin!.query(
       `INSERT INTO hypermedia_documents(id,authority,representation)
@@ -154,7 +147,6 @@ describeBootstrap("fresh hypermedia bootstrap", () => {
       entrypoint_latched: true,
     });
     expect(objects.size).toBe(5);
-    expect(await fullImportAvailable()).toBe(true);
 
     const settings = new KnowledgeSettingsRepository(corpus!);
     const knowledgePages = new KnowledgePageRepository(corpus!, bodies);
@@ -179,7 +171,6 @@ describeBootstrap("fresh hypermedia bootstrap", () => {
       revision_number: 2,
       updated: true,
     });
-    expect(await fullImportAvailable()).toBe(true);
     expect(await knowledgePages.get(current.object_id)).toMatchObject({
       revision_number: 2,
       body_markdown: changedGuide.body_markdown,
@@ -199,11 +190,9 @@ describeBootstrap("fresh hypermedia bootstrap", () => {
          ) VALUES ($1,'fixture.txt','text/plain',1,$2,$3)`,
         [assetId, "a".repeat(64), `blobs/${assetId}`],
       );
-      expect(await fullImportAvailable()).toBe(false);
     } finally {
       await admin!.query("ROLLBACK");
     }
-    expect(await fullImportAvailable()).toBe(true);
 
     await knowledgePages.create({
       title: "Personal knowledge",
@@ -211,6 +200,5 @@ describeBootstrap("fresh hypermedia bootstrap", () => {
       body_markdown: "Personal knowledge.\n",
       commit_message: "Create personal knowledge fixture",
     }, { kind: "dashboard", subject: "context-use-owner" });
-    expect(await fullImportAvailable()).toBe(false);
   }, 15_000);
 });

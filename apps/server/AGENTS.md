@@ -43,8 +43,7 @@ code.
 
 For the dashboard process, `src/app.ts` is the composition root and contains no handlers.
 `routes/dashboard/controller.ts` only assembles the path controllers; it must not absorb feature
-logic. Keep cross-route workflows in narrowly named services—for example, knowledge bundle exports
-and knowledge imports are separate services even though they share a repository.
+logic. Keep cross-route workflows in narrowly named services.
 
 ## Security boundaries
 

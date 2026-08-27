@@ -30,16 +30,6 @@ export const DashboardAuthController = new Elysia()
     { parse: "none" },
   )
   .post(
-    "/api/dashboard/knowledge-bundle-exports/confirm",
-    ({ request }) => forwardDashboardAuthRoute(request),
-    { parse: "none" },
-  )
-  .post(
-    "/api/dashboard/knowledge-imports/confirm",
-    ({ request }) => forwardDashboardAuthRoute(request),
-    { parse: "none" },
-  )
-  .post(
     "/api/dashboard/page-deletions/confirm",
     ({ request }) => forwardDashboardAuthRoute(request),
     { parse: "none" },

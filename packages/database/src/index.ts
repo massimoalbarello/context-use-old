@@ -94,20 +94,6 @@ export {
   VersionConflictError,
 } from "./knowledge-pages.ts";
 export {
-  KNOWLEDGE_BUNDLE_FORMAT,
-  KNOWLEDGE_BUNDLE_DATASETS,
-  KNOWLEDGE_BUNDLE_PART_SIZE,
-  KNOWLEDGE_BUNDLE_VERSION,
-  KnowledgeBundleRepository,
-  type KnowledgeBundleExportRecord,
-  type KnowledgeBundleExportStatus,
-  type KnowledgeBundleImportPart,
-  type KnowledgeBundleImportBlobAuthorization,
-  type KnowledgeBundleImportStatus,
-  type KnowledgeBundleBlob,
-  type KnowledgeBundlePrincipal,
-} from "./knowledge-bundles.ts";
-export {
   PublicEntrypointRepository,
   PublicRepository,
   PublicationRepository,

@@ -83,7 +83,7 @@ describeApplication("HTTP credential and OAuth boundary", () => {
     }
   });
 
-  test("bearer and anonymous credentials cannot reach knowledge bundle APIs", async () => {
+  test("removed knowledge bundle APIs are absent", async () => {
     for (const [path, method] of [
       ["/api/dashboard/knowledge-bundle-export-intents", "POST"],
       ["/api/dashboard/knowledge-bundle-exports/confirm", "POST"],
@@ -96,11 +96,10 @@ describeApplication("HTTP credential and OAuth boundary", () => {
     ] as const) {
       const response = await application!.handle(new Request(`http://localhost:3000${path}`, {
         method,
-        headers: { authorization: "Bearer forged", "content-type": "application/json",
-          ...(path.endsWith("/download") ? { "sec-fetch-site": "same-origin" } : {}) },
+        headers: { authorization: "Bearer forged", "content-type": "application/json" },
         ...(method === "POST" ? { body: "{}" } : {}),
       }));
-      expect(response.status).toBe(401);
+      expect(response.status).toBe(404);
     }
   });
 

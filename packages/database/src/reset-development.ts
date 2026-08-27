@@ -1,14 +1,6 @@
 import { Client } from "pg";
 
 export const DEVELOPMENT_RESET_TABLES = [
-  "knowledge_bundle_import_policy",
-  "knowledge_bundle_import_objects",
-  "knowledge_bundle_import_records",
-  "knowledge_bundle_import_parts",
-  "knowledge_bundle_imports",
-  "knowledge_bundle_export_objects",
-  "knowledge_bundle_export_records",
-  "knowledge_bundle_exports",
   "page_publications",
   "asset_publications",
   "public_page_artifacts",
@@ -29,7 +21,6 @@ export const DEVELOPMENT_RESET_TABLES = [
   "knowledge_revision_contracts",
   "automation_registry",
   "confirmation_challenges",
-  "knowledge_export_intents",
   "page_deletion_intents",
   "retained_page_artifacts",
   "public_route_aliases",
@@ -54,8 +45,6 @@ export function developmentResetSql(): string {
       singleton,entrypoint_public_id,updated_at
     ) VALUES (true,NULL,NULL);
     INSERT INTO knowledge_settings(singleton) VALUES (true);
-    INSERT INTO knowledge_bundle_import_policy(singleton,state)
-    VALUES (true,'pending');
   `;
 }
 

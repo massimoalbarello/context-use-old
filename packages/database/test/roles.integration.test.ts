@@ -83,7 +83,7 @@ describeDatabase("PostgreSQL security roles", () => {
   }
 
   async function issueChallenge(
-    kind: "publication" | "knowledge_export" | "page_deletion",
+    kind: "publication" | "page_deletion",
     intentId: string,
     value = challenge(),
   ): Promise<string> {
@@ -338,153 +338,6 @@ describeDatabase("PostgreSQL security roles", () => {
     }
   });
 
-  test("only the passkey-confirmation role can authorize or claim a knowledge bundle export", async () => {
-    const functions = [
-      "confirm_knowledge_export_intent(uuid,text,text,text,integer,integer)",
-      "claim_knowledge_export_download(uuid,text,text)",
-    ];
-    for (const fn of functions) {
-      for (const role of ["context_use_auth", "context_use_dashboard", "context_use_mcp", "context_use_public", "context_use_backup"]) {
-        expect((await admin.query<{ allowed: boolean }>(
-          "SELECT has_function_privilege($1,$2,'EXECUTE') AS allowed",
-          [role, fn],
-        )).rows[0]?.allowed).toBe(false);
-      }
-      expect((await admin.query<{ allowed: boolean }>(
-        "SELECT has_function_privilege('context_use_confirmation',$1,'EXECUTE') AS allowed",
-        [fn],
-      )).rows[0]?.allowed).toBe(true);
-    }
-    for (const column of ["confirmed_at", "download_started_at"]) {
-      expect((await admin.query<{ allowed: boolean }>(
-        "SELECT has_column_privilege('context_use_dashboard','knowledge_export_intents',$1,'INSERT') AS allowed",
-        [column],
-      )).rows[0]?.allowed).toBe(false);
-      expect((await admin.query<{ allowed: boolean }>(
-        "SELECT has_column_privilege('context_use_dashboard','knowledge_export_intents',$1,'UPDATE') AS allowed",
-        [column],
-      )).rows[0]?.allowed).toBe(false);
-    }
-    for (const table of ["knowledge_export_intents"]) {
-      expect((await admin.query<{ allowed: boolean }>(
-        "SELECT has_table_privilege('context_use_confirmation',$1,'SELECT') AS allowed",
-        [table],
-      )).rows[0]?.allowed).toBe(false);
-      for (const role of ["context_use_auth", "context_use_mcp", "context_use_public"]) {
-        expect((await admin.query<{ allowed: boolean }>(
-          "SELECT has_table_privilege($1,$2,'SELECT') AS allowed",
-          [role, table],
-        )).rows[0]?.allowed).toBe(false);
-      }
-    }
-    expect((await admin.query<{ allowed: boolean }>(
-      "SELECT has_table_privilege('context_use_confirmation','knowledge_bundle_exports','SELECT') AS allowed",
-    )).rows[0]?.allowed).toBe(false);
-    expect((await admin.query<{ allowed: boolean }>(
-      "SELECT has_column_privilege('context_use_confirmation','knowledge_bundle_exports','intent_id','SELECT') AS allowed",
-    )).rows[0]?.allowed).toBe(true);
-    for (const role of ["context_use_auth", "context_use_mcp", "context_use_public"]) {
-      expect((await admin.query<{ allowed: boolean }>(
-        "SELECT has_column_privilege($1,'knowledge_bundle_exports','intent_id','SELECT') AS allowed",
-        [role],
-      )).rows[0]?.allowed).toBe(false);
-    }
-  });
-
-  test("full knowledge bundle confirmation and restore capabilities stay separated", async () => {
-    const confirmationFunctions = [
-      "issue_knowledge_bundle_import_challenge(uuid,text)",
-      "confirm_knowledge_bundle_import(uuid,text,text,text,integer,integer)",
-    ];
-    for (const fn of confirmationFunctions) {
-      expect((await admin.query<{ allowed: boolean }>(
-        "SELECT has_function_privilege('context_use_confirmation',$1,'EXECUTE') AS allowed",
-        [fn],
-      )).rows[0]?.allowed).toBe(true);
-      for (const role of ["context_use_auth", "context_use_dashboard", "context_use_mcp", "context_use_public", "context_use_storage", "context_use_backup"]) {
-        expect((await admin.query<{ allowed: boolean }>(
-          "SELECT has_function_privilege($1,$2,'EXECUTE') AS allowed",
-          [role, fn],
-        )).rows[0]?.allowed).toBe(false);
-      }
-    }
-    for (const fn of [
-      "capture_full_knowledge_bundle(uuid,text,text)",
-      "full_knowledge_bundle_summary()",
-      "full_knowledge_import_available()",
-      "restore_full_knowledge_bundle(uuid,text,text)",
-    ]) {
-      expect((await admin.query<{ allowed: boolean }>(
-        "SELECT has_function_privilege('context_use_dashboard',$1,'EXECUTE') AS allowed",
-        [fn],
-      )).rows[0]?.allowed).toBe(true);
-      for (const role of ["context_use_auth", "context_use_mcp", "context_use_public", "context_use_confirmation", "context_use_storage", "context_use_backup"]) {
-        expect((await admin.query<{ allowed: boolean }>(
-          "SELECT has_function_privilege($1,$2,'EXECUTE') AS allowed",
-          [role, fn],
-        )).rows[0]?.allowed).toBe(false);
-      }
-    }
-    for (const fn of [
-      "confirm_knowledge_bundle_import_unchecked(uuid,text,text,text,integer,integer)",
-      "restore_full_knowledge_bundle_unchecked(uuid,text,text)",
-    ]) {
-      for (const role of [
-        "context_use_auth", "context_use_dashboard", "context_use_mcp",
-        "context_use_public", "context_use_confirmation", "context_use_storage",
-        "context_use_backup",
-      ]) {
-        expect((await admin.query<{ allowed: boolean }>(
-          "SELECT has_function_privilege($1,$2,'EXECUTE') AS allowed",
-          [role, fn],
-        )).rows[0]?.allowed).toBe(false);
-      }
-    }
-    for (const role of [
-      "context_use_auth", "context_use_dashboard", "context_use_mcp",
-      "context_use_public", "context_use_confirmation", "context_use_storage",
-    ]) {
-      expect((await admin.query<{ allowed: boolean }>(
-        "SELECT has_table_privilege($1,'knowledge_bundle_import_policy','SELECT') AS allowed",
-        [role],
-      )).rows[0]?.allowed).toBe(false);
-    }
-    expect((await admin.query<{ allowed: boolean }>(
-      "SELECT has_table_privilege('context_use_backup','knowledge_bundle_import_policy','SELECT') AS allowed",
-    )).rows[0]?.allowed).toBe(true);
-    expect((await admin.query<{ allowed: boolean }>(
-      "SELECT has_table_privilege('context_use_backup','auth_schema_migrations','SELECT') AS allowed",
-    )).rows[0]?.allowed).toBe(true);
-    expect((await admin.query<{ allowed: boolean }>(
-      "SELECT has_table_privilege('context_use_backup','schema_migrations','SELECT') AS allowed",
-    )).rows[0]?.allowed).toBe(true);
-    for (const table of [
-      "knowledge_bundle_import_policy",
-      "knowledge_settings",
-      "publication_settings",
-    ]) {
-      expect((await admin.query<{ allowed: boolean }>(
-        "SELECT has_table_privilege('context_use_boundary_owner',$1,'INSERT') AS allowed",
-        [table],
-      )).rows[0]?.allowed).toBe(true);
-    }
-    expect((await admin.query<{ allowed: boolean }>(
-      `SELECT has_column_privilege(
-         'context_use_boundary_owner','knowledge_bundle_import_policy','singleton','SELECT'
-       ) AS allowed`,
-    )).rows[0]?.allowed).toBe(true);
-    for (const column of ["confirmed_at", "consumed_at"]) {
-      expect((await admin.query<{ allowed: boolean }>(
-        "SELECT has_column_privilege('context_use_dashboard','knowledge_bundle_imports',$1,'INSERT') AS allowed",
-        [column],
-      )).rows[0]?.allowed).toBe(false);
-      expect((await admin.query<{ allowed: boolean }>(
-        "SELECT has_column_privilege('context_use_dashboard','knowledge_bundle_imports',$1,'UPDATE') AS allowed",
-        [column],
-      )).rows[0]?.allowed).toBe(false);
-    }
-  });
-
   test("the reset owner is inert", async () => {
     expect((await admin.query<{ allowed: boolean }>(
       "SELECT has_schema_privilege('context_use_reset_owner','public','USAGE') AS allowed",
@@ -520,7 +373,7 @@ describeDatabase("PostgreSQL security roles", () => {
         "SELECT has_schema_privilege($1,'public','CREATE') AS allowed",
         [role],
       )).rows[0]?.allowed).toBe(false);
-      for (const ownerRole of ["context_use_projection_owner", "context_use_boundary_owner", "context_use_import_owner", "context_use_reset_owner"]) {
+      for (const ownerRole of ["context_use_projection_owner", "context_use_boundary_owner", "context_use_reset_owner"]) {
         expect((await admin.query<{ allowed: boolean }>(
           "SELECT pg_has_role($1,$2,'MEMBER') AS allowed",
           [role, ownerRole],
@@ -539,21 +392,12 @@ describeDatabase("PostgreSQL security roles", () => {
     }>(
       `SELECT rolname,rolcanlogin,rolsuper,rolcreatedb,rolcreaterole,rolinherit,rolbypassrls
        FROM pg_roles
-       WHERE rolname IN ('context_use_projection_owner','context_use_boundary_owner','context_use_import_owner','context_use_reset_owner')
+       WHERE rolname IN ('context_use_projection_owner','context_use_boundary_owner','context_use_reset_owner')
        ORDER BY rolname`,
     );
     expect(internalOwners.rows).toEqual([
       {
         rolname: "context_use_boundary_owner",
-        rolcanlogin: false,
-        rolsuper: false,
-        rolcreatedb: false,
-        rolcreaterole: false,
-        rolinherit: false,
-        rolbypassrls: false,
-      },
-      {
-        rolname: "context_use_import_owner",
         rolcanlogin: false,
         rolsuper: false,
         rolcreatedb: false,
@@ -820,9 +664,7 @@ describeDatabase("PostgreSQL security roles", () => {
            'issue_confirmation_challenge',
            'consume_confirmation_challenge',
            'confirm_publication_intent',
-           'confirm_knowledge_export_intent',
            'confirm_page_deletion_intent',
-           'claim_knowledge_export_download',
            'lock_automation_registry_for_operational_retarget',
            'prevent_automation_document_role_reuse',
            'prune_page_versions',
@@ -831,8 +673,6 @@ describeDatabase("PostgreSQL security roles", () => {
        ORDER BY proname`,
     );
     expect(procedures.rows).toEqual([
-      { proname: "claim_knowledge_export_download", owner: "context_use_boundary_owner", security_definer: true },
-      { proname: "confirm_knowledge_export_intent", owner: "context_use_boundary_owner", security_definer: true },
       { proname: "confirm_page_deletion_intent", owner: "context_use_boundary_owner", security_definer: true },
       { proname: "confirm_publication_intent", owner: "context_use_boundary_owner", security_definer: true },
       { proname: "consume_confirmation_challenge", owner: "context_use_boundary_owner", security_definer: true },
@@ -855,7 +695,6 @@ describeDatabase("PostgreSQL security roles", () => {
     for (const [relation, column] of [
       ["confirmation_challenges", "challenge"],
       ["knowledge_pages", "archived_at"],
-      ["knowledge_export_intents", "expires_at"],
       ["auth.passkey", "counter"],
     ]) {
       expect((await admin.query<{ allowed: boolean }>(
@@ -1101,58 +940,9 @@ describeDatabase("PostgreSQL security roles", () => {
 
   });
 
-    test("passkey procedures reject null principals and credentials", async () => {
-    const exportIntentId = randomUUID();
-    await admin.query("BEGIN");
-    try {
-      await ensureOwnerPasskey();
-      await admin.query(
-        `INSERT INTO knowledge_export_intents(
-           id,owner_user_id,session_id,expires_at
-         ) VALUES ($1,'context-use-owner','session',now()+interval '5 minutes')`,
-        [exportIntentId],
-      );
-      await issueChallenge("knowledge_export", exportIntentId);
-      await admin.query("SET LOCAL ROLE context_use_confirmation");
-      await expectDenied(
-        "SELECT confirm_knowledge_export_intent($1,NULL,'session','test-credential',0,1)",
-        [exportIntentId],
-      );
-      await expectDenied(
-        "SELECT confirm_knowledge_export_intent($1,'context-use-owner',NULL,'test-credential',0,1)",
-        [exportIntentId],
-      );
-      await expectDenied(
-        "SELECT confirm_knowledge_export_intent($1,'context-use-owner','session',NULL,0,1)",
-        [exportIntentId],
-      );
-      await admin.query(
-        "SELECT confirm_knowledge_export_intent($1,'context-use-owner','session','test-credential',0,1)",
-        [exportIntentId],
-      );
-      await expectDenied(
-        "SELECT claim_knowledge_export_download($1,NULL,'session')",
-        [exportIntentId],
-      );
-      await expectDenied(
-        "SELECT claim_knowledge_export_download($1,'context-use-owner',NULL)",
-        [exportIntentId],
-      );
-      await admin.query("RESET ROLE");
-    } finally {
-      await admin.query("ROLLBACK");
-    }
-  });
-
   test("intent constraints enforce the owner and five-minute lifetime", async () => {
     await admin.query("BEGIN");
     try {
-      await expectDenied(
-        `INSERT INTO knowledge_export_intents(
-           id,owner_user_id,session_id,expires_at
-         ) VALUES ($1,'not-the-owner','session',now()+interval '5 minutes')`,
-        [randomUUID()],
-      );
       const pageId = randomUUID();
       const versionId = randomUUID();
       await admin.query(
@@ -1177,12 +967,6 @@ describeDatabase("PostgreSQL security roles", () => {
            id,page_id,expected_version_id,owner_user_id,session_id,expires_at
          ) VALUES ($1,$2,$3,'context-use-owner','session',now()+interval '5 minutes 1 second')`,
         [randomUUID(), pageId, versionId],
-      );
-      await expectDenied(
-        `INSERT INTO knowledge_export_intents(
-           id,owner_user_id,session_id,expires_at
-         ) VALUES ($1,'context-use-owner','session',now()+interval '5 minutes 1 second')`,
-        [randomUUID()],
       );
     } finally {
       await admin.query("ROLLBACK");
@@ -1434,24 +1218,39 @@ describeDatabase("PostgreSQL security roles", () => {
 
   });
 
-  test("the retired knowledge restore surface remains absent", async () => {
+  test("the removed knowledge bundle schema and capabilities are absent", async () => {
     const objects = await admin.query<{
-      import_intents: string | null;
-      confirm_import: string | null;
-      restore_import: string | null;
-      restore_owner: string | null;
+      export_intents: string | null;
+      bundle_exports: string | null;
+      bundle_imports: string | null;
+      import_policy: string | null;
+      capture_bundle: string | null;
+      restore_bundle: string | null;
+      import_owner: string | null;
+      retired_intent_kinds: string;
     }>(
       `SELECT
-         to_regclass('knowledge_import_intents')::text AS import_intents,
-         to_regprocedure('confirm_knowledge_import_intent(uuid,text,text,text,integer,integer)')::text AS confirm_import,
-         to_regprocedure('restore_knowledge_import(uuid,text,text)')::text AS restore_import,
-         (SELECT rolname FROM pg_roles WHERE rolname='context_use_restore_owner') AS restore_owner`,
+         to_regclass('knowledge_export_intents')::text AS export_intents,
+         to_regclass('knowledge_bundle_exports')::text AS bundle_exports,
+         to_regclass('knowledge_bundle_imports')::text AS bundle_imports,
+         to_regclass('knowledge_bundle_import_policy')::text AS import_policy,
+         to_regprocedure('capture_full_knowledge_bundle(uuid,text,text)')::text AS capture_bundle,
+         to_regprocedure('restore_full_knowledge_bundle(uuid,text,text)')::text AS restore_bundle,
+         (SELECT rolname FROM pg_roles WHERE rolname='context_use_import_owner') AS import_owner,
+         (SELECT count(*)::text FROM pg_enum value
+          JOIN pg_type type ON type.oid=value.enumtypid
+          WHERE type.typname='confirmation_intent_kind'
+            AND value.enumlabel IN ('knowledge_export','knowledge_import')) AS retired_intent_kinds`,
     );
     expect(objects.rows[0]).toEqual({
-      import_intents: null,
-      confirm_import: null,
-      restore_import: null,
-      restore_owner: null,
+      export_intents: null,
+      bundle_exports: null,
+      bundle_imports: null,
+      import_policy: null,
+      capture_bundle: null,
+      restore_bundle: null,
+      import_owner: null,
+      retired_intent_kinds: "0",
     });
   });
 

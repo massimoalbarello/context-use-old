@@ -20,7 +20,7 @@ export const TARGET_AUTH_STRUCTURE_FINGERPRINT =
 export const TARGET_ROUTINE_FINGERPRINT =
   "0c4cbc07ab34948920865afad54ae737951d995cd2f50e27e1451192dd2c4f6a";
 
-const TARGET_MIGRATION_VERSIONS = {
+const LEGACY_ADOPTION_MIGRATION_VERSIONS = {
   auth: ["001_create_auth_schema.sql", "002_better_auth.sql"],
   application: [
     "001_application_schema.sql",
@@ -93,12 +93,23 @@ function assertIdentitiesPreserved({
 function assertTargetMigrationCatalog(streams: MigrationStreams): void {
   for (const stream of ["auth", "application"] as const) {
     const versions = streams[stream].map(({ version }) => version);
-    if (JSON.stringify(versions) !== JSON.stringify(TARGET_MIGRATION_VERSIONS[stream])) {
+    const baseline = LEGACY_ADOPTION_MIGRATION_VERSIONS[stream];
+    if (JSON.stringify(versions.slice(0, baseline.length)) !== JSON.stringify(baseline)) {
       throw new Error(
         `Legacy adoption received an unexpected ${stream} migration catalog: ${versions.join(", ")}`,
       );
     }
   }
+}
+
+function legacyAdoptionMigrationStreams(streams: MigrationStreams): MigrationStreams {
+  return {
+    auth: streams.auth.slice(0, LEGACY_ADOPTION_MIGRATION_VERSIONS.auth.length),
+    application: streams.application.slice(
+      0,
+      LEGACY_ADOPTION_MIGRATION_VERSIONS.application.length,
+    ),
+  };
 }
 
 async function migrationLedgerState({
@@ -241,8 +252,6 @@ async function assertTargetSchema(
   const privileges = (await client.query<{
     backupAuthLedger: boolean;
     backupApplicationLedger: boolean;
-    boundaryPolicyInsert: boolean;
-    boundaryPolicySingletonSelect: boolean;
     boundarySettingsInsert: boolean;
     boundaryPublicationInsert: boolean;
   }>(`
@@ -253,15 +262,6 @@ async function assertTargetSchema(
       has_table_privilege(
         'context_use_backup','public.schema_migrations','SELECT'
       ) AS "backupApplicationLedger",
-      has_table_privilege(
-        'context_use_boundary_owner','public.knowledge_bundle_import_policy','INSERT'
-      ) AS "boundaryPolicyInsert",
-      has_column_privilege(
-        'context_use_boundary_owner',
-        'public.knowledge_bundle_import_policy',
-        'singleton',
-        'SELECT'
-      ) AS "boundaryPolicySingletonSelect",
       has_table_privilege(
         'context_use_boundary_owner','public.knowledge_settings','INSERT'
       ) AS "boundarySettingsInsert",
@@ -302,11 +302,8 @@ async function normalizeAdoptedSchema({
     GRANT USAGE ON SCHEMA auth TO
       context_use_auth,context_use_backup,context_use_boundary_owner,context_use_confirmation;
     GRANT INSERT ON TABLE
-      public.knowledge_bundle_import_policy,
       public.knowledge_settings,
       public.publication_settings
-    TO context_use_boundary_owner;
-    GRANT SELECT (singleton) ON TABLE public.knowledge_bundle_import_policy
     TO context_use_boundary_owner;
     ALTER ROLE context_use_auth SET search_path TO pg_catalog, auth, public;
     COMMENT ON SCHEMA public IS NULL;
@@ -360,6 +357,7 @@ export async function adoptLegacySchema({
   afterTableMoved?: (table: string) => void | Promise<void>;
 }): Promise<LegacyAdoptionResult> {
   assertTargetMigrationCatalog(targetMigrationStreams);
+  const adoptionMigrationStreams = legacyAdoptionMigrationStreams(targetMigrationStreams);
   await client.query("BEGIN");
   try {
     await client.query(
@@ -380,7 +378,7 @@ export async function adoptLegacySchema({
     }
     const ledgerState = await migrationLedgerState({
       client,
-      streams: targetMigrationStreams,
+      streams: adoptionMigrationStreams,
     });
     if (ledgerState !== "other") {
       const target = await assertTargetSchema(client, {
@@ -415,7 +413,7 @@ export async function adoptLegacySchema({
     }
 
     await normalizeAdoptedSchema({ client, applicationMigrationSql });
-    await replaceMigrationLedger({ client, streams: targetMigrationStreams });
+    await replaceMigrationLedger({ client, streams: adoptionMigrationStreams });
     const target = await assertTargetSchema(client);
     await client.query("COMMIT");
     return { action: "transitioned", ...target };

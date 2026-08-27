@@ -29,8 +29,6 @@ export type BrowserConfirmation = {
 
 export type BrowserConfirmationKind =
   | "publication"
-  | "knowledge_export"
-  | "knowledge_import"
   | "page_deletion";
 
 export type BrowserConfirmationResult =
@@ -43,13 +41,8 @@ export type ConfirmationStore = Pick<
   ConfirmationRepository,
   | "passkeys"
   | "issueChallenge"
-  | "claimExport"
   | "publicationIntent"
   | "confirmPublication"
-  | "exportIntent"
-  | "confirmExport"
-  | "importIntent"
-  | "confirmImport"
   | "pageDeletionIntent"
   | "confirmPageDeletion"
 >;
@@ -81,27 +74,10 @@ export class ConfirmationService {
     return options;
   }
 
-  async claimExport({
-    intentId,
-    principal,
-  }: {
-    intentId: string;
-    principal: ConfirmationPrincipal;
-  }): Promise<void> {
-    await this.dependencies.confirmations.claimExport(intentId, {
-      ownerUserId: principal.owner_user_id,
-      sessionId: principal.session_id,
-    });
-  }
-
   confirm({ kind, input }: { kind: BrowserConfirmationKind; input: BrowserConfirmation }) {
     switch (kind) {
       case "publication":
         return this.confirmPublication(input);
-      case "knowledge_export":
-        return this.confirmKnowledgeExport(input);
-      case "knowledge_import":
-        return this.confirmKnowledgeImport(input);
       case "page_deletion":
         return this.confirmPageDeletion(input);
     }
@@ -175,77 +151,6 @@ export class ConfirmationService {
         action: intent.action,
         target_kind: intent.target_kind,
         target_id: intent.target_id,
-      },
-    };
-  }
-
-  private async confirmKnowledgeExport(
-    input: BrowserConfirmation,
-  ): Promise<BrowserConfirmationResult> {
-    const intent = await this.dependencies.confirmations.exportIntent(input.confirmation.intent_id);
-    if (!intent || !ownsIntent({ intent, principal: input.principal })) {
-      return { state: "not_found", message: "Knowledge bundle export intent not found" };
-    }
-    if (
-      !intent.challenge ||
-      intent.confirmed_at ||
-      intent.download_started_at ||
-      expired(intent.expires_at)
-    ) {
-      return { state: "inactive", message: "Knowledge bundle export intent is inactive" };
-    }
-    const verified = await this.verifiedPasskey({
-      response: input.confirmation.response,
-      expectedChallenge: intent.challenge,
-    });
-    if (!verified) {
-      return { state: "passkey_invalid" };
-    }
-    await this.dependencies.confirmations.confirmExport(
-      intent.id,
-      repositoryPrincipal(input.principal),
-      counterUpdate(verified),
-    );
-    return {
-      state: "confirmed",
-      body: {
-        download_url: `/api/dashboard/knowledge-bundles/${encodeURIComponent(intent.id)}/download`,
-      },
-    };
-  }
-
-  private async confirmKnowledgeImport(
-    input: BrowserConfirmation,
-  ): Promise<BrowserConfirmationResult> {
-    const intent = await this.dependencies.confirmations.importIntent(input.confirmation.intent_id);
-    if (!intent || !ownsIntent({ intent, principal: input.principal })) {
-      return { state: "not_found", message: "Knowledge import not found" };
-    }
-    if (
-      !intent.challenge ||
-      intent.confirmed_at ||
-      intent.status !== "awaiting_confirmation" ||
-      expired(intent.expires_at)
-    ) {
-      return { state: "inactive", message: "Knowledge import is inactive" };
-    }
-    const verified = await this.verifiedPasskey({
-      response: input.confirmation.response,
-      expectedChallenge: intent.challenge,
-    });
-    if (!verified) {
-      return { state: "passkey_invalid" };
-    }
-    await this.dependencies.confirmations.confirmImport(
-      intent.id,
-      repositoryPrincipal(input.principal),
-      counterUpdate(verified),
-    );
-    return {
-      state: "confirmed",
-      body: {
-        status: "restoring",
-        status_url: `/api/dashboard/knowledge-imports/${encodeURIComponent(intent.id)}/status`,
       },
     };
   }

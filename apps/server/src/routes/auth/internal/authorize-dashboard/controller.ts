@@ -4,7 +4,6 @@ import { dashboardPrincipal } from "../../../../auth.ts";
 import { bodyJson, json, problem } from "../../../../http.ts";
 import { hasInternalCapability } from "../../../../internal-capability.ts";
 import {
-  assertDashboardDownloadSecurity,
   assertDashboardRequestSecurity,
   assertDashboardUploadSecurity,
 } from "../../../../security.ts";
@@ -13,7 +12,7 @@ const internalAuthorizationSchema = z
   .object({
     method: z.string().min(1).max(12),
     pathname: z.string().startsWith("/").max(2_000),
-    kind: z.enum(["read", "json", "upload", "download"]),
+    kind: z.enum(["read", "json", "upload"]),
     headers: z.record(z.string(), z.string()).default({}),
   })
   .strict();
@@ -43,9 +42,6 @@ export function createAuthorizeDashboardController({
     }
     if (input.kind === "upload") {
       assertDashboardUploadSecurity(reconstructed, principal);
-    }
-    if (input.kind === "download") {
-      assertDashboardDownloadSecurity(reconstructed);
     }
     return json(principal);
   });

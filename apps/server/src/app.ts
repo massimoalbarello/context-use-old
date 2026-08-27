@@ -2,7 +2,6 @@ import {
   AutomationRegistryRepository,
   AssetRepository,
   KnowledgePageRepository,
-  KnowledgeBundleRepository,
   PrivateObjectCatalogRepository,
   PageDeletionRepository,
   SourceRecordRepository,
@@ -14,10 +13,7 @@ import {
 } from "@context-use/database/publication";
 import { Elysia } from "elysia";
 import { config, production } from "./config.ts";
-import {
-  claimConfirmedBundleExport,
-  issueConfirmationOptions,
-} from "./confirmation-client.ts";
+import { issueConfirmationOptions } from "./confirmation-client.ts";
 import { routeError } from "./http.ts";
 import { securityHeaders } from "./security.ts";
 import { BrokeredStorage } from "./storage-client.ts";
@@ -25,8 +21,6 @@ import { BrokeredMarkdownBlobStore } from "./markdown-blob-store.ts";
 import { createOwnerAuthorizer } from "./routes/dashboard/authorization.ts";
 import { createDashboardController } from "./routes/dashboard/controller.ts";
 import { DashboardAssetsService } from "./services/dashboard-assets-service.ts";
-import { DashboardKnowledgeBundleExportsService } from "./services/dashboard-knowledge-bundle-exports-service.ts";
-import { DashboardKnowledgeImportsService } from "./services/dashboard-knowledge-imports-service.ts";
 import { DashboardMetadataService } from "./services/dashboard-metadata-service.ts";
 import { DashboardObjectsService } from "./services/dashboard-objects-service.ts";
 import { DashboardPagesService } from "./services/dashboard-pages-service.ts";
@@ -46,7 +40,6 @@ const pageDeletions = new PageDeletionRepository(dashboardPool);
 const dashboardAssets = new AssetRepository(dashboardPool);
 const publications = new PublicationRepository(dashboardPool);
 const publicEntrypoint = new PublicEntrypointRepository(dashboardPool);
-const knowledgeBundles = new KnowledgeBundleRepository(dashboardPool);
 const dashboardObjectCatalog = new PrivateObjectCatalogRepository(dashboardPool);
 const dashboardAutomations = new AutomationRegistryRepository(dashboardPool);
 const dashboardSourceRecords = new SourceRecordRepository(dashboardPool, markdownBlobs);
@@ -80,17 +73,6 @@ const dashboardPagesService = new DashboardPagesService({
   appOrigin: config.APP_ORIGIN,
   assetOrigin: config.ASSET_ORIGIN,
 });
-const dashboardKnowledgeBundleExportsService = new DashboardKnowledgeBundleExportsService({
-  bundles: knowledgeBundles,
-  storage,
-  issueConfirmation: issueConfirmationOptions,
-  claimConfirmedExport: claimConfirmedBundleExport,
-});
-const dashboardKnowledgeImportsService = new DashboardKnowledgeImportsService({
-  bundles: knowledgeBundles,
-  storage,
-  issueConfirmation: issueConfirmationOptions,
-});
 const dashboardMetadataService = new DashboardMetadataService(config);
 const dashboardWebService = new DashboardWebService(config.WEB_DIST);
 
@@ -101,8 +83,6 @@ export const app = new Elysia({ serve: { maxRequestBodySize: 5_500_000_000 } })
   .use(createDashboardController({
     authorizeOwner,
     assets: dashboardAssetsService,
-    bundleExports: dashboardKnowledgeBundleExportsService,
-    knowledgeImports: dashboardKnowledgeImportsService,
     metadata: dashboardMetadataService,
     objects: dashboardObjectsService,
     pages: dashboardPagesService,

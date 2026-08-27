@@ -5,8 +5,6 @@ export const ownerUserId = "context-use-owner";
 
 export const confirmationKindSchema = z.enum([
   "publication",
-  "knowledge_export",
-  "knowledge_import",
   "page_deletion",
 ]);
 

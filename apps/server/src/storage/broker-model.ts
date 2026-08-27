@@ -12,14 +12,6 @@ export const assetBlobKeySchema = z.union([blobKeySchema, legacyAssetKeySchema])
 export const pageBlobKeySchema = z.union([blobKeySchema, legacyPrivatePageKeySchema]);
 export const publicPageKeySchema = z.string().regex(/^documents\/public\/[a-f0-9-]{36}\.md$/);
 export const publicAssetArtifactKeySchema = z.string().regex(/^artifacts\/public\/[a-f0-9-]{36}$/);
-export const bundleObjectKeySchema = z.string().regex(/^bundles\/[a-f0-9-]{36}\.cuse$/);
-export const importPartKeySchema = z.string().regex(/^imports\/[a-f0-9-]{36}\/parts\/[0-9]{1,6}$/);
-export const importedObjectKeySchema = z.union([
-  privateBlobKeySchema,
-  publicPageKeySchema,
-  publicAssetArtifactKeySchema,
-]);
-
 export const verificationSchema = z
   .object({
     // Public projection artifacts are verify-only through this privileged

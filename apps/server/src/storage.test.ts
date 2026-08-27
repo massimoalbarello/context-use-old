@@ -247,23 +247,6 @@ describe("application-routed asset storage", () => {
     expect(minioClient.encryption).toEqual({});
   });
 
-  test("commits knowledge bundles only with matching metadata", async () => {
-    const bytes = Buffer.alloc(128, 17);
-    const { storage } = await fixture(bytes);
-    const key = "bundles/11111111-1111-4111-8111-111111111111.cuse";
-
-    const written = await storage.writeBundle(key, new Blob([bytes]).stream());
-
-    expect(written).toEqual({
-      sizeBytes: bytes.byteLength,
-      contentHash: createHash("sha256").update(bytes).digest("hex"),
-    });
-    expect(await storage.inspectBundle(key)).toEqual(written);
-    expect(await storedBytes(storage, key)).toEqual(bytes);
-    await storage.deleteBundle(key);
-    expect(await storage.inspectBundle(key)).toBeNull();
-  });
-
   test("uploads large web request streams as bounded S3 multipart bytes", async () => {
     const bytes = new Uint8Array(8 * 1024 * 1024 + 97).fill(42);
     const { asset } = await fixture(bytes);
@@ -293,21 +276,6 @@ describe("application-routed asset storage", () => {
     expect(client.conditionalComplete).toBe(true);
     expect(client.object).toEqual(competing);
     expect(client.aborted).toBe(true);
-  });
-
-  test("writes the bundle S3 manifest only after multipart completion", async () => {
-    const bytes = Buffer.alloc(8 * 1024 * 1024 + 41, 17);
-    const key = "bundles/11111111-1111-4111-8111-111111111111.cuse";
-    const client = new FakeS3Client();
-    const storage = new S3Storage(client as unknown as S3Client);
-
-    const written = await storage.writeBundle(key, new Blob([bytes]).stream());
-
-    expect(client.partLengths).toEqual([8 * 1024 * 1024, 41]);
-    expect(await storage.inspectBundle(key)).toEqual(written);
-    expect(written.contentHash).toBe(createHash("sha256").update(bytes).digest("hex"));
-    await storage.deleteBundle(key);
-    expect(await storage.inspectBundle(key)).toBeNull();
   });
 
   test("uploads a large inbound Bun HTTP request without bridging it to a Node stream", async () => {

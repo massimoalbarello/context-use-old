@@ -39,12 +39,6 @@ export interface BlobStorage {
 export interface BlobStorageBackend extends BlobStorage {
   exists(blobKey: string): Promise<boolean>;
   writeOnce(asset: StoredBlob, body: ReadableStream<Uint8Array> | null): Promise<void>;
-  writeBundle(blobKey: string, body: ReadableStream<Uint8Array> | null): Promise<GeneratedBlobMetadata>;
-  inspectBundle(blobKey: string): Promise<GeneratedBlobMetadata | null>;
-  deleteBundle(blobKey: string): Promise<void>;
-  writeImportPart(asset: StoredBlob, body: ReadableStream<Uint8Array> | null): Promise<void>;
-  inspectImportPart(blobKey: string): Promise<GeneratedBlobMetadata | null>;
-  deleteImportPart(blobKey: string): Promise<void>;
 }
 
 export type S3StorageConfig = {
@@ -106,27 +100,6 @@ export class BlobAlreadyExistsError extends Error {
 }
 
 const S3_MULTIPART_PART_SIZE = 8 * 1024 * 1024;
-const MAX_GENERATED_OBJECT_BYTES = 64 * 1024 ** 3;
-
-function generatedManifestKey(blobKey: string): string {
-  return `${blobKey}.json`;
-}
-
-function parseGeneratedManifest(input: string): GeneratedBlobMetadata | null {
-  try {
-    const value = JSON.parse(input) as Record<string, unknown>;
-    if (!Number.isSafeInteger(value.size_bytes) || Number(value.size_bytes) <= 0) return null;
-    if (typeof value.content_hash !== "string" || !/^[a-f0-9]{64}$/.test(value.content_hash)) return null;
-    return { sizeBytes: Number(value.size_bytes), contentHash: value.content_hash };
-  } catch {
-    return null;
-  }
-}
-
-function generatedManifest(metadata: GeneratedBlobMetadata): string {
-  return JSON.stringify({ size_bytes: metadata.sizeBytes, content_hash: metadata.contentHash });
-}
-
 class ChunkAccumulator {
   private readonly chunks: Uint8Array[] = [];
   private firstOffset = 0;
@@ -325,154 +298,6 @@ export class S3Storage implements BlobStorageBackend {
       }
       throw error;
     }
-  }
-
-  async writeBundle(
-    blobKey: string,
-    body: ReadableStream<Uint8Array> | null,
-  ): Promise<GeneratedBlobMetadata> {
-    return this.writeBundleObject(blobKey, body);
-  }
-
-  private async writeBundleObject(
-    blobKey: string,
-    body: ReadableStream<Uint8Array> | null,
-  ): Promise<GeneratedBlobMetadata> {
-    if (!body) throw new Error("Knowledge bundle body is missing");
-    const created = await this.client.send(new CreateMultipartUploadCommand({
-      Bucket: this.options.bucket,
-      Key: blobKey,
-      ContentType: "application/vnd.context-use.knowledge-bundle",
-      ChecksumAlgorithm: "SHA256",
-      Metadata: { generated: "knowledge-bundle" },
-      ...this.encryption(),
-    }));
-    if (!created.UploadId) throw new Error("S3 did not create a knowledge bundle multipart upload");
-    const uploadId = created.UploadId;
-    const parts: Array<{ ETag: string; PartNumber: number; ChecksumSHA256: string }> = [];
-    const buffered = new ChunkAccumulator();
-    const hash = createHash("sha256");
-    let sizeBytes = 0;
-    let completed = false;
-    const uploadPart = async (bytes: Buffer) => {
-      const partNumber = parts.length + 1;
-      const partChecksum = createHash("sha256").update(bytes).digest("base64");
-      const uploaded = await this.client.send(new UploadPartCommand({
-        Bucket: this.options.bucket,
-        Key: blobKey,
-        UploadId: uploadId,
-        PartNumber: partNumber,
-        Body: bytes,
-        ContentLength: bytes.byteLength,
-        ChecksumSHA256: partChecksum,
-      }));
-      if (!uploaded.ETag) throw new Error("S3 did not return a knowledge bundle part ETag");
-      parts.push({ ETag: uploaded.ETag, PartNumber: partNumber, ChecksumSHA256: partChecksum });
-    };
-    try {
-      const reader = body.getReader();
-      try {
-        while (true) {
-          const chunk = await reader.read();
-          if (chunk.done) break;
-          sizeBytes += chunk.value.byteLength;
-          if (sizeBytes > MAX_GENERATED_OBJECT_BYTES) throw new Error("Knowledge bundle is too large");
-          hash.update(chunk.value);
-          buffered.push(chunk.value);
-          while (buffered.byteLength >= S3_MULTIPART_PART_SIZE) {
-            await uploadPart(buffered.take(S3_MULTIPART_PART_SIZE));
-          }
-        }
-      } catch (error) {
-        await reader.cancel(error).catch(() => undefined);
-        throw error;
-      }
-      if (!sizeBytes) throw new Error("Knowledge bundle is empty");
-      if (buffered.byteLength) await uploadPart(buffered.take());
-      await this.client.send(new CompleteMultipartUploadCommand({
-        Bucket: this.options.bucket,
-        Key: blobKey,
-        UploadId: uploadId,
-        MultipartUpload: { Parts: parts },
-      }));
-      completed = true;
-    } finally {
-      if (!completed) {
-        await this.client.send(new AbortMultipartUploadCommand({
-          Bucket: this.options.bucket,
-          Key: blobKey,
-          UploadId: uploadId,
-        })).catch(() => undefined);
-      }
-    }
-
-    const metadata = { sizeBytes, contentHash: hash.digest("hex") };
-    const manifest = generatedManifest(metadata);
-    const manifestHash = createHash("sha256").update(manifest).digest("base64");
-    await this.client.send(new PutObjectCommand({
-      Bucket: this.options.bucket,
-      Key: generatedManifestKey(blobKey),
-      Body: manifest,
-      ContentType: "application/json",
-      ContentLength: Buffer.byteLength(manifest),
-      ChecksumSHA256: manifestHash,
-      ...this.encryption(),
-    }));
-    return metadata;
-  }
-
-  async inspectBundle(blobKey: string): Promise<GeneratedBlobMetadata | null> {
-    try {
-      const [manifestResult, objectResult] = await Promise.all([
-        this.client.send(new GetObjectCommand({
-          Bucket: this.options.bucket,
-          Key: generatedManifestKey(blobKey),
-        })),
-        this.client.send(new HeadObjectCommand({
-          Bucket: this.options.bucket,
-          Key: blobKey,
-        })),
-      ]);
-      if (!manifestResult.Body) return null;
-      const metadata = parseGeneratedManifest(await manifestResult.Body.transformToString());
-      return metadata && objectResult.ContentLength === metadata.sizeBytes ? metadata : null;
-    } catch (error) {
-      if (error instanceof Error && ["NoSuchKey", "NotFound"].includes(error.name)) return null;
-      throw error;
-    }
-  }
-
-  async deleteBundle(blobKey: string): Promise<void> {
-    await Promise.all([
-      this.delete(blobKey),
-      this.delete(generatedManifestKey(blobKey)),
-    ]);
-  }
-
-  async writeImportPart(asset: StoredBlob, body: ReadableStream<Uint8Array> | null): Promise<void> {
-    return this.writeOnce(asset, body);
-  }
-
-  async inspectImportPart(blobKey: string): Promise<GeneratedBlobMetadata | null> {
-    try {
-      const result = await this.client.send(new HeadObjectCommand({
-        Bucket: this.options.bucket,
-        Key: blobKey,
-        ChecksumMode: "ENABLED",
-      }));
-      const sizeBytes = Number(result.ContentLength);
-      const contentHash = result.Metadata?.sha256 ?? "";
-      return Number.isSafeInteger(sizeBytes) && sizeBytes > 0 && /^[a-f0-9]{64}$/.test(contentHash)
-        ? { sizeBytes, contentHash }
-        : null;
-    } catch (error) {
-      if (error instanceof Error && ["NoSuchKey", "NotFound"].includes(error.name)) return null;
-      throw error;
-    }
-  }
-
-  async deleteImportPart(blobKey: string): Promise<void> {
-    await this.delete(blobKey);
   }
 
   async delete(blobKey: string): Promise<void> {

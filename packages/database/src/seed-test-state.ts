@@ -2,9 +2,6 @@ import { Client } from "pg";
 import { disposableDatabaseUrl } from "./disposable-database.ts";
 
 export const seedTestStateSql = `
-  INSERT INTO public.knowledge_bundle_import_policy(singleton,state)
-  VALUES (true,'pending')
-  ON CONFLICT (singleton) DO NOTHING;
   INSERT INTO public.knowledge_settings(singleton)
   VALUES (true)
   ON CONFLICT (singleton) DO NOTHING;
